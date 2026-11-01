@@ -254,10 +254,12 @@ struct AttachmentList: View {
     }
 
     private func open(_ attachment: ChatAttachment) {
-        guard let url = AttachmentFiles.local(attachment) else { return model.fetch(attachment) }
         #if os(macOS)
-        NSWorkspace.shared.open(url)
+        if AttachmentFiles.withLocal(attachment, { NSWorkspace.shared.open($0) ? true : nil }) == nil {
+            model.fetch(attachment)
+        }
         #else
+        guard let url = AttachmentFiles.local(attachment) else { return model.fetch(attachment) }
         previewed = Previewed(id: attachment.id, url: url)
         #endif
     }
@@ -386,11 +388,13 @@ private struct ImageAttachment: View {
             }
         }
         .task(id: AttachmentFiles.local(attachment)?.path) {
-            guard let url = AttachmentFiles.local(attachment) else {
+            guard AttachmentFiles.local(attachment) != nil else {
                 if case .remote = state { model.fetch(attachment) }
                 return
             }
-            image = await Task.detached { Self.thumbnail(url) }.value
+            image = await Task.detached { [attachment] in
+                AttachmentFiles.withLocal(attachment) { Self.thumbnail($0) }
+            }.value
         }
     }
 

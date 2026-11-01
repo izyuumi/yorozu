@@ -16,6 +16,10 @@ enum AttachmentFiles {
         StoredNames.shared.local("\(attachment.id)/\(safeName(attachment.name))", in: .attachments)
     }
 
+    static func withLocal<T>(_ attachment: ChatAttachment, _ body: (URL) throws -> T?) rethrows -> T? {
+        try StoredNames.shared.withLocal("\(attachment.id)/\(safeName(attachment.name))", in: .attachments, body)
+    }
+
     static func write(_ data: Data, for attachment: ChatAttachment) throws { try write(data, to: url(attachment)) }
 
     /// A file of the transfer's own next to the attachment (`.upload.json`, `.download.part`, …).
@@ -214,7 +218,10 @@ final class Transfers {
     enum UploadResult { case stored, refused(String), interrupted }
 
     func upload(_ attachment: ChatAttachment) async -> UploadResult {
-        guard let url = AttachmentFiles.local(attachment), let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
+        guard let (url, data) = AttachmentFiles.withLocal(attachment, { url -> (URL, Data)? in
+            guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return nil }
+            return (url, data)
+        }) else {
             return .refused(String(localized: "The file is no longer on this device."))
         }
         let id = attachment.id
@@ -274,7 +281,7 @@ final class Transfers {
             case .refused(let code, let why):
                 // The host dropped what it had; start over once, with the hash read again.
                 if code == ErrorInfo.hashMismatch, ledger != nil, !restarted,
-                   let sha256 = await Self.sha256(of: url) {
+                   let sha256 = await Self.sha256(of: url, for: attachment) {
                     restarted = true
                     ledger = UploadLedger(attachmentId: id, size: data.count, sha256: sha256)
                     sender.restart()
@@ -305,11 +312,16 @@ final class Transfers {
     private func uploadLedger(_ attachment: ChatAttachment, at url: URL, size: Int) async -> UploadLedger? {
         if let saved = AttachmentFiles.load(UploadLedger.self, from: Self.uploadLedger, of: attachment),
            saved.attachmentId == attachment.id, saved.size == size, FileDigest.isSHA256(saved.sha256) { return saved }
-        return await Self.sha256(of: url).map { UploadLedger(attachmentId: attachment.id, size: size, sha256: $0) }
+        return await Self.sha256(of: url, for: attachment).map { UploadLedger(attachmentId: attachment.id, size: size, sha256: $0) }
     }
 
-    private nonisolated static func sha256(of url: URL) async -> String? {
-        await Task.detached(priority: .utility) { try? FileDigest.sha256(of: url) }.value
+    private nonisolated static func sha256(of url: URL, for attachment: ChatAttachment) async -> String? {
+        await Task.detached(priority: .utility) { () -> String? in
+            if let digest = try? FileDigest.sha256(of: url) { return digest }
+            guard !FileManager.default.fileExists(atPath: url.path),
+                  let retry = AttachmentFiles.local(attachment), retry != url else { return nil }
+            return try? FileDigest.sha256(of: retry)
+        }.value
     }
 
     func fetch(_ attachment: ChatAttachment) {
