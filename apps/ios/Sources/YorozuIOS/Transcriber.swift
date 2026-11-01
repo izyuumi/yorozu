@@ -132,7 +132,13 @@ final class Transcriber: @unchecked Sendable {
 }
 
 extension Transcriber: SpeechEngine {
+    /// With hints, LFM3-Audio can loop or read the vocabulary back on audio it can't make out; such a
+    /// transcript is replaced by one decoded without hints. If that one loops too, nothing was recognized.
     func transcribe(_ samples: [Float], language: String?, hints: [String]) async throws -> String {
-        try transcribe(samples, language: language.map(VoiceLanguage.init(code:)) ?? .automatic, hints: hints)
+        let language = language.map(VoiceLanguage.init(code:)) ?? .automatic
+        let text = try transcribe(samples, language: language, hints: hints)
+        guard !hints.isEmpty, TranscriptDegeneration.detect(in: text, hints: hints) != nil else { return text }
+        let retry = try transcribe(samples, language: language, hints: [])
+        return TranscriptDegeneration.detect(in: retry, hints: []) == nil ? retry : ""
     }
 }

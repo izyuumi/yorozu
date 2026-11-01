@@ -83,7 +83,7 @@
     },
     {
       "symptom": "Voice input says \"No speech was recognized.\", \"No microphone is available.\" or \"Not enough memory to transcribe.\"",
-      "fix": "No speech: speak closer to the microphone, or set Settings › Voice Input › Language to the language you speak. No microphone: connect or select an input device (Mac). Not enough memory: close other apps and tap Retry; the clip is kept until a transcript is delivered.",
+      "fix": "No speech: speak closer to the microphone, or set Settings › Voice Input › Language to the language you speak; with LFM3-Audio-2B, unclear audio it can only repeat or answer with the dictionary also ends here, so try Whisper Large v3 Turbo. No microphone: connect or select an input device (Mac). Not enough memory: close other apps and tap Retry; the clip is kept until a transcript is delivered.",
       "quotes": [
         { "file": "apps/ios/Sources/YorozuIOS/VoiceInput.swift", "text": "No speech was recognized." },
         { "file": "apps/ios/Sources/YorozuIOS/VoiceRecorder.swift", "text": "No microphone is available." },
