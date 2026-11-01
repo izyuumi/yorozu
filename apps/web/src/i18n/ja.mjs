@@ -20,6 +20,15 @@ export default {
     appStore: 'App Store で Yorozu を入手',
     downloadMac: 'Mac 版をダウンロード',
     fine: 'Mac：macOS 15 以降 · iPhone と iPad：App Store で配信中、iOS 18 以降 · 自分の OpenClaw Gateway が必要です · <a href="https://github.com/izyuumi/yorozu">オープンソース、MIT ライセンス</a>',
+    demo: {
+      label: 'iPhone の Yorozu での会話。昨夜のバックアップが終わったか尋ねると、エージェントがコンピュータで確認して答えます。',
+      title: '家のこと',
+      earlier: [['明日の予定は？', '2 件です。午前 10:00 に歯医者、午後 7:00 に夕食です。'], ['6 時に植物の水やりをリマインドして', 'わかりました。午後 6:00 にお知らせします。'], ['ダウンロードフォルダを整理して', '完了しました。38 個のファイルを書類、ピクチャ、インストーラに振り分けました。削除したものはありません。']],
+      ask: '昨夜のバックアップは終わった？',
+      tools: 'ツール呼び出し 2 件',
+      answer: 'はい。午前 3:12 に終わり、変更された 4,812 個のファイルを外付けドライブにコピーしました。空き容量はまだ 212 GB あります。',
+      placeholder: 'メッセージ',
+    },
     agent: {
       title: 'AI エージェントでセットアップ',
       intro: 'このプロンプトを Claude Code、Codex、Cursor などの AI エージェントに貼り付けてください。エージェントが Yorozu のヘルプサーバーに接続し、Mac か iPhone・iPad かを確認してから、手順を一つずつ案内します。',

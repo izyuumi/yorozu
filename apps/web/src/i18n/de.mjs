@@ -20,6 +20,15 @@ export default {
     appStore: 'Yorozu im App Store laden',
     downloadMac: 'Für Mac laden',
     fine: 'Mac: macOS 15 oder neuer · iPhone und iPad: im App Store, iOS 18 oder neuer · Benötigt dein eigenes OpenClaw-Gateway · <a href="https://github.com/izyuumi/yorozu">Open Source, MIT</a>',
+    demo: {
+      label: 'Ein Yorozu-Gespräch auf dem iPhone. Du fragst, ob das Backup von heute Nacht fertig ist; der Agent prüft es auf deinem Computer und antwortet.',
+      title: 'Rund ums Haus',
+      earlier: [['Was steht morgen in meinem Kalender?', 'Zwei Termine: Zahnarzt um 10:00 Uhr und Abendessen um 19:00 Uhr.'], ['Erinnere mich um 18 Uhr ans Blumengießen', 'Okay. Ich erinnere dich um 18:00 Uhr.'], ['Räum meinen Downloads-Ordner auf', 'Erledigt. Ich habe 38 Dateien in Dokumente, Bilder und Installer einsortiert. Nichts wurde gelöscht.']],
+      ask: 'Ist das Backup von heute Nacht fertig?',
+      tools: '2 Tool-Aufrufe',
+      answer: 'Ja. Es war um 3:12 Uhr fertig und hat 4.812 geänderte Dateien auf die externe Festplatte kopiert. Es sind noch 212 GB frei.',
+      placeholder: 'Nachricht',
+    },
     agent: {
       title: 'Mit deinem KI-Agenten einrichten',
       intro: 'Füge diesen Prompt in Claude Code, Codex, Cursor oder einen anderen KI-Agenten ein. Der Agent verbindet sich mit dem Hilfeserver von Yorozu, fragt, ob du einen Mac, ein iPhone oder ein iPad nutzt, und führt dich Schritt für Schritt durch die Einrichtung.',

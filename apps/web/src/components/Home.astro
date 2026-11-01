@@ -27,6 +27,9 @@ const docLinks = [
         </div>
         <p class="fine" set:html={h.fine} />
       </div>
+      <div class="hero-demo">
+        <div id="hero-demo" data-strings={JSON.stringify(h.demo)}></div>
+      </div>
     </div>
   </section>
 
@@ -71,3 +74,7 @@ const docLinks = [
   </section>
   <script is:inline src="/copy.js" defer></script>
 </Base>
+
+<script>
+  import '../hero/mount.tsx';
+</script>
