@@ -8,7 +8,7 @@ The wire between the Yorozu client app (iPhone, iPad, Mac) and the OpenClaw chan
 | Plugin (TypeScript, `node:crypto`) | `plugins/openclaw-yorozu/src/`: `wire.ts`, `envelope.ts`, `hub.ts` (sessions on either path), `direct.ts` (direct listener), `pairing.ts`, `localpair.ts` (local Mac pairing), `relay.ts` (relay link and dispatch), `push.ts`, `attachments.ts`, `history.ts`, `sessions.ts`, `reads.ts`, `cron.ts` |
 | Relay | `apps/relay/src/`: `protocol.ts` (shared rules), `worker.ts` (deployed), `index.ts` (Node), `mailbox.ts` |
 
-Change a message only with a matching change on both sides. The Swift client and the plugin never run against each other in a test: the relay has tests (`apps/relay/src/*.test.ts`), among them `direct.test.ts`, which runs the plugin's session core and direct listener against a device built on the plugin's own Noise code, directly and through the Node relay; the plugin's pure files have `node --test` tests (`plugins/openclaw-yorozu/test/`); and one fixture (`apps/ios/Tests/Fixtures/activity-content-state.json`) is shared by the plugin, relay and app tests. The rest is checked by compiling and running. Merging a change under `apps/relay/**` deploys the Worker (`.github/workflows/deploy-relay.yml`, `wrangler deploy` on push to `main`).
+Change a message only with a matching change on both sides. The Swift client and plugin share a deterministic unversioned handshake vector (`packages/YorozuWire/Tests/YorozuWireTests/Fixtures/unversioned-wire.json`): Swift asserts its init and finishes the response, and the plugin accepts that init and asserts the same response. For transport coverage, the relay has tests (`apps/relay/src/*.test.ts`), among them `direct.test.ts`, which runs the plugin's session core and direct listener against a device built on the plugin's own Noise code, directly and through the Node relay; the plugin's pure files have `node --test` tests (`plugins/openclaw-yorozu/test/`); and one fixture (`apps/ios/Tests/Fixtures/activity-content-state.json`) is shared by the plugin, relay and app tests. The rest is checked by compiling and running. Merging a change under `apps/relay/**` deploys the Worker (`.github/workflows/deploy-relay.yml`, `wrangler deploy` on push to `main`).
 
 Layers, outside in:
 
@@ -164,12 +164,14 @@ A Mac, which has no camera, can pair from a code that a paired iPhone or iPad sc
 
 ## Frames
 
-The relay `payload` is unpadded base64url of one binary frame. Byte 0 is the type (a JSON payload starts with `{` and never parses). Frames come in two formats, moving from the old to the new in three steps: the plugin accepts both (now); clients send the new one only to a plugin listing `unversioned-wire` (step 2, still pending); the plugin drops the old one, when the owner decides.
+The relay `payload` is unpadded base64url of one binary frame. Byte 0 is the type (a JSON payload starts with `{` and never parses). Frames come in two formats, moving from the old to the new in three steps: the plugin accepts both (now); clients send the new one only to a plugin listing `unversioned-wire` (step 2, now); the plugin drops the old one, when the owner decides.
 
 - **New**: one type byte, `0x11` init, `0x12` response, `0x13` box, then the bytes below. Prologue `yorozu|…`.
-- **Old**, what clients still send until step 2: the byte `0x03`, then the type `0x01`, `0x02` or `0x03`, then the bytes below. Prologue `yorozu-v3|…`.
+- **Old**, used for a plugin that did not list `unversioned-wire`: the byte `0x03`, then the type `0x01`, `0x02` or `0x03`, then the bytes below. Prologue `yorozu-v3|…`.
 
-The plugin answers each session in the format of the init frame that opened it, and opens a box only in that format.
+The client persists whether the host listed `unversioned-wire` in its last `peer_info` (absent means false), and uses that format for each new handshake on either path. If an unversioned init gets no response before the relay handshake timeout, the connection clears the flag and retries in legacy; a direct leg fails on timeout and leaves the relay to retry. The next `peer_info` corrects the flag.
+
+The plugin answers each session in the format of the init frame that opened it. Both sides reject a response or box in the other format.
 
 | Type | Direction | Bytes after the head |
 |---|---|---|
@@ -279,12 +281,12 @@ Each side sends its own as its first box and acts on nothing else until it has t
 |---|---|---|
 | `app` | the app version | the plugin version (`0.1.0`) |
 | `name` | device model | the host's hostname |
-| `capabilities` | `attachments`, `devices`, `replies`, `reactions`, `resume`, `direct` | `attachments`, `devices`, `invite`, `replies`, `reactions`, `resume`, `unversioned-wire`, `liveActivityPush` while its relay's `registered` said `liveActivity: true`, `direct` while its direct listener is listening, and `push-proxy` while its relay's `registered` said `pushProxy: true` |
+| `capabilities` | `attachments`, `devices`, `replies`, `reactions`, `resume`, `direct`, `unversioned-wire` | `attachments`, `devices`, `invite`, `replies`, `reactions`, `resume`, `unversioned-wire`, `liveActivityPush` while its relay's `registered` said `liveActivity: true`, `direct` while its direct listener is listening, and `push-proxy` while its relay's `registered` said `pushProxy: true` |
 | `mediaMaxBytes`, `agent`, `hostVersion` | — | attachment limit; `channels.yorozu.agent`; OpenClaw version |
 
 `direct` and `push-proxy` were introduced by [#532](https://github.com/izyuumi/yorozu/issues/532) (`Direct.capability`, `DIRECT`; `PushProxy.capability`, `PUSH_PROXY`; [Direct path](#direct-path)). The client lists `direct`, which asks the plugin for [`direct_hints`](#direct-path), and not `push-proxy`; it trusts a direct listener for its probe, not for the plugin's capability. `protocolMin` and `protocolMax` stay 3; new behavior is gated on a capability, never on a version.
 
-`unversioned-wire` was introduced by [#532](https://github.com/izyuumi/yorozu/issues/532), wire migration step 1 (`UNVERSIONED_WIRE`, plugin only). The plugin always lists it and accepts both frame formats and their prologues; each connection's init decides the format for its response and all session boxes. Clients still send the old format until step 2; they may send unversioned only to a plugin listing this capability.
+`unversioned-wire` was introduced by [#532](https://github.com/izyuumi/yorozu/issues/532), wire migration steps 1 and 2 (`UnversionedWire.capability`, `UNVERSIONED_WIRE`). The plugin always lists it and accepts both frame formats and their prologues; each connection's init decides the format for its response and all session boxes. Clients list it too and send unversioned only to a plugin that listed this capability, keeping legacy for every other plugin and falling back after an unanswered relay init as described in [Frames](#frames).
 
 The client offers attachments, Settings devices, adding a device and replying only when the plugin lists `attachments`, `devices`, `invite` and `replies` (attachments and replies also before it has the plugin's `peer_info`), and sends `replyTo` only to a plugin listing `replies`. The plugin answers `device_list`, `device_patch` and `pair_invite` from any client and reads `foreground.active` whenever present; it gates three things on the client's capabilities: a reply's files, sent to a client without `attachments` as one text line each; `replyTo` on `reply` and history items, left out for a client without `replies`; and `reaction` events and history `reactions`, left out for a client without `reactions`. The client offers reacting only once the plugin's `peer_info` lists `reactions`, and asks ActivityKit for a Live Activity push token only from a plugin listing `liveActivityPush` (otherwise its activity has none, as before). The plugin stores the client's `name` (cut to 64) for `openclaw yorozu devices`.
 
@@ -454,7 +456,7 @@ Capability `liveActivityPush` (iPhone, iPad). Counts-only ActivityKit pushes kee
 | Frames | `Frame(payload:)`, `.payload`, `.sid` | `decodeFrame`, `encodeFrame`, `frameSid` |
 | Boxes | `Session.seal`, `.open`, `.openEvent` | `Session.seal`, `.open` |
 | Envelope | `WireEvent`, `PeerInfo.negotiate`, `WireEvent.newId`, `isId` | `Event`, `parseEvent`, `encodeEvent`, `negotiate`, `isId` |
-| Capabilities | `Attachment.capability`, `Devices.capability`, `Invite.capability`, `ReplyTo.capability`, `Reaction.capability`, `ActivityReport.capability`, `Direct.capability`, `PushProxy.capability` | `ATTACHMENTS`, `DEVICES`, `INVITE`, `REPLIES`, `REACTIONS`, `LIVE_ACTIVITY_PUSH`, `DIRECT`, `PUSH_PROXY`, `UNVERSIONED_WIRE` |
+| Capabilities | `Attachment.capability`, `Devices.capability`, `Invite.capability`, `ReplyTo.capability`, `Reaction.capability`, `ActivityReport.capability`, `Direct.capability`, `PushProxy.capability`, `UnversionedWire.capability` | `ATTACHMENTS`, `DEVICES`, `INVITE`, `REPLIES`, `REACTIONS`, `LIVE_ACTIVITY_PUSH`, `DIRECT`, `PUSH_PROXY`, `UNVERSIONED_WIRE` |
 | Live Activity push | `ActivityReport` (the app's `ActivityReports.swift`, `YorozuActivities`) | `applyTurn`, `plan`, `contentState`, `holdFor` (`liveactivity.ts`) |
 | Attachments | `Attachment` (`chunkBytes`, `chunkCount`), `Upload`, `UploadAck`, `Download`, `Chunk` | `CHUNK_BYTES`, `attachments.ts` |
 | Push preview | `PushPreview.key`, `.open(userInfo:key:)`, `RelayConnection.registerPush` | `previewKey`, `previewPlaintext`, `sealPreview`, `threadRef` (`push.ts`) |

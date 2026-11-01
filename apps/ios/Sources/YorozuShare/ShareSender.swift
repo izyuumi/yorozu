@@ -33,9 +33,9 @@ enum ShareSender {
     @MainActor
     static func send(_ message: Message, file: File?, pairing: Pairing, progress: (Double) -> Void) async throws {
         let local = PeerInfo(app: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
-            name: DeviceModel.name, capabilities: [Attachment.capability, Attachment.resumeCapability])
+            name: DeviceModel.name, capabilities: [Attachment.capability, Attachment.resumeCapability, UnversionedWire.capability])
         let connection = try RelayConnection(pairing: pairing.pairing, identity: pairing.identity,
-            relayKnows: pairing.relayKnows, local: local)
+            relayKnows: pairing.relayKnows, local: local, unversionedWire: pairing.unversionedWire == true)
         let (steps, feed) = AsyncStream<Step>.makeStream()
         let updates = await connection.updates()
         let forward = Task { for await update in updates { feed.yield(.update(update)) } }

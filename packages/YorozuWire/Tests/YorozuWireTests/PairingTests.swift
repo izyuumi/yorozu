@@ -60,7 +60,7 @@ struct PairingTests {
         func payload(_ secret: String?) throws -> HandshakePayload {
             let pairing = QrPayload(v: 3, relayUrl: "wss://relay.example/ws", macPubkey: host.publicKey.base64URLEncodedString(),
                 token: "tok", roomId: "room", secret: secret)
-            guard case .handshakeInit(_, let message) = try ClientHandshake(identity: identity, pairing: pairing).frame else {
+            guard case .handshakeInit(_, let message, _) = try ClientHandshake(identity: identity, pairing: pairing).frame else {
                 throw Wire.Failure.malformed("not an init")
             }
             var responder = try NoiseIKHandshake(role: .responder, staticKey: host.privateKey,

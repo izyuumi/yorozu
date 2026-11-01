@@ -347,10 +347,11 @@ final class AppModel {
         guard !isDemo, let pairing else { return }
         let local = PeerInfo(app: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
             name: DeviceModel.name, capabilities: [Attachment.capability, Devices.capability, ReplyTo.capability, Reaction.capability,
-                Attachment.resumeCapability, Direct.capability])
+                Attachment.resumeCapability, Direct.capability, UnversionedWire.capability])
         // The relay races the plugin's direct listener (#532): loopback on the Mac, the plugin's hints and Bonjour; with no
         // usable candidate the race is relay-only. The racer keeps the `direct_hints` it receives.
-        let made = try? RacingConnection(pairing: pairing.pairing, identity: pairing.identity, relayKnows: pairing.relayKnows, local: local)
+        let made = try? RacingConnection(pairing: pairing.pairing, identity: pairing.identity, relayKnows: pairing.relayKnows, local: local,
+            unversionedWire: pairing.unversionedWire == true)
         guard let connection = made else { return failPairing(String(localized: "This pairing code can’t be used.")) }
         self.connection = connection
         #if os(iOS)
@@ -556,6 +557,8 @@ final class AppModel {
             pairingRelayUnreachable = true
         case .sessionOpen(let host):
             Self.connectionLog.info("session open, host \(host.app, privacy: .public) OpenClaw \(host.hostVersion ?? "?", privacy: .public)")
+            let unversionedWire = host.capabilities.contains(UnversionedWire.capability)
+            if pairing?.unversionedWire != unversionedWire { updatePairing { $0.unversionedWire = unversionedWire } }
             hostInfo = host
             sessionsOpened += 1
             transfers.resumable = host.capabilities.contains(Attachment.resumeCapability)

@@ -89,9 +89,9 @@ actor FakeLeg: ConnectionLeg {
         ready?()
     }
 
-    func open() {
+    func open(capabilities: [String] = []) {
         emit(.state(.ready))
-        emit(.sessionOpen(PeerInfo(app: name)))
+        emit(.sessionOpen(PeerInfo(app: name, capabilities: capabilities)))
     }
 
     func fail() { emit(.state(.offline)) }
@@ -105,7 +105,9 @@ actor Races {
     private(set) var added: [FakeLeg] = []
     /// The pairing secret each race handed its legs.
     private(set) var secrets: [String?] = []
-    func add(_ round: (relay: FakeLeg, direct: [FakeLeg]), secret: String? = nil) {
+    private(set) var wireFlags: [Bool] = []
+    func add(_ round: (relay: FakeLeg, direct: [FakeLeg]), secret: String? = nil, unversionedWire: Bool = false) {
+        wireFlags.append(unversionedWire)
         rounds.append(round)
         secrets.append(secret)
     }
@@ -207,17 +209,18 @@ struct RaceTests {
     /// stored LAN hint as `ws://<address>:<port>`.
     func racer(direct: Int = 1, sleep: RacingConnection.Sleep? = nil, joinWindow: Duration = RacingConnection.joinWindow,
         bonjour: Bool = false, network: String = "wifi", candidates makeCandidates: RacingConnection.Candidates? = nil,
-        hostIsLocal: @escaping @Sendable (DirectHints?) -> Bool = { _ in true }, secret: String? = nil) async -> RacingConnection {
+        hostIsLocal: @escaping @Sendable (DirectHints?) -> Bool = { _ in true }, secret: String? = nil,
+        unversionedWire: Bool = false) async -> RacingConnection {
         var pairing = pairing
         pairing.secret = secret
         let races = races
         let browser = browser
-        let legs: RacingConnection.Legs = { pairing, _, urls in
+        let legs: RacingConnection.Legs = { pairing, _, urls, unversionedWire in
             let round = (relay: FakeLeg("relay"), direct: urls.map { FakeLeg($0.absoluteString) })
-            Task { await races.add(round, secret: pairing.secret) }
+            Task { await races.add(round, secret: pairing.secret, unversionedWire: unversionedWire) }
             return (relay: round.relay as any ConnectionLeg, direct: round.direct.map { $0 as any ConnectionLeg })
         }
-        let added: RacingConnection.DirectLeg = { _, url in
+        let added: RacingConnection.DirectLeg = { _, url, _ in
             let leg = FakeLeg(url.absoluteString)
             Task { await races.add(leg) }
             return leg
@@ -232,7 +235,7 @@ struct RaceTests {
             return browser.results.stream
         }
         let changes = changes
-        let racer = RacingConnection(pairing: pairing, relayKnows: secret == nil, legs: legs, direct: added, candidates: makeCandidates ?? candidates,
+        let racer = RacingConnection(pairing: pairing, relayKnows: secret == nil, unversionedWire: unversionedWire, legs: legs, direct: added, candidates: makeCandidates ?? candidates,
             hints: hints, browse: bonjour ? browse : nil, pathChanges: { changes.stream }, network: { network }, winners: winners,
             sleep: sleep ?? { try await Task.sleep(for: $0 / 100) }, joinWindow: joinWindow, hostIsLocal: hostIsLocal)
         let updates = await racer.updates()
@@ -265,6 +268,21 @@ struct RaceTests {
             if !stopped { return false }
         }
         return true
+    }
+
+    @Test(arguments: [false, true])
+    func racesUseTheLastPeersWireCapability(_ unversionedWire: Bool) async {
+        let racer = await racer(unversionedWire: unversionedWire)
+        let (relay, direct) = await round(1)
+        #expect(await races.wireFlags == [unversionedWire])
+        await started([relay] + direct)
+        await relay.becomeReady()
+        await relay.open(capabilities: unversionedWire ? [] : [UnversionedWire.capability])
+        await eventually("relay opened") { await seen.opened == ["relay"] }
+        changes.continuation.yield(())
+        _ = await round(2)
+        #expect(await races.wireFlags == [unversionedWire, !unversionedWire])
+        await racer.stop()
     }
 
     @Test func directWinsAndTheRelayIsClosed() async {

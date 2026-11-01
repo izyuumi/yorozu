@@ -40,6 +40,7 @@ public actor RelayConnection {
     private let urlSession: URLSession
     private let dial: URL
     private var relayKnows: Bool
+    private var wireFormat: Wire.Format
     private var triedAsKnown = false
     private var probeNonce: String?
     private var ready: (@Sendable () -> Void)?
@@ -79,19 +80,21 @@ public actor RelayConnection {
     static let pongTimeout: Duration = .seconds(10)
     static let handshakeTimeout: Duration = .seconds(15)
 
-    public init(pairing: QrPayload, identity: PhoneIdentity, relayKnows: Bool, local: PeerInfo,
+    /// `unversionedWire` is true only if the host listed `UnversionedWire.capability` in its last `peer_info`.
+    public init(pairing: QrPayload, identity: PhoneIdentity, relayKnows: Bool, local: PeerInfo, unversionedWire: Bool = false,
         urlSession: URLSession = .shared) throws {
         self.init(path: .relay, dial: try RelayConnection.relayURL(pairing), pairing: pairing, identity: identity, relayKnows: relayKnows,
-            local: local, urlSession: urlSession)
+            local: local, unversionedWire: unversionedWire, urlSession: urlSession)
     }
 
-    init(path: Path, dial: URL, pairing: QrPayload, identity: PhoneIdentity, relayKnows: Bool, local: PeerInfo,
+    init(path: Path, dial: URL, pairing: QrPayload, identity: PhoneIdentity, relayKnows: Bool, local: PeerInfo, unversionedWire: Bool = false,
         urlSession: URLSession) {
         self.path = path
         self.pairing = pairing
         self.identity = identity
         self.relayKnows = relayKnows
         self.local = local
+        wireFormat = Wire.Format(unversionedWire: unversionedWire)
         self.urlSession = urlSession
         self.dial = dial
         host = Self.hostPort(dial)
@@ -446,17 +449,18 @@ public actor RelayConnection {
 
     private func beginHandshake(on socket: URLSessionWebSocketTask) {
         endSession()
-        guard let hs = try? ClientHandshake(identity: identity, pairing: pairing) else { return }
+        guard let hs = try? ClientHandshake(identity: identity, pairing: pairing, format: wireFormat) else { return }
         handshake = hs
         set(.handshaking)
         _ = transmit(hs.frame, on: socket)
-        connectionLog.info("\(self.label, privacy: .public): handshake granted, init sent")
+        connectionLog.info("\(self.label, privacy: .public): handshake granted, init sent (\(String(describing: hs.frame.format), privacy: .public))")
         handshakeDeadline = Task {
             try? await Task.sleep(for: Self.handshakeTimeout)
             guard !Task.isCancelled, socket === self.socket, self.hostOnline, !self.peerReady else { return }
             connectionLog.error("\(self.label, privacy: .public): handshake timed out")
             // Nothing buffers on the direct path: a handshake that got no answer fails the leg.
             if self.path == .direct { return self.closed(reason: "") }
+            self.wireFormat = self.wireFormat.afterHandshakeTimeout(onRelay: true, awaitingResponse: self.handshake != nil)
             self.beginHandshake(on: socket)
         }
     }
@@ -480,6 +484,9 @@ public actor RelayConnection {
     }
 
     private func receive(_ event: WireEvent) {
+        if case .peerInfo(let peer) = event {
+            wireFormat = Wire.Format(unversionedWire: peer.capabilities.contains(UnversionedWire.capability))
+        }
         guard peerReady else {
             guard case .peerInfo(let peer) = event else {
                 if case .error(let error) = event, error.code == "update_required" { stopForUpdate() }

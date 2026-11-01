@@ -60,10 +60,10 @@ extension RelayConnection: ConnectionLeg {}
 /// unacknowledged outbox on the new session. Each race reads the stored `direct_hints`, and Bonjour results join it as
 /// they come.
 public actor RacingConnection {
-    typealias Legs = @Sendable (_ pairing: QrPayload, _ relayKnows: Bool, _ direct: [URL])
+    typealias Legs = @Sendable (_ pairing: QrPayload, _ relayKnows: Bool, _ direct: [URL], _ unversionedWire: Bool)
         -> (relay: any ConnectionLeg, direct: [any ConnectionLeg])
     /// A direct leg added to the race in flight (a Bonjour result).
-    typealias DirectLeg = @Sendable (_ pairing: QrPayload, _ url: URL) -> any ConnectionLeg
+    typealias DirectLeg = @Sendable (_ pairing: QrPayload, _ url: URL, _ unversionedWire: Bool) -> any ConnectionLeg
     /// The direct candidates for these hints, and the hints left out with why.
     typealias Candidates = @Sendable (_ hints: DirectHints?) -> (candidates: [URL], skipped: [(String, String)])
     /// Matching Bonjour results for the pairing's tag; nil while browsing is not allowed.
@@ -76,6 +76,7 @@ public actor RacingConnection {
 
     private var pairing: QrPayload
     private var relayKnows: Bool
+    private var unversionedWire: Bool
     private let makeLegs: Legs
     private let makeDirect: DirectLeg
     private let candidates: Candidates
@@ -120,16 +121,17 @@ public actor RacingConnection {
     private var sessionBegan = ContinuousClock.now
     private var quickLosses = 0
 
-    public init(pairing: QrPayload, identity: PhoneIdentity, relayKnows: Bool, local: PeerInfo, urlSession: URLSession = .shared) throws {
+    /// `unversionedWire` is true only if the host listed `UnversionedWire.capability` in its last `peer_info`.
+    public init(pairing: QrPayload, identity: PhoneIdentity, relayKnows: Bool, local: PeerInfo, unversionedWire: Bool = false, urlSession: URLSession = .shared) throws {
         let relayURL = try RelayConnection.relayURL(pairing)
-        let direct: DirectLeg = { pairing, url in
+        let direct: DirectLeg = { pairing, url, unversionedWire in
             RelayConnection(path: .direct, dial: url, pairing: pairing, identity: identity, relayKnows: true, local: local,
-                urlSession: urlSession)
+                unversionedWire: unversionedWire, urlSession: urlSession)
         }
-        self.init(pairing: pairing, relayKnows: relayKnows, legs: { pairing, relayKnows, urls in
+        self.init(pairing: pairing, relayKnows: relayKnows, unversionedWire: unversionedWire, legs: { pairing, relayKnows, urls, unversionedWire in
             let relay = RelayConnection(path: .relay, dial: relayURL, pairing: pairing, identity: identity, relayKnows: relayKnows,
-                local: local, urlSession: urlSession)
-            return (relay: relay as any ConnectionLeg, direct: urls.map { direct(pairing, $0) })
+                local: local, unversionedWire: unversionedWire, urlSession: urlSession)
+            return (relay: relay as any ConnectionLeg, direct: urls.map { direct(pairing, $0, unversionedWire) })
         }, direct: direct, candidates: { hints in
             #if os(macOS)
             let isMac = true
@@ -143,7 +145,7 @@ public actor RacingConnection {
             winners: DefaultsRaceWinners(), hostIsLocal: { DirectCandidates.hostMayBeLocal($0, LocalInterface.current()) })
     }
 
-    init(pairing: QrPayload, relayKnows: Bool, legs: @escaping Legs, direct: @escaping DirectLeg,
+    init(pairing: QrPayload, relayKnows: Bool, unversionedWire: Bool = false, legs: @escaping Legs, direct: @escaping DirectLeg,
         candidates: @escaping Candidates, hints: DirectHintStore, browse: Browse?,
         pathChanges: @escaping @Sendable () -> AsyncStream<Void>,
         network: @escaping @Sendable () async -> String, winners: any RaceWinners,
@@ -151,6 +153,7 @@ public actor RacingConnection {
         hostIsLocal: @escaping @Sendable (DirectHints?) -> Bool = { _ in true }) {
         self.pairing = pairing
         self.relayKnows = relayKnows
+        self.unversionedWire = unversionedWire
         makeLegs = legs
         makeDirect = direct
         self.candidates = candidates
@@ -276,7 +279,7 @@ public actor RacingConnection {
         // Pairing races the stored hints too, which came with the QR code (#532 step 5); Bonjour waits until it paired.
         let paired = pairing.secret == nil
         let found = candidates(pairing.roomId.flatMap(hints.load(room:)))
-        let (relay, direct) = makeLegs(pairing, relayKnows, found.candidates)
+        let (relay, direct) = makeLegs(pairing, relayKnows, found.candidates, unversionedWire)
         raceBegan = .now
         raceNetwork = network
         dialed = Set(direct.map(\.key))
@@ -324,7 +327,7 @@ public actor RacingConnection {
     /// A Bonjour result joins the race in flight as one more direct leg, unless the race already dials its URL.
     private func add(_ url: URL, _ round: Int) {
         guard round == self.round, running, winner == nil, dialed.insert(url.absoluteString).inserted else { return }
-        let leg = makeDirect(pairing, url)
+        let leg = makeDirect(pairing, url, unversionedWire)
         let id = register(leg)
         order.append(id)
         connectionLog.info("race \(round, privacy: .public) adds \(leg.label, privacy: .public) from Bonjour")
@@ -412,6 +415,7 @@ public actor RacingConnection {
         guard round == self.round, legs[id] != nil else { return }
         switch update {
         case .sessionOpen(let peer):
+            unversionedWire = peer.capabilities.contains(UnversionedWire.capability)
             let won = winner != id
             if id == winner, id == relayID, hostWasOffline {
                 hostWasOffline = false
