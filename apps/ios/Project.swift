@@ -238,7 +238,8 @@ let project = Project(
             bundleId: "to.yumi.yorozu.tests",
             deploymentTargets: .macOS("15.0"),
             sources: [
-                "Tests/**", "Sources/ShareInbox/Pairing.swift", "Sources/ShareInbox/Keychain.swift", "Sources/Client/Store.swift", "Sources/Client/SupportDirectory.swift",
+                "Tests/**", "Sources/ShareInbox/Pairing.swift", "Sources/ShareInbox/PairingMigration.swift", "Sources/ShareInbox/Keychain.swift",
+                "Sources/Client/Store.swift", "Sources/Client/SupportDirectory.swift", "Sources/Client/StoredNamesMigration.swift",
                 "Sources/Client/WidgetPublisher.swift", "Sources/Client/ActivityReports.swift", "Sources/Client/CronSchedule.swift",
                 "Sources/Client/ConnectionRoute.swift", "Sources/Client/LocalPairingFile.swift", "Sources/Client/PairingEntry.swift",
                 "Sources/WidgetShared/Model/**", "Sources/WidgetShared/Interface/WidgetLink.swift",

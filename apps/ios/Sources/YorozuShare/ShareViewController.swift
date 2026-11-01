@@ -40,6 +40,7 @@ final class ShareViewController: UIViewController {
 
     /// Sends from here when this device is paired, else hands the share to the app as before.
     func send(done: @escaping () -> Void) {
+        PairingMigration.run()
         guard let pairing = try? Pairing.load(), pairing.paired else { return later(done: done) }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let file = file.map { url in
