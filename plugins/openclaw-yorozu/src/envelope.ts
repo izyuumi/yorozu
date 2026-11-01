@@ -20,8 +20,10 @@ export const REACTIONS = "reactions";
 /** Counts-only Live Activity pushes through the relay; listed only while the relay can send them. */
 export const LIVE_ACTIVITY_PUSH = "liveActivityPush";
 export const RESUME = "resume";
-/** Introduced by #532; listed by the plugin only once its direct listener exists (#532 step 3). */
+/** #532: listed only while the plugin's direct listener is listening. */
 export const DIRECT = "direct";
+/** #532: listed only while the relay's `registered` said `pushProxy: true`; a direct client then sends `push_token`. */
+export const PUSH_PROXY = "push-proxy";
 export const CHUNK_BYTES = 160 * 1024;
 export type Attachment = { id: string; name: string; mime: string; size: number };
 // Capability `replies`.
@@ -82,6 +84,8 @@ export type CronJob = {
   delivery?: { channel: "yorozu"; threadId: string };
 };
 export type CronList = { jobs?: CronJob[]; error?: string };
+// Capability `push-proxy` (#532): a direct client's APNs token (hex), forwarded to the relay as `push {device, token}`.
+export type PushToken = { token: string };
 
 export type Event =
   | { kind: "peer_info"; data: PeerInfo }
@@ -109,7 +113,8 @@ export type Event =
   | { kind: "upload_state"; data: UploadState }
   | { kind: "download"; data: Download }
   | { kind: "chunk"; data: Chunk }
-  | { kind: "live_activity"; data: ActivityReport };
+  | { kind: "live_activity"; data: ActivityReport }
+  | { kind: "push_token"; data: PushToken };
 
 export type Invalid = { kind: "invalid"; name: string; convId?: string; messageId?: string; attachmentId?: string };
 export type Received = Event | Invalid | { kind: "unknown"; name: string };
@@ -194,6 +199,7 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
     optBool(d.deleted),
   conv_update: (d) => isId(d.convId),
   live_activity: validReport,
+  push_token: (d) => str(d.token) && d.token.length > 0 && d.token.length <= 1024 && /^(?:[0-9a-f]{2})+$/i.test(d.token),
 };
 
 export const LIMITS = "at most 32 attachments; names and types of 1 to 255 characters; device ids up to 64 characters; emoji up to 32";

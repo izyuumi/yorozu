@@ -27,7 +27,8 @@ jobs:
           files=$(git diff --name-only "$BASE" HEAD)
           match() { printf '%s\n' "$files" | grep -qE "$1" && echo true || echo false; }
           echo "app=$(match '^(apps/ios/|packages/|plugins/|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
-          echo "relay=$(match '^(apps/relay/|apps/ios/Tests/Fixtures/|pnpm-lock\.yaml$|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
+          # The relay's tests also run the plugin's direct path end to end (src/direct.test.ts).
+          echo "relay=$(match '^(apps/relay/|apps/ios/Tests/Fixtures/|plugins/openclaw-yorozu/src/|pnpm-lock\.yaml$|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
           # The help MCP bundle is generated from these (not CHANGELOG.md: the release PR changes only that).
           echo "mcp=$(match '^(apps/mcp/|apps/ios/|plugins/openclaw-yorozu/|docs/|README\.md$|apps/web/worker\.mjs$|pnpm-lock\.yaml$|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
           # The website's Worker serves the help MCP server, so its tests run for both.
@@ -73,7 +74,7 @@ jobs:
       - name: Wire package tests
         run: env -u SDKROOT swift test --package-path packages/YorozuWire --scratch-path .build/wire
 
-  # The plugin's spool tests import only node built-ins, so they run without OpenClaw or an install.
+  # The plugin's pure files' tests import only node built-ins, so they run without OpenClaw or an install.
   plugin:
     needs: changes
     if: needs.changes.outputs.plugin == 'true'

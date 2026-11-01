@@ -14,7 +14,7 @@ registerHooks({
     return next(specifier, context);
   },
 });
-const { DIRECT, parseEvent } = await import("../src/envelope.ts");
+const { DIRECT, PUSH_PROXY, parseEvent } = await import("../src/envelope.ts");
 
 const CONV = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b";
 const MSG = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
@@ -54,6 +54,13 @@ test("malformed fields are still refused", () => {
   assert.equal(parse({ kind: "device_patch", data: { id: "d", removed: "yes" } })?.kind, "invalid");
 });
 
-test("the direct capability is named and not yet listed", () => {
+test("the direct and push-proxy capabilities are named", () => {
   assert.equal(DIRECT, "direct");
+  assert.equal(PUSH_PROXY, "push-proxy");
+});
+
+test("push_token takes a hex token only", () => {
+  assert.equal(parse({ kind: "push_token", data: { token: "00ab" } })?.kind, "push_token");
+  assert.equal(parse({ kind: "push_token", data: { token: "00ab", extra: 1 } })?.kind, "push_token");
+  for (const token of ["", "abc", "zz", 7]) assert.equal(parse({ kind: "push_token", data: { token } })?.kind, "invalid");
 });

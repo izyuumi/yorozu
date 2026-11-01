@@ -3,45 +3,34 @@ import os from "node:os";
 import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import { captureEffectAuthority } from "openclaw/plugin-sdk/fetch-runtime";
 import { computeBackoff, sleepWithAbort } from "openclaw/plugin-sdk/runtime-env";
-import { WebSocket } from "openclaw/plugin-sdk/websocket-runtime";
+import { WebSocket, WebSocketServer } from "openclaw/plugin-sdk/websocket-runtime";
 import { receiveUpload, receiveUploadStatus, serveDownload } from "./attachments.js";
 import { getDevice, listDevices, putDevice, removeDevice } from "./devices.js";
+import { bindAddresses, serveDirect, type DirectListener } from "./direct.js";
 import {
   ATTACHMENTS,
   DEVICES,
-  encodeEvent,
+  DIRECT,
   INVITE,
   LIVE_ACTIVITY_PUSH,
+  PUSH_PROXY,
   REACTIONS,
   REPLIES,
   RESUME,
-  negotiate,
-  parseEvent,
   PROTOCOL_VERSION,
-  rejection,
   type DeviceList,
   type DevicePatch,
-  type ErrorInfo,
   type Event,
   type Message,
   type Reaction,
   type PeerInfo,
 } from "./envelope.js";
+import { CLOSE, Hub, type Link, type Request } from "./hub.js";
 import type { HostKeys } from "./keys.js";
 import { applyTurn, cleanJobs, holdFor, plan, type TurnChange, type WireJob } from "./liveactivity.js";
 import { firstLine, previewKey, previewPlaintext, pushTitle, sealPreview, threadRef } from "./push.js";
 import { listCursors, mergeCursor } from "./reads.js";
-import {
-  acceptHandshake,
-  b64u,
-  decodeFrame,
-  fingerprint,
-  HANDSHAKE_MAX_AGE_MS,
-  helloProof,
-  signFrame,
-  type Frame,
-  type Session,
-} from "./wire.js";
+import { b64u, decodeFrame, fingerprint, helloProof, signFrame } from "./wire.js";
 
 const PING = JSON.stringify({ type: "ping" });
 const PONG = JSON.stringify({ type: "pong" });
@@ -49,8 +38,6 @@ const HEARTBEAT_MS = 30_000;
 const BACKOFF = { initialMs: 1_000, maxMs: 30_000, factor: 2, jitter: 0.3 };
 const BATCH_FRAMES = 16;
 const BATCH_BYTES = 1024 * 1024 - 4096;
-const TAKEN_MS = 24 * 60 * 60 * 1000;
-const TAKEN_MAX = 10_000;
 
 const PEER_INFO: PeerInfo = {
   protocolMin: PROTOCOL_VERSION,
@@ -60,27 +47,6 @@ const PEER_INFO: PeerInfo = {
   capabilities: [ATTACHMENTS, DEVICES, INVITE, REPLIES, REACTIONS, RESUME],
 };
 
-function downgrade(event: Event, peer: PeerInfo): Event {
-  if (!peer.capabilities.includes(REPLIES)) {
-    if (event.kind === "reply" && event.data.replyTo) {
-      const { replyTo: _, ...reply } = event.data;
-      event = { kind: "reply", data: reply };
-    } else if (event.kind === "history" && "items" in event.data) {
-      const items = event.data.items.map((item) => ("replyTo" in item ? { ...item, replyTo: undefined } : item));
-      event = { kind: "history", data: { ...event.data, items } };
-    }
-  }
-  if (!peer.capabilities.includes(REACTIONS) && event.kind === "history" && "items" in event.data) {
-    const items = event.data.items.map((item) => ("reactions" in item ? { ...item, reactions: undefined } : item));
-    event = { kind: "history", data: { ...event.data, items } };
-  }
-  if (peer.capabilities.includes(ATTACHMENTS) || event.kind !== "reply" || !event.data.attachments) return event;
-  const { attachments, ...reply } = event.data;
-  const lines = attachments.map((a) => `(Attachment: ${a.name}; update Yorozu to open it.)`);
-  return { kind: "reply", data: { ...reply, text: [reply.text, ...lines].filter(Boolean).join("\n\n") } };
-}
-
-type Served = { session: Session; peer?: PeerInfo; foreground?: string; active?: boolean };
 type Status = { connected: boolean; error?: string };
 
 export type RelayHostOptions = {
@@ -95,6 +61,8 @@ export type RelayHostOptions = {
   mediaMaxBytes: number;
   agent?: string;
   hostVersion?: string;
+  /** The direct listener's port (`channels.yorozu.direct`); absent when it is off. */
+  directPort?: number;
 };
 
 export type Pairing = {
@@ -114,13 +82,13 @@ let host: {
   keys: HostKeys;
   mint: (() => Promise<{ token: string; expiresAt: number }>) | null;
   forget: (deviceKeys: string[]) => void;
-  broadcast: ((events: Event[]) => number) | null;
+  broadcast: (events: Event[]) => number;
   notify: ((convId: string, messageId: string, text: string) => Promise<void>) | null;
   activityTurn: (convId: string, change: TurnChange) => void;
 } | null = null;
 
 export function broadcast(events: Event[]): number {
-  return host?.broadcast?.(events) ?? 0;
+  return host?.broadcast(events) ?? 0;
 }
 
 /** A turn moved on: devices whose Live Activity shows it get a counts-only push. */
@@ -173,27 +141,22 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     ...(opts.agent && { agent: opts.agent }),
     ...(opts.hostVersion && { hostVersion: opts.hostVersion }),
   };
-  const served = new Map<string, Served>();
-  const bySid = new Map<string, string>();
-  const answered = new Map<string, number>();
-  const taken = new Map<string, number>();
   const alerted = new Map<string, Set<string>>();
 
   const url = new URL(opts.relayUrl);
   url.searchParams.set("room", keys.room);
 
-  const drop = (reason: string) => log?.info(`yorozu: handshake dropped (${reason})`);
   let relaySend: ((raw: string) => void) | null = null;
-  const endSession = (deviceKey: string): void => {
-    const old = served.get(deviceKey);
-    if (old) bySid.delete(b64u(old.session.sid));
-    served.delete(deviceKey);
-  };
+  let relayFrames: ((payloads: string[]) => void) | null = null;
+  let relayActivities = false;
+  let relayPushProxy = false;
+  let direct: DirectListener | null = null;
+  // Every relay session shares this link; it sends through whichever relay socket is registered.
+  const relayLink: Link = { path: "relay", send: (payloads) => relayFrames?.(payloads) };
 
   // Live Activities by device key, kept across sessions: the app is suspended while they matter.
   type Watch = { jobs: WireJob[]; sent: WireJob[]; turns: Record<string, string>; pushedAt?: number; timer?: NodeJS.Timeout };
   const activities = new Map<string, Watch>();
-  let relayActivities = false;
   const forgetActivity = (deviceKey: string, tellRelay: boolean): void => {
     clearTimeout(activities.get(deviceKey)?.timer);
     activities.delete(deviceKey);
@@ -231,15 +194,144 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     relaySend?.(JSON.stringify({ type: "activityToken", device: deviceKey, token: report.pushToken }));
   };
 
+  const deviceList = async (deviceKey: string): Promise<Event> => {
+    const devices = (await listDevices()).map((d) => ({
+      id: d.signingPub,
+      ...(d.name && { name: d.name }),
+      pairedAt: d.pairedAt,
+      push: d.push !== false,
+      current: d.signingPub === deviceKey,
+    }));
+    return { kind: "device_list", data: { devices } satisfies DeviceList };
+  };
+  const patchDevice = async (patch: DevicePatch, deviceKey: string): Promise<Event> => {
+    const device = await getDevice(patch.id);
+    if (!device) return { kind: "device_list", data: { error: "unknown device" } };
+    if (patch.removed) {
+      await removeDevice(patch.id);
+      me.forget([patch.id]);
+      log?.info("yorozu: device removed from Settings");
+    } else if (patch.push !== undefined && (device.push !== false) !== patch.push) {
+      await putDevice({ ...device, push: patch.push });
+    }
+    return deviceList(deviceKey);
+  };
+  const syncHere = (convId: string, reader: string): void => {
+    const marked = alerted.get(convId);
+    alerted.delete(convId);
+    const connected = hub.direct();
+    const devices = [...(marked ?? [])].filter((key) => key !== reader && !connected.has(key));
+    if (!devices.length) return;
+    relaySend?.(JSON.stringify({ type: "notify", class: "sync", threadRef: threadRef(convId), devices }));
+  };
+
+  async function dispatch({ deviceKey, event, reply, refuse }: Request): Promise<boolean> {
+    switch (event.kind) {
+      case "reaction":
+        opts.onReaction(event.data);
+        return true;
+      case "read_cursor": {
+        const merged = await mergeCursor(event.data);
+        hub.broadcast([{ kind: "read_cursor", data: merged }]);
+        if (!merged.unread) syncHere(merged.convId, deviceKey);
+        return true;
+      }
+      case "upload":
+        reply(await receiveUpload(event.data, opts.mediaMaxBytes));
+        return true;
+      case "upload_status":
+        reply(await receiveUploadStatus(event.data, opts.mediaMaxBytes));
+        return true;
+      case "download":
+        reply([await serveDownload(event.data)]);
+        return true;
+      case "live_activity":
+        reportActivity(deviceKey, event.data);
+        return true;
+      case "push_token":
+        if (relayPushProxy && relaySend) relaySend(JSON.stringify({ type: "push", device: deviceKey, token: event.data.token }));
+        else log?.info(`yorozu: push token dropped (the relay is ${relaySend ? "without pushProxy" : "unreachable"})`);
+        return true;
+      case "error":
+        log?.info(`yorozu: device error ${event.data.code}`);
+        return true;
+      case "device_list":
+        reply([await deviceList(deviceKey)]);
+        return true;
+      case "device_patch":
+        reply([await patchDevice(event.data, deviceKey)]);
+        return true;
+      case "pair_invite":
+        void (async () => {
+          let answer: Event;
+          try {
+            const { link, webLink, fingerprint, expiresAt } = await beginPairing();
+            answer = { kind: "pair_invite", data: { link, webLink, fingerprint, expiresAt } };
+            log?.info("yorozu: pairing code made for a paired device");
+          } catch (error) {
+            answer = { kind: "pair_invite", data: { error: error instanceof Error ? error.message : String(error) } };
+          }
+          reply([answer]);
+        })();
+        return true;
+      case "cron_list":
+      case "conv_list":
+      case "history":
+      case "conv_patch": {
+        const answer = await opts.onRequest?.(event);
+        if (answer) reply([answer]);
+        else if (event.kind !== "conv_patch") refuse({ code: "unsupported", message: `this host does not answer "${event.kind}"` });
+        return true;
+      }
+      default:
+        return false;
+    }
+  }
+
+  const hub: Hub = new Hub({
+    keys,
+    log,
+    peerInfo: () => ({
+      ...peerInfo,
+      capabilities: [
+        ...peerInfo.capabilities,
+        ...(relayActivities ? [LIVE_ACTIVITY_PUSH] : []),
+        ...(direct?.listening ? [DIRECT] : []),
+        ...(relayPushProxy ? [PUSH_PROXY] : []),
+      ],
+    }),
+    staticKeyOf: async (deviceKey) => (await getDevice(deviceKey))?.staticPub,
+    pair: async (proof, staticPub, deviceKey, now) => {
+      const secret = provenSecret(proof, staticPub, deviceKey, now);
+      if (!secret) return false;
+      pending.delete(secret);
+      const evicted = await putDevice({ signingPub: deviceKey, staticPub, pairedAt: now });
+      me.forget(evicted);
+      log?.info(`yorozu: device paired${evicted.length ? " (the oldest made way)" : ""}`);
+      return true;
+    },
+    refused: (deviceKey) => relaySend?.(JSON.stringify({ type: "revoke", pubkey: deviceKey })),
+    onPeer: async ({ deviceKey, event, reply }) => {
+      if (event.kind !== "peer_info") return;
+      const name = event.data.name?.trim().slice(0, 64);
+      const device = name ? await getDevice(deviceKey) : undefined;
+      if (device && name && device.name !== name) await putDevice({ ...device, name });
+      const cursors = await listCursors();
+      if (cursors.length) reply(cursors.map((data) => ({ kind: "read_cursor", data })));
+    },
+    onMessage: opts.onMessage,
+    dispatch,
+  });
+
   const me: NonNullable<typeof host> = (host = {
     relayUrl: opts.relayUrl,
     keys,
     mint: null,
-    broadcast: null,
+    broadcast: (events) => hub.broadcast(events),
     notify: null,
     forget: (deviceKeys) => {
       for (const key of deviceKeys) {
-        endSession(key);
+        hub.end(key, { code: CLOSE.unauthorized, reason: "revoked" });
         forgetActivity(key, false);
         relaySend?.(JSON.stringify({ type: "revoke", pubkey: key }));
       }
@@ -253,6 +345,22 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
       }
     },
   });
+
+  if (opts.directPort !== undefined) {
+    direct = await serveDirect({
+      addresses: bindAddresses(os.networkInterfaces()),
+      port: opts.directPort,
+      keys,
+      hub,
+      server: (options) => new WebSocketServer(options),
+      transmit: (socket, raw) =>
+        void captureEffectAuthority()
+          .initiate(() => socket.send(raw))
+          .catch((error: unknown) => log?.warn(`yorozu: direct send failed: ${String(error)}`)),
+      log,
+    });
+    if (!direct.listening) log?.warn(`yorozu: direct listener could not bind port ${opts.directPort}; relay only`);
+  }
 
   function connect(): Promise<boolean> {
     return new Promise((resolve) => {
@@ -285,23 +393,10 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         }
         flush();
       };
-      const broadcastHere = (events: Event[]): number => {
-        const live = [...served.values()].filter((entry) => entry.peer);
-        const takes = (event: Event, peer: PeerInfo) => event.kind !== "reaction" || peer.capabilities.includes(REACTIONS);
-        sendFrames(
-          events.flatMap((event) =>
-            live.filter((entry) => takes(event, entry.peer!)).map((entry) => seal(entry.session, downgrade(event, entry.peer!))),
-          ),
-        );
-        return live.length;
-      };
-      const seal = (session: Session, event: Event): string => session.seal(encodeEvent(event));
       const notifyHere = async (convId: string, messageId: string, text: string): Promise<void> => {
         const body = firstLine(text);
         if (!body) return;
-        const watching = new Set(
-          [...served].filter(([, entry]) => entry.peer && (entry.active || entry.foreground === convId)).map(([key]) => key),
-        );
+        const watching = hub.watching(convId);
         const devices = (await listDevices()).filter((device) => device.push !== false && !watching.has(device.signingPub));
         if (!devices.length) return log?.info("yorozu: notify skipped (every device has the app open or push off)");
         const marked = alerted.get(convId) ?? new Set<string>();
@@ -326,175 +421,6 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         );
         log?.info(`yorozu: notify sent (${devices.length} device${devices.length === 1 ? "" : "s"}, ${watching.size} skipped)`);
       };
-      const syncHere = (convId: string, reader: string): void => {
-        const marked = alerted.get(convId);
-        alerted.delete(convId);
-        const devices = [...(marked ?? [])].filter((key) => key !== reader);
-        if (!devices.length) return;
-        send(JSON.stringify({ type: "notify", class: "sync", threadRef: threadRef(convId), devices }));
-      };
-      const deviceList = async (deviceKey: string): Promise<Event> => {
-        const devices = (await listDevices()).map((d) => ({
-          id: d.signingPub,
-          ...(d.name && { name: d.name }),
-          pairedAt: d.pairedAt,
-          push: d.push !== false,
-          current: d.signingPub === deviceKey,
-        }));
-        return { kind: "device_list", data: { devices } satisfies DeviceList };
-      };
-      const patchDevice = async (patch: DevicePatch, deviceKey: string): Promise<Event> => {
-        const device = await getDevice(patch.id);
-        if (!device) return { kind: "device_list", data: { error: "unknown device" } };
-        if (patch.removed) {
-          await removeDevice(patch.id);
-          me.forget([patch.id]);
-          log?.info("yorozu: device removed from Settings");
-        } else if (patch.push !== undefined && (device.push !== false) !== patch.push) {
-          await putDevice({ ...device, push: patch.push });
-        }
-        return deviceList(deviceKey);
-      };
-
-      async function handshake(payload: string, sig: string): Promise<void> {
-        const now = Date.now();
-        const accepted = acceptHandshake({ host: keys.static, room: keys.room, payload, sig, now });
-        if (!accepted) return drop("invalid or stale");
-        const deviceKey = b64u(accepted.deviceSigningKey);
-        const staticPub = b64u(accepted.deviceStatic);
-        for (const [sid, until] of answered) if (until < now) answered.delete(sid);
-        if (answered.has(accepted.sid)) return drop("replayed");
-        const known = (await getDevice(deviceKey))?.staticPub === staticPub;
-        const secret = known ? undefined : provenSecret(accepted.payload.proof, staticPub, deviceKey, now);
-        if (!known && !secret) {
-          send(JSON.stringify({ type: "revoke", pubkey: deviceKey }));
-          return drop("device not allowlisted");
-        }
-        answered.set(accepted.sid, accepted.payload.ts + HANDSHAKE_MAX_AGE_MS);
-        if (secret) {
-          pending.delete(secret);
-          const evicted = await putDevice({ signingPub: deviceKey, staticPub, pairedAt: now });
-          me.forget(evicted);
-          log?.info(`yorozu: device paired${evicted.length ? " (the oldest made way)" : ""}`);
-        }
-        endSession(deviceKey);
-        served.set(deviceKey, { session: accepted.session });
-        bySid.set(accepted.sid, deviceKey);
-        const capabilities = [...peerInfo.capabilities, ...(relayActivities ? [LIVE_ACTIVITY_PUSH] : [])];
-        sendFrames([accepted.response, seal(accepted.session, { kind: "peer_info", data: { ...peerInfo, capabilities } })]);
-        log?.info(`yorozu: session open (${served.size} device${served.size === 1 ? "" : "s"})`);
-      }
-
-      async function box(frame: Frame): Promise<void> {
-        const deviceKey = frame.type === "box" ? bySid.get(b64u(frame.sid)) : undefined;
-        const entry = deviceKey ? served.get(deviceKey) : undefined;
-        const plain = entry?.session.open(frame);
-        if (!deviceKey || !entry || !plain) {
-          return log?.info(`yorozu: dropped a frame no open session can read (${deviceKey ? "undecryptable" : "unknown session"})`);
-        }
-        const event = parseEvent(plain);
-        const refuse = (data: ErrorInfo) => {
-          log?.warn(`yorozu: refused a device event: ${data.code}: ${data.message}`);
-          const now = served.get(deviceKey);
-          if (now) sendFrames([seal(now.session, { kind: "error", data })]);
-        };
-        if (entry.peer && (event === null || event.kind === "invalid" || event.kind === "unknown")) {
-          return refuse(rejection(event));
-        }
-        if (!entry.peer) {
-          if (event?.kind !== "peer_info") {
-            return refuse({ code: "bad_request", message: "the session must start with peer_info" });
-          }
-          if (negotiate(peerInfo, event.data) === null) {
-            sendFrames([
-              seal(entry.session, {
-                kind: "error",
-                data: { code: "update_required", message: "no common protocol version" },
-              }),
-            ]);
-            served.delete(deviceKey);
-            bySid.delete(b64u(entry.session.sid));
-            return log?.info("yorozu: session closed (update required)");
-          }
-          entry.peer = event.data;
-          const name = event.data.name?.trim().slice(0, 64);
-          const device = name ? await getDevice(deviceKey) : undefined;
-          if (device && name && device.name !== name) await putDevice({ ...device, name });
-          const cursors = await listCursors();
-          if (cursors.length) sendFrames(cursors.map((data) => seal(entry.session, { kind: "read_cursor", data })));
-          return log?.info(`yorozu: peer_info received (protocol ${PROTOCOL_VERSION})`);
-        }
-        if (event?.kind === "message") {
-          const { convId, messageId } = event.data;
-          broadcastHere([{ kind: "delivered", data: { convId, messageId } }]);
-          const now = Date.now();
-          if (taken.has(messageId)) return;
-          for (const [id, at] of taken) {
-            if (at > now - TAKEN_MS && taken.size < TAKEN_MAX) break;
-            taken.delete(id);
-          }
-          taken.set(messageId, now);
-          return opts.onMessage(event.data);
-        }
-        if (event?.kind === "reaction") return opts.onReaction(event.data);
-        if (event?.kind === "read_cursor") {
-          const merged = await mergeCursor(event.data);
-          broadcastHere([{ kind: "read_cursor", data: merged }]);
-          if (!merged.unread) syncHere(merged.convId, deviceKey);
-          return;
-        }
-        if (event?.kind === "upload" || event?.kind === "upload_status" || event?.kind === "download") {
-          const replies =
-            event.kind === "upload"
-              ? await receiveUpload(event.data, opts.mediaMaxBytes)
-              : event.kind === "upload_status"
-                ? await receiveUploadStatus(event.data, opts.mediaMaxBytes)
-                : [await serveDownload(event.data)];
-          const now = served.get(deviceKey);
-          if (now?.peer) sendFrames(replies.map((reply) => seal(now.session, reply)));
-          return;
-        }
-        if (event?.kind === "foreground") {
-          entry.foreground = event.data.convId ?? undefined;
-          entry.active = event.data.active === true;
-          return;
-        }
-        if (event?.kind === "live_activity") return reportActivity(deviceKey, event.data);
-        if (event?.kind === "error") return log?.info(`yorozu: device error ${event.data.code}`);
-        if (event?.kind === "device_list" || event?.kind === "device_patch") {
-          const answer = event.kind === "device_list" ? await deviceList(deviceKey) : await patchDevice(event.data, deviceKey);
-          const now = served.get(deviceKey);
-          if (now?.peer) sendFrames([seal(now.session, answer)]);
-          return;
-        }
-        if (event?.kind === "pair_invite") {
-          void (async () => {
-            let answer: Event;
-            try {
-              const { link, webLink, fingerprint, expiresAt } = await beginPairing();
-              answer = { kind: "pair_invite", data: { link, webLink, fingerprint, expiresAt } };
-              log?.info("yorozu: pairing code made for a paired device");
-            } catch (error) {
-              answer = { kind: "pair_invite", data: { error: error instanceof Error ? error.message : String(error) } };
-            }
-            const now = served.get(deviceKey);
-            if (now?.peer) sendFrames([seal(now.session, answer)]);
-          })();
-          return;
-        }
-        if (event?.kind === "cron_list" || event?.kind === "conv_list" || event?.kind === "history" || event?.kind === "conv_patch") {
-          const answer = await opts.onRequest?.(event);
-          if (!answer) {
-            if (event.kind === "conv_patch") return;
-            return refuse({ code: "unsupported", message: `this host does not answer "${event.kind}"` });
-          }
-          const now = served.get(deviceKey);
-          if (now?.peer) sendFrames([seal(now.session, downgrade(answer, now.peer))]);
-          return;
-        }
-        if (event?.kind === "peer_info") return log?.info("yorozu: peer_info repeated; the first one stands");
-        return refuse({ code: "unsupported", message: `a device cannot send "${event?.kind}"` });
-      }
 
       async function receive(raw: string): Promise<void> {
         if (raw === PONG) {
@@ -520,8 +446,9 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           case "registered": {
             registered = true;
             relaySend = send;
+            relayFrames = sendFrames;
             relayActivities = msg.liveActivity === true;
-            me.broadcast = broadcastHere;
+            relayPushProxy = msg.pushProxy === true;
             me.notify = notifyHere;
             me.mint = () =>
               new Promise((resolve, reject) => {
@@ -546,8 +473,11 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           case "frame": {
             if (typeof msg.payload === "string" && typeof msg.sig === "string") {
               const frame = decodeFrame(msg.payload);
-              if (frame?.type === "init") await handshake(msg.payload, msg.sig);
-              else if (frame?.type === "box") await box(frame);
+              if (frame?.type === "init") await hub.handshake(msg.payload, msg.sig, relayLink);
+              else if (frame?.type === "box") {
+                const opened = hub.open(frame, relayLink);
+                if (opened) await hub.handle(opened);
+              }
             }
             if (Number.isSafeInteger(msg.seq)) send(JSON.stringify({ type: "ack", seq: msg.seq }));
             return;
@@ -565,12 +495,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
             if (typeof msg.device === "string") forgetActivity(msg.device, false);
             return;
           case "phones":
-            if (msg.count === 0) {
-              for (const entry of served.values()) {
-                entry.foreground = undefined;
-                entry.active = undefined;
-              }
-            }
+            if (msg.count === 0) hub.relayGone();
             return;
           default:
             return;
@@ -601,8 +526,8 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         signal.removeEventListener("abort", stop);
         if (registered) {
           relaySend = null;
+          relayFrames = null;
           me.mint = null;
-          me.broadcast = null;
           me.notify = null;
           for (const waiter of minting.splice(0)) waiter.reject(new Error("the relay connection closed"));
         }
@@ -624,5 +549,6 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     log?.info(`yorozu: reconnecting in ${Math.round(delay / 100) / 10} s`);
     await sleepWithAbort(delay, signal).catch(() => {});
   }
+  await direct?.close();
   if (host === me) host = null;
 }

@@ -22,6 +22,7 @@ import {
 import { isId } from "./envelope.js";
 import { answerRequest } from "./history.js";
 import { listCronJobs } from "./cron.js";
+import { DIRECT_PORT } from "./direct.js";
 import { loadHostKeys } from "./keys.js";
 import { notifyReply, runRelayHost } from "./relay.js";
 import { loadMessageTimes } from "./activity.js";
@@ -41,6 +42,7 @@ type YorozuConfig = {
   relayUrl?: string;
   mediaMaxMb?: number;
   textChunkLimit?: number;
+  direct?: { enabled?: boolean; port?: number };
 };
 
 export type YorozuAccount = {
@@ -49,7 +51,12 @@ export type YorozuAccount = {
   configured: boolean;
   agent: string;
   relayUrl: string;
+  /** The direct listener's port, or null when `channels.yorozu.direct.enabled` is false (#532). */
+  directPort: number | null;
 };
+
+const port = (value: unknown): number =>
+  Number.isInteger(value) && (value as number) >= 1024 && (value as number) <= 65535 ? (value as number) : DIRECT_PORT;
 
 function resolveAccount(cfg: OpenClawConfig): YorozuAccount {
   const section = ((cfg.channels as Record<string, unknown> | undefined)?.[CHANNEL_ID] ??
@@ -60,6 +67,7 @@ function resolveAccount(cfg: OpenClawConfig): YorozuAccount {
     configured: true,
     agent: section.agent?.trim() || "main",
     relayUrl: section.relayUrl?.trim() || DEFAULT_RELAY_URL,
+    directPort: section.direct?.enabled === false ? null : port(section.direct?.port),
   };
 }
 
@@ -93,6 +101,7 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
       mediaMaxBytes: maxBytes,
       agent,
       hostVersion: yorozuRuntime.getRuntime().version,
+      ...(account.directPort !== null && { directPort: account.directPort }),
       onMessage: (message) => void handleMessage(turn, message),
       onReaction: (reaction) => {
         const { sessionKey } = resolveThreadSessionKeys({ baseSessionKey: route.sessionKey, threadId: reaction.convId });

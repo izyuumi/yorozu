@@ -23,7 +23,15 @@
           "agent": { "type": "string", "default": "main" },
           "relayUrl": { "type": "string", "default": "wss://relay.yumi.to" },
           "mediaMaxMb": { "type": "number" },
-          "textChunkLimit": { "type": "integer" }
+          "textChunkLimit": { "type": "integer" },
+          "direct": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean", "default": true },
+              "port": { "type": "integer", "minimum": 1024, "maximum": 65535, "default": 8738 }
+            }
+          }
         }
       }
     }
