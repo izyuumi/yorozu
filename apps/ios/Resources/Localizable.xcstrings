@@ -15749,6 +15749,58 @@
         }
       }
     },
+    "Part of the recording couldn’t be transcribed. Try again." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "録音の一部を文字起こしできませんでした。もう一度お試しください。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "部分录音无法转写。请重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "部分錄音無法轉寫。請再試一次。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "녹음의 일부를 받아쓰지 못했습니다. 다시 시도하세요."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo transcribir parte de la grabación. Inténtalo de nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Une partie de l’enregistrement n’a pas pu être transcrite. Réessayez."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein Teil der Aufnahme konnte nicht transkribiert werden. Versuche es erneut."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível transcrever parte da gravação. Tente novamente."
+          }
+        }
+      }
+    },
     "The download was interrupted. Try again." : {
       "localizations" : {
         "ja" : {
