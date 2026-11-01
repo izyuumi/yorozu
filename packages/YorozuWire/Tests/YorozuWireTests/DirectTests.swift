@@ -174,14 +174,15 @@ struct RaceTests {
     let sleeps = Sleeps()
 
     /// Waits a hundredth of the policy's delays unless `sleep` says otherwise.
-    func racer(direct: Int = 1, sleep: RacingConnection.Sleep? = nil) async -> RacingConnection {
+    func racer(direct: Int = 1, sleep: RacingConnection.Sleep? = nil, joinWindow: Duration = RacingConnection.joinWindow) async
+        -> RacingConnection {
         let races = races
         let racer = RacingConnection(pairing: pairing, relayKnows: true, legs: { _, _ in
             let round = (relay: FakeLeg("relay"), direct: (0..<direct).map { FakeLeg("direct\($0)") })
             Task { await races.add(round) }
             return (relay: round.relay as any ConnectionLeg, direct: round.direct.map { $0 as any ConnectionLeg })
         }, pathChanges: { [changes] in changes.stream }, network: { "wifi" }, winners: winners,
-            sleep: sleep ?? { try await Task.sleep(for: $0 / 100) })
+            sleep: sleep ?? { try await Task.sleep(for: $0 / 100) }, joinWindow: joinWindow)
         let updates = await racer.updates()
         let seen = seen
         Task { for await update in updates { await seen.add(update) } }
@@ -366,6 +367,35 @@ struct RaceTests {
         #expect(await !relay.stopped)
         // A new network path still restarts it.
         changes.continuation.yield()
+        _ = await round(2)
+        await eventually("old legs closed") { await stopped([relay] + direct) }
+        await racer.stop()
+    }
+
+    @Test func reconnectRightAfterTheRaceWasWonJoinsIt() async {
+        let racer = await racer()
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        await relay.becomeReady()
+        await relay.open()
+        await eventually("relay opened") { await seen.opened == ["relay"] }
+        await racer.reconnect()
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await races.count == 1)
+        #expect(await !relay.stopped)
+        #expect(await racer.send(Message(convId: "c", messageId: "m1", text: "hi")))
+        await racer.stop()
+    }
+
+    @Test func reconnectAfterTheJoinWindowRacesAgain() async {
+        let racer = await racer(joinWindow: .milliseconds(50))
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        await relay.becomeReady()
+        await relay.open()
+        await eventually("relay opened") { await seen.opened == ["relay"] }
+        try? await Task.sleep(for: .milliseconds(80))
+        await racer.reconnect()
         _ = await round(2)
         await eventually("old legs closed") { await stopped([relay] + direct) }
         await racer.stop()

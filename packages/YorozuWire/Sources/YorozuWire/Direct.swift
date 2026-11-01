@@ -71,7 +71,7 @@ public actor RacingConnection {
     typealias Legs = @Sendable (_ pairing: QrPayload, _ relayKnows: Bool) -> (relay: any ConnectionLeg, direct: [any ConnectionLeg])
     typealias Sleep = @Sendable (Duration) async throws -> Void
 
-    /// An app reconnect joins a race this young that has no winner yet, instead of starting another.
+    /// An app reconnect joins a healthy race this young, won or not, instead of starting another.
     static let joinWindow = Duration.seconds(10)
 
     private var pairing: QrPayload
@@ -81,6 +81,7 @@ public actor RacingConnection {
     private let network: @Sendable () async -> String
     private let winners: any RaceWinners
     private let sleep: Sleep
+    private let joinWindow: Duration
 
     private var continuation: AsyncStream<RelayConnection.Update>.Continuation?
     private var running = false
@@ -123,7 +124,7 @@ public actor RacingConnection {
 
     init(pairing: QrPayload, relayKnows: Bool, legs: @escaping Legs, pathChanges: @escaping @Sendable () -> AsyncStream<Void>,
         network: @escaping @Sendable () async -> String, winners: any RaceWinners,
-        sleep: @escaping Sleep = { try await Task.sleep(for: $0) }) {
+        sleep: @escaping Sleep = { try await Task.sleep(for: $0) }, joinWindow: Duration = RacingConnection.joinWindow) {
         self.pairing = pairing
         self.relayKnows = relayKnows
         makeLegs = legs
@@ -131,6 +132,7 @@ public actor RacingConnection {
         self.network = network
         self.winners = winners
         self.sleep = sleep
+        self.joinWindow = joinWindow
     }
 
     /// Forgets which path won for this pairing room, on every network kind: for a pairing the app removes or replaces.
@@ -155,13 +157,16 @@ public actor RacingConnection {
         await race()
     }
 
-    /// The app's reconnect (scene active, a sent share, a background wake) joins a race in flight that has no winner yet:
-    /// that race began moments ago for the same reason. A stale race, a relay waiting out its retry or a pause after a
-    /// lost session gives way to a new race.
+    /// The app's reconnect (scene active, a sent share, a background wake) joins a race that began under 10 s ago, won or
+    /// not: it began moments ago for the same reason (at launch the race can be won before the scene's reconnect comes).
+    /// A stale race, a pause after a lost session, a relay waiting out its retry or a winner whose session is no longer
+    /// open gives way to a new race.
     public func reconnect() async {
         guard running else { return await start() }
-        if winner == nil, again == nil, relayState != .offline, ContinuousClock.now - raceBegan < Self.joinWindow {
-            return connectionLog.info("reconnect joins race \(self.round, privacy: .public) in flight")
+        let healthy = again == nil && (winner == nil ? relayState != .offline : state == .ready)
+        if healthy, ContinuousClock.now - raceBegan < joinWindow {
+            let won = winner == nil ? "in flight" : "already won"
+            return connectionLog.info("reconnect joins race \(self.round, privacy: .public), \(won, privacy: .public)")
         }
         await race()
     }

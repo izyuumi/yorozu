@@ -138,12 +138,12 @@ public actor RelayConnection {
         connect()
     }
 
-    /// The app's reconnect joins a dial still in flight (at launch, `start` and the scene becoming active come together);
-    /// otherwise, and while waiting out a retry, it dials at once.
+    /// The app's reconnect joins a dial under 10 s old that is still connecting or has opened (at launch, `start` and the
+    /// scene becoming active come together); otherwise, and while waiting out a retry or offline, it dials at once.
     public func reconnect() {
         guard running else { return start() }
         attempt = 0
-        if state == .connecting, socket != nil, ContinuousClock.now - dialed < RacingConnection.joinWindow { return }
+        if socket != nil, state != .offline, ContinuousClock.now - dialed < RacingConnection.joinWindow { return }
         connect()
     }
 
