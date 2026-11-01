@@ -1,7 +1,21 @@
 import CryptoKit
 import Foundation
 
+/// Capability flag for #532 wire migration step 2: send unversioned frames to hosts listing it.
+public enum UnversionedWire {
+    public static let capability = "unversioned-wire"
+}
+
 public enum Wire {
+    public enum Format: Equatable, Sendable {
+        case legacy, unversioned
+
+        init(unversionedWire: Bool) { self = unversionedWire ? .unversioned : .legacy }
+
+        func afterHandshakeTimeout(onRelay: Bool, awaitingResponse: Bool) -> Self {
+            onRelay && awaitingResponse ? .legacy : self
+        }
+    }
     public static let version: UInt8 = 3
     public static let protocolName = "Noise_IK_25519_ChaChaPoly_SHA256"
     public static let sidBytes = 8
@@ -14,8 +28,8 @@ public enum Wire {
         case decrypt
     }
 
-    public static func prologue(roomId: String, deviceSigningKey: Data) -> Data {
-        Data("yorozu-v3|\(roomId)|\(deviceSigningKey.base64URLEncodedString())".utf8)
+    public static func prologue(roomId: String, deviceSigningKey: Data, format: Format = .legacy) -> Data {
+        Data("\(format == .legacy ? "yorozu-v3" : "yorozu")|\(roomId)|\(deviceSigningKey.base64URLEncodedString())".utf8)
     }
 }
 
@@ -164,32 +178,42 @@ public struct NoiseIKHandshake {
         return payload
     }
 
-    public func split(sid: Data) throws -> Session {
+    public func split(sid: Data, format: Wire.Format = .legacy) throws -> Session {
         guard step == 2 else { throw Wire.Failure.malformed("handshake not finished") }
         let (k1, k2) = Noise.hkdf(state.ck, Data())
         let (send, recv) = role == .initiator ? (k1, k2) : (k2, k1)
-        return Session(sid: sid, handshakeHash: state.h, sendKey: send, recvKey: recv)
+        return Session(sid: sid, handshakeHash: state.h, sendKey: send, recvKey: recv, format: format)
     }
 }
 
 public enum Frame: Equatable, Sendable {
-    case handshakeInit(deviceSigningKey: Data, message: Data)
-    case handshakeResponse(sid: Data, message: Data)
-    case transport(sid: Data, counter: UInt64, ciphertext: Data)
+    case handshakeInit(deviceSigningKey: Data, message: Data, format: Wire.Format = .legacy)
+    case handshakeResponse(sid: Data, message: Data, format: Wire.Format = .legacy)
+    case transport(sid: Data, counter: UInt64, ciphertext: Data, format: Wire.Format = .legacy)
+
+    public var format: Wire.Format {
+        switch self {
+        case .handshakeInit(_, _, let format), .handshakeResponse(_, _, let format), .transport(_, _, _, let format): format
+        }
+    }
+
+    private func head(_ type: UInt8) -> Data {
+        format == .legacy ? Data([Wire.version, type]) : Data([0x10 + type])
+    }
 
     public var sid: Data {
         switch self {
-        case .handshakeInit(_, let message): Data(message.prefix(Wire.sidBytes))
-        case .handshakeResponse(let sid, _), .transport(let sid, _, _): sid
+        case .handshakeInit(_, let message, _): Data(message.prefix(Wire.sidBytes))
+        case .handshakeResponse(let sid, _, _), .transport(let sid, _, _, _): sid
         }
     }
 
     public var bytes: Data {
         switch self {
-        case .handshakeInit(let key, let message): Data([Wire.version, 1]) + key + message
-        case .handshakeResponse(let sid, let message): Data([Wire.version, 2]) + sid + message
-        case .transport(let sid, let counter, let ciphertext):
-            Data([Wire.version, 3]) + sid + withUnsafeBytes(of: counter.littleEndian) { Data($0) } + ciphertext
+        case .handshakeInit(let key, let message, _): head(1) + key + message
+        case .handshakeResponse(let sid, let message, _): head(2) + sid + message
+        case .transport(let sid, let counter, let ciphertext, _):
+            head(3) + sid + withUnsafeBytes(of: counter.littleEndian) { Data($0) } + ciphertext
         }
     }
 
@@ -198,17 +222,30 @@ public enum Frame: Equatable, Sendable {
     public init(bytes raw: Data) throws {
         let b = Data(raw)
         let sid = Wire.sidBytes
-        guard b.count >= 2, b[0] == Wire.version else { throw Wire.Failure.malformed("not a wire frame") }
-        let body = Data(b.dropFirst(2))
-        switch b[1] {
+        guard let first = b.first else { throw Wire.Failure.malformed("not a wire frame") }
+        let format: Wire.Format
+        let type: UInt8
+        let body: Data
+        if first == Wire.version, b.count >= 2 {
+            format = .legacy
+            type = b[1]
+            body = Data(b.dropFirst(2))
+        } else if (0x11...0x13).contains(first) {
+            format = .unversioned
+            type = first - 0x10
+            body = Data(b.dropFirst())
+        } else {
+            throw Wire.Failure.malformed("not a wire frame")
+        }
+        switch type {
         case 1 where body.count >= 32 + 96 && body.count <= 32 + 65_535:
-            self = .handshakeInit(deviceSigningKey: body.prefix(32), message: Data(body.dropFirst(32)))
+            self = .handshakeInit(deviceSigningKey: body.prefix(32), message: Data(body.dropFirst(32)), format: format)
         case 2 where body.count >= sid + 48 && body.count <= sid + 65_535:
-            self = .handshakeResponse(sid: body.prefix(sid), message: Data(body.dropFirst(sid)))
+            self = .handshakeResponse(sid: body.prefix(sid), message: Data(body.dropFirst(sid)), format: format)
         case 3 where body.count >= sid + 8 + 16:
             let counter = body.dropFirst(sid).prefix(8).reversed().reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
             guard counter <= Wire.maxCounter else { throw Wire.Failure.malformed("counter out of range") }
-            self = .transport(sid: body.prefix(sid), counter: counter, ciphertext: Data(body.dropFirst(sid + 8)))
+            self = .transport(sid: body.prefix(sid), counter: counter, ciphertext: Data(body.dropFirst(sid + 8)), format: format)
         default:
             throw Wire.Failure.malformed("bad frame")
         }
@@ -221,6 +258,7 @@ public enum Frame: Equatable, Sendable {
 }
 
 public struct Session: Sendable {
+    public let format: Wire.Format
     public let sid: Data
     public let handshakeHash: Data
     private let sendKey: SymmetricKey
@@ -228,7 +266,8 @@ public struct Session: Sendable {
     public private(set) var sendCounter: UInt64 = 0
     public private(set) var lastReceived: UInt64?
 
-    init(sid: Data, handshakeHash: Data, sendKey: Data, recvKey: Data) {
+    init(sid: Data, handshakeHash: Data, sendKey: Data, recvKey: Data, format: Wire.Format = .legacy) {
+        self.format = format
         self.sid = sid
         self.handshakeHash = handshakeHash
         self.sendKey = SymmetricKey(data: sendKey)
@@ -240,11 +279,12 @@ public struct Session: Sendable {
         let counter = sendCounter
         let ciphertext = try Noise.encrypt(sendKey, counter, Data(), plaintext)
         sendCounter += 1
-        return .transport(sid: sid, counter: counter, ciphertext: ciphertext)
+        return .transport(sid: sid, counter: counter, ciphertext: ciphertext, format: format)
     }
 
     public mutating func open(_ frame: Frame) throws -> Data {
-        guard case .transport(let sid, let counter, let ciphertext) = frame else { throw Wire.Failure.malformed("not a transport frame") }
+        guard case .transport(let sid, let counter, let ciphertext, _) = frame else { throw Wire.Failure.malformed("not a transport frame") }
+        guard frame.format == format else { throw Wire.Failure.malformed("wrong wire format") }
         guard sid == self.sid else { throw Wire.Failure.otherSession }
         if let lastReceived, counter <= lastReceived { throw Wire.Failure.replay }
         let plaintext = try Noise.decrypt(recvKey, counter, Data(), ciphertext)
@@ -279,28 +319,29 @@ public struct ClientHandshake {
     public let frame: Frame
     private let noise: NoiseIKHandshake
 
-    public init(identity: PhoneIdentity, pairing: QrPayload, now: Date = Date(), ephemeral: Data? = nil) throws {
+    public init(identity: PhoneIdentity, pairing: QrPayload, format: Wire.Format = .legacy, now: Date = Date(), ephemeral: Data? = nil) throws {
         guard let roomId = pairing.roomId, let hostKey = Data(base64URLEncoded: pairing.macPubkey), hostKey.count == 32 else {
             throw Wire.Failure.malformed("pairing lacks room or host key")
         }
         var noise = try NoiseIKHandshake(role: .initiator, staticKey: identity.sessionPrivateKey, remoteStatic: hostKey,
-            prologue: Wire.prologue(roomId: roomId, deviceSigningKey: identity.signingPublicKey), ephemeral: ephemeral)
+            prologue: Wire.prologue(roomId: roomId, deviceSigningKey: identity.signingPublicKey, format: format), ephemeral: ephemeral)
         let proof = pairing.secret.map {
             YorozuCrypto.helloProof(secret: $0, pub: identity.sessionPublicKey.base64URLEncodedString(),
                 spub: identity.signingPublicKey.base64URLEncodedString())
         }
         let payload = try HandshakePayload(ts: Int64(now.timeIntervalSince1970 * 1000), proof: proof).encoded()
-        frame = .handshakeInit(deviceSigningKey: identity.signingPublicKey, message: try noise.writeMessage(payload))
+        frame = .handshakeInit(deviceSigningKey: identity.signingPublicKey, message: try noise.writeMessage(payload), format: format)
         self.noise = noise
     }
 
     public var sid: Data { frame.sid }
 
     public func finish(_ response: Frame) throws -> Session {
-        guard case .handshakeResponse(let sid, let message) = response else { throw Wire.Failure.malformed("not a handshake response") }
+        guard case .handshakeResponse(let sid, let message, _) = response else { throw Wire.Failure.malformed("not a handshake response") }
+        guard response.format == frame.format else { throw Wire.Failure.malformed("wrong wire format") }
         guard sid == self.sid else { throw Wire.Failure.otherSession }
         var noise = noise
         _ = try noise.readMessage(message)
-        return try noise.split(sid: sid)
+        return try noise.split(sid: sid, format: frame.format)
     }
 }

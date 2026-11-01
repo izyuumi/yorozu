@@ -7,6 +7,7 @@ struct Pairing: Codable, Equatable {
     var relayKnows = false
     var paired = false
     var pairedAt: Date?
+    var unversionedWire: Bool?
 
     private static let account = "pairing"
     private static let oldAccount = "pairing-v3"  // moved to `account` on first load; the fallback goes in 0.11
