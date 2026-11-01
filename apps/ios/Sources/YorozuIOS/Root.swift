@@ -27,10 +27,10 @@ struct RootView: View {
             LocalNetworkExplainer(model: model).yorozuTint()
         }
         .alert(String(localized: "Pair with this host?"),
-            isPresented: Binding(get: { model.pendingPairing != nil }, set: { if !$0 { model.pendingPairing = nil } }),
+            isPresented: Binding(get: { model.pendingPairing != nil }, set: { if !$0 && model.pendingPairing != nil { model.dismissPendingPairing() } }),
             presenting: model.pendingPairing) { payload in
             Button(String(localized: "Pair")) { model.confirm(payload) }
-            Button(String(localized: "Cancel"), role: .cancel) { model.pendingPairing = nil }
+            Button(String(localized: "Cancel"), role: .cancel) { model.dismissPendingPairing() }
         } message: { payload in
             Text(String(localized: "Check that this host key matches the one `openclaw yorozu pair` printed, or the one your other device shows.\n\nHost key: \(payload.fingerprint)\nRelay: \(URL(string: payload.relayUrl)?.host() ?? payload.relayUrl)"))
         }
@@ -69,16 +69,19 @@ struct RootView: View {
 }
 
 struct PairingView: View {
-    let model: AppModel
+    @Bindable var model: AppModel
 
-    @State private var code = ""
     @State private var scanning = false
+    @State private var findingHost = false
 
     var body: some View {
         NavigationStack {
             Form {
                 #if os(macOS)
-                if !model.connecting { deviceCode }
+                if !model.connecting {
+                    thisMac
+                    deviceCode
+                }
                 #endif
                 Section {
                     Text("Run `openclaw yorozu pair` on the computer that runs your OpenClaw Gateway. It prints a QR code and a pairing link, valid for 10 minutes.")
@@ -93,7 +96,7 @@ struct PairingView: View {
                             ProgressView()
                             Text("Pairing…")
                         }
-                        Button(String(localized: "Cancel"), role: .cancel) { model.unpair() }
+                        Button(String(localized: "Cancel"), role: .cancel) { model.cancelPairing() }
                     } footer: {
                         Text(model.state.label)
                     }
@@ -104,7 +107,7 @@ struct PairingView: View {
                     }
                     #endif
                     Section {
-                        TextField(String(localized: "Pairing link"), text: $code, axis: .vertical)
+                        TextField(String(localized: "Pairing link"), text: $model.pairingEntry.text, axis: .vertical)
                             .textStyle(.footnote, monospaced: true)
                             #if os(iOS)
                             .textInputAutocapitalization(.never)
@@ -115,13 +118,13 @@ struct PairingView: View {
                         PasteButton(payloadType: String.self) { strings in
                             guard let text = strings.first else { return }
                             Task { @MainActor in
-                                code = text
+                                model.pairingEntry.text = text
                                 model.pairingError = model.submit(text)
                             }
                         }
                         .accessibilityIdentifier("pairing.paste")
-                        Button(String(localized: "Pair")) { model.pairingError = model.submit(code) }
-                            .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Button(String(localized: "Pair")) { model.pairingError = model.submit(model.pairingEntry.text) }
+                            .disabled(model.pairingEntry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                             .accessibilityIdentifier("pairing.submit")
                     } footer: {
                         Text("Paste the `yorozu://pair…` link, or the https link the QR code opens.")
@@ -151,6 +154,31 @@ struct PairingView: View {
     }
 
     #if os(macOS)
+    private var thisMac: some View {
+        Section {
+            Button {
+                findingHost = true
+                Task {
+                    model.pairingError = await model.pairWithThisMac()
+                    findingHost = false
+                }
+            } label: {
+                if findingHost {
+                    HStack {
+                        ProgressView().controlSize(.small)
+                        Text("Finding the Gateway…")
+                    }
+                } else {
+                    Label(String(localized: "Pair with the Gateway on this Mac"), systemImage: "desktopcomputer")
+                }
+            }
+            .disabled(findingHost)
+            .accessibilityIdentifier("pairing.thisMac")
+        } footer: {
+            Text("If your OpenClaw Gateway runs on this Mac, Yorozu pairs with it directly, without a code.")
+        }
+    }
+
     private var deviceCode: some View {
         Section {
             if let code = model.deviceCode {

@@ -33,9 +33,16 @@ export function directAddress(address: string): boolean {
     return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
   }
   if (family !== 6 || address.includes("%") || address.includes(".")) return false;
+  return loopbackAddress(address) || ((hextets(address)[0] ?? 0) & 0xfe00) === 0xfc00;
+}
+
+/** 127.0.0.0/8 or `::1`: a listener only processes on this machine reach. */
+export function loopbackAddress(address: string): boolean {
+  const family = isIP(address);
+  if (family === 4) return octets(address)[0] === 127;
+  if (family !== 6 || address.includes("%") || address.includes(".")) return false;
   const h = hextets(address);
-  const loopback = h.slice(0, 7).every((x) => x === 0) && h[7] === 1;
-  return loopback || ((h[0] ?? 0) & 0xfe00) === 0xfc00;
+  return h.slice(0, 7).every((x) => x === 0) && h[7] === 1;
 }
 
 /** The addresses the listener binds: each allowed local address once. */
@@ -86,6 +93,9 @@ export type DirectOptions = {
   /** Sends one message; the plugin routes it through OpenClaw's effect authority. */
   transmit?: (socket: DirectSocket, raw: string) => void;
   pendingMs?: number;
+  /** `local_pair` (feature flag `local-pair`): writes the local pairing file and returns its path. Asked only on a
+   * loopback listener. */
+  localPair?: () => Promise<string>;
   log?: Log;
 };
 
@@ -164,6 +174,19 @@ export async function serveDirect(opts: DirectOptions): Promise<DirectListener> 
           if (msg?.type !== "probe" || !validNonce(msg.nonce)) return refuse("expected a probe");
           probed = true;
           return send(JSON.stringify(probeAnswer(keys.signing, keys.room, msg.nonce)));
+        }
+        // `local-pair` (#532): a Mac on this machine asks, instead of its init, where the local pairing file is. The
+        // answer is the path only; the link stays in the file, which only this user can read.
+        if (msg?.type === "local_pair" && opts.localPair && loopbackAddress(host)) {
+          let answer: { type: "local_pair"; path?: string; error?: string };
+          try {
+            answer = { type: "local_pair", path: await opts.localPair() };
+          } catch (error) {
+            log?.warn(`yorozu: local pairing failed: ${error instanceof Error ? error.message : String(error)}`);
+            answer = { type: "local_pair", error: "the host could not make a pairing code" };
+          }
+          send(JSON.stringify(answer));
+          return ws.close(1000, "done");
         }
         if (payload === null || sig === null || decoded?.type !== "init") return refuse("expected an init frame");
         if (!(await hub.handshake(payload, sig, link))) return refuse("handshake refused");

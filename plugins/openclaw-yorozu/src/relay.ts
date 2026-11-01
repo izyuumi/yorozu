@@ -2,6 +2,7 @@ import os from "node:os";
 import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import { captureEffectAuthority } from "openclaw/plugin-sdk/fetch-runtime";
 import { computeBackoff, sleepWithAbort } from "openclaw/plugin-sdk/runtime-env";
+import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 import { WebSocket, WebSocketServer } from "openclaw/plugin-sdk/websocket-runtime";
 import { receiveUpload, receiveUploadStatus, serveDownload } from "./attachments.js";
 import { getDevice, listDevices, putDevice, removeDevice } from "./devices.js";
@@ -24,6 +25,7 @@ import {
 import { CLOSE, Hub, type Link, type Request } from "./hub.js";
 import type { HostKeys } from "./keys.js";
 import { applyTurn, cleanJobs, holdFor, plan, type TurnChange, type WireJob } from "./liveactivity.js";
+import { LocalPairingFile, localPairingPath } from "./localpair.js";
 import { mintCode, pairer, pairingQuery, PendingPairings } from "./pairing.js";
 import { firstLine, previewKey, previewPlaintext, pushTitle, sealPreview, threadRef } from "./push.js";
 import { listCursors, mergeCursor } from "./reads.js";
@@ -61,7 +63,7 @@ export type Pairing = {
   fingerprint: string;
   expiresAt: number;
   devices: number;
-  /** The relay could not mint a token: the code pairs over the direct path only (#532 step 5). */
+  /** The code pairs over the direct path only (#532 step 5 and local Mac pairing). */
   directOnly: boolean;
 };
 
@@ -96,10 +98,18 @@ export async function notifyReply(convId: string, messageId: string, text: strin
 }
 
 export async function beginPairing(): Promise<Pairing> {
+  const { link, webLink, fingerprint, expiresAt, directOnly } = await mintPairing();
+  return { link, webLink, fingerprint, expiresAt, directOnly, devices: (await listDevices()).length };
+}
+
+/** A new pairing code and its pending secret: for `openclaw yorozu pair`, `pair_invite` and the local pairing file. */
+async function mintPairing(directOnly = false): Promise<Omit<Pairing, "devices"> & { secret: string }> {
   if (!host) throw new Error("the yorozu channel reaches neither its relay nor its direct listener; check `openclaw channels status`");
   const { relayUrl, keys } = host;
   const hints = host.hints();
-  const { token, expiresAt, directOnly } = await mintCode(host.mint, hints, host.log);
+  // Local Mac pairing must answer within 5 s, without waiting on a relay token.
+  const code = await mintCode(directOnly ? null : host.mint, hints, directOnly ? undefined : host.log);
+  const { token, expiresAt } = code;
   const secret = pending.add(expiresAt);
   const query = pairingQuery({ relayUrl, hostStatic: keys.static.publicKey, token, room: keys.room, secret, hints });
   return {
@@ -107,8 +117,8 @@ export async function beginPairing(): Promise<Pairing> {
     webLink: `${PAIR_WEB_LINK}#${query}`,
     fingerprint: fingerprint(keys.static.publicKey),
     expiresAt,
-    devices: (await listDevices()).length,
-    directOnly,
+    directOnly: code.directOnly,
+    secret,
   };
 }
 
@@ -140,6 +150,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
   let hints: DirectHints | undefined;
   let stopWatching: (() => Promise<void>) | undefined;
   let bonjour: Awaited<ReturnType<typeof serveBonjour>> | undefined;
+  let closeLocal: (() => Promise<void>) | undefined;
   // Every relay session shares this link; it sends through whichever relay socket is registered.
   const relayLink: Link = { path: "relay", send: (payloads) => relayFrames?.(payloads) };
 
@@ -338,6 +349,20 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
   });
 
   if (opts.directPort !== undefined) {
+    // `local-pair` (#532): one file at a time; whatever an earlier process left is stale, its secret gone with it.
+    const local = new LocalPairingFile({
+      file: localPairingPath(resolveStateDir()),
+      mint: () => mintPairing(true),
+      pending: (secret) => pending.has(secret),
+      log,
+    });
+    await local.close();
+    const onSpend = (secret: string) => local.spent(secret);
+    pending.onSpend = onSpend;
+    closeLocal = async () => {
+      if (pending.onSpend === onSpend) pending.onSpend = undefined;
+      await local.close();
+    };
     direct = await serveDirect({
       addresses: bindAddresses(os.networkInterfaces()),
       port: opts.directPort,
@@ -348,6 +373,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         void captureEffectAuthority()
           .initiate(() => socket.send(raw))
           .catch((error: unknown) => log?.warn(`yorozu: direct send failed: ${String(error)}`)),
+      localPair: () => local.ensure(),
       log,
     });
     stopWatching = await watchDirect({ listener: direct, port: opts.directPort, log, changed: async (next) => {
@@ -555,5 +581,6 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
   await stopWatching?.();
   await bonjour?.close();
   await direct?.close();
+  await closeLocal?.();
   if (host === me) host = null;
 }
