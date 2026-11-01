@@ -9,9 +9,13 @@ protocol ClientTransport: Sendable {
     func registerPush(deviceToken: String) async
     @discardableResult func send(_ event: WireEvent) async -> Bool
     @discardableResult func send(_ message: Message) async -> Bool
+    /// After a Local Network change: a new race, unless direct already won.
+    func raceAgain() async
 }
 
-extension RelayConnection: ClientTransport {}
+extension RelayConnection: ClientTransport {
+    func raceAgain() {}
+}
 extension RacingConnection: ClientTransport {}
 
 actor DemoTransport: ClientTransport {
@@ -35,11 +39,13 @@ actor DemoTransport: ClientTransport {
         guard !running else { return }
         running = true
         continuation?.yield(.state(.ready))
+        continuation?.yield(.route(.wifi))
         continuation?.yield(.sessionOpen(PeerInfo(app: "Demo", name: "Demo", capabilities: [Devices.capability])))
     }
 
     func reconnect() { start() }
     func registerPush(deviceToken: String) {}
+    func raceAgain() {}
 
     func stop() {
         running = false

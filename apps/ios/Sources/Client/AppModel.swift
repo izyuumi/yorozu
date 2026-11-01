@@ -49,6 +49,13 @@ final class AppModel {
     @ObservationIgnored private var unplacedReads: [String: ReadCursor] = [:]
     @ObservationIgnored private var badge: Int?
     private(set) var hostInfo: PeerInfo?
+    /// The path the session runs on (#532), and when it last switched to a different one; nil while disconnected.
+    private(set) var route: DirectRoute?
+    private(set) var routeChangedAt: Date?
+    /// Observable copies of `LocalNetwork.allowed`, `.explained` and `.denied`, which live in user defaults (the racer reads them there).
+    private(set) var localNetworkAllowed = LocalNetwork.allowed
+    private(set) var localNetworkExplained = LocalNetwork.explained
+    private(set) var localNetworkDenied = LocalNetwork.denied
     /// Counts opened sessions, so the Live Activity can report itself again to a host that may have restarted.
     private(set) var sessionsOpened = 0
     let transfers = Transfers()
@@ -120,6 +127,47 @@ final class AppModel {
     }
 
     var fingerprint: String? { pairing?.pairing.fingerprint }
+
+    var showLocalNetworkExplainer: Bool {
+        ConnectionRoute.explainerDue(paired: paired, isDemo: isDemo, explained: localNetworkExplained, state: state)
+    }
+
+    /// The explainer's Continue and Settings' toggle: LAN candidates and Bonjour, after the system's prompt on iOS.
+    func allowLocalNetwork() async {
+        LocalNetwork.allowed = true
+        localNetworkAllowed = true
+        explainLocalNetwork()
+        localNetworkDenied = await LocalNetwork.refresh()
+        localNetworkChanged()
+    }
+
+    /// The explainer's Not Now: it doesn't come back; Settings › Host can still turn it on.
+    func explainLocalNetwork() {
+        LocalNetwork.explained = true
+        localNetworkExplained = true
+    }
+
+    func disallowLocalNetwork() {
+        LocalNetwork.allowed = false
+        localNetworkAllowed = false
+        localNetworkChanged()
+    }
+
+    /// The racer's own probes update the stored denial too.
+    func readLocalNetwork() { localNetworkDenied = LocalNetwork.denied }
+
+    /// Back from Settings: an owner who turned Local Network on there gets LAN without a relaunch.
+    func recheckLocalNetwork() async {
+        readLocalNetwork()
+        guard LocalNetwork.allowed, LocalNetwork.denied else { return }
+        localNetworkDenied = await LocalNetwork.refresh()
+        if !localNetworkDenied { localNetworkChanged() }
+    }
+
+    func localNetworkChanged() {
+        guard !isDemo, let connection else { return }
+        Task { await connection.raceAgain() }
+    }
 
     func submit(_ text: String) -> String? {
         if text.trimmingCharacters(in: .whitespacesAndNewlines) == "YOROZU-DEMO" {
@@ -316,6 +364,8 @@ final class AppModel {
         connection = nil
         state = .offline
         outage = nil
+        route = nil
+        routeChangedAt = nil
     }
 
     func resume() {
@@ -467,6 +517,10 @@ final class AppModel {
             case .ready, .offline, .connecting, .hostOffline, .handshaking, .updateRequired:
                 break
             }
+        case .route(let next):
+            Self.connectionLog.info("route \(next.rawValue, privacy: .public)")
+            routeChangedAt = ConnectionRoute.switchedAt(previous: route, next: next, since: routeChangedAt, now: Date())
+            route = next
         case .relayJoined:
             updatePairing { $0.relayKnows = true; $0.pairing.token = "" }
         case .sessionOpen(let host):

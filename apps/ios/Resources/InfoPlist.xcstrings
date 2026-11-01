@@ -357,6 +357,65 @@
           }
         }
       }
+    },
+    "NSLocalNetworkUsageDescription" : {
+      "comment" : "Privacy - Local Network Usage Description",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu connects directly to your host on the same network, for faster messages."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozuが同じネットワーク上のホストに直接接続し、メッセージをより速くやり取りします。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu 会直接连接同一网络中的主机，让信息更快送达。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu 會直接連線同一網路中的主機，讓訊息更快送達。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu는 같은 네트워크에 있는 호스트에 직접 연결해 메시지를 더 빠르게 주고받습니다."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu se conecta directamente con tu anfitrión en la misma red, para que los mensajes vayan más rápido."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu se connecte directement à votre hôte sur le même réseau, pour des messages plus rapides."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu verbindet sich direkt mit deinem Host im selben Netzwerk, für schnellere Nachrichten."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Yorozu se conecta diretamente ao seu host na mesma rede, para mensagens mais rápidas."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

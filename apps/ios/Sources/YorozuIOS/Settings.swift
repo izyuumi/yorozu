@@ -226,13 +226,23 @@ struct SettingsView: View {
         }
     }
 
-    private var host: some View {
+    @ViewBuilder private var host: some View {
         Section {
             if let name = model.hostInfo?.name { LabeledContent(String(localized: "Name"), value: name) }
             if let agent = model.hostInfo?.agent { LabeledContent(String(localized: "Agent"), value: agent) }
             if let version = model.hostInfo?.hostVersion { LabeledContent(String(localized: "OpenClaw"), value: version) }
             if let app = model.hostInfo?.app { LabeledContent(String(localized: "Yorozu Plugin"), value: app) }
             LabeledContent(String(localized: "Status"), value: model.state.label)
+            if let route = model.route {
+                LabeledContent(String(localized: "Connection")) {
+                    VStack(alignment: .trailing, spacing: LayoutMetrics.hair) {
+                        Text(route.label)
+                        if let at = model.routeChangedAt { Text(Self.switched(at)).textStyle(.caption) }
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("settings.connection")
+            }
             LabeledContent(String(localized: "Relay"), value: model.pairing.flatMap { URL(string: $0.pairing.relayUrl)?.host() } ?? "")
             LabeledContent(String(localized: "Host key"), value: model.fingerprint ?? "")
             if let at = model.pairing?.pairedAt {
@@ -241,6 +251,27 @@ struct SettingsView: View {
         } header: {
             Text("Host")
         }
+        localNetwork
+    }
+
+    private var localNetwork: some View {
+        Section {
+            Toggle(String(localized: "Direct on Local Network"), isOn: Binding(get: { model.localNetworkAllowed }, set: { on in
+                Task { if on { await model.allowLocalNetwork() } else { model.disallowLocalNetwork() } }
+            }))
+            .accessibilityIdentifier("settings.localNetwork")
+        } footer: {
+            if model.localNetworkAllowed && model.localNetworkDenied {
+                VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
+                    Text("Local Network access is off for Yorozu, so it connects through the relay or Tailscale.")
+                    Button(String(localized: "Open Privacy › Local Network")) { openLocalNetworkSettings() }
+                        .accessibilityIdentifier("settings.localNetwork.open")
+                }
+            } else {
+                Text("Connects straight to your host when both are on the same network. Messages stay end-to-end encrypted.")
+            }
+        }
+        .onAppear { model.readLocalNetwork() }
     }
 
     private var devices: some View {
@@ -306,6 +337,22 @@ struct SettingsView: View {
         #else
         if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") { openURL(url) }
         #endif
+    }
+
+    /// iOS keeps the Local Network switch on the app's own Settings page.
+    private func openLocalNetworkSettings() {
+        #if os(iOS)
+        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+        #else
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork") { openURL(url) }
+        #endif
+    }
+
+    /// "Since 18:44" today; before that, how long ago.
+    private static func switched(_ at: Date) -> String {
+        Calendar.current.isDateInToday(at)
+            ? String(localized: "Since \(at.formatted(date: .omitted, time: .shortened))")
+            : String(localized: "Switched \(at.formatted(.relative(presentation: .named)))")
     }
 
     private static func date(_ ms: Int64) -> Date { Date(timeIntervalSince1970: TimeInterval(ms) / 1000) }

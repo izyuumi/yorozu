@@ -3,7 +3,8 @@
   "usage": {
     "NSCameraUsageDescription": "Camera: asked the first time you scan a pairing QR code or take a photo to send.",
     "NSMicrophoneUsageDescription": "Microphone: asked the first time you use voice input. Audio is transcribed on the device.",
-    "NSPhotoLibraryAddUsageDescription": "Photos (add only): asked the first time you save a picture from a conversation. Yorozu can't read your library through this."
+    "NSPhotoLibraryAddUsageDescription": "Photos (add only): asked the first time you save a picture from a conversation. Yorozu can't read your library through this.",
+    "NSLocalNetworkUsageDescription": "Local Network: asked after you tap Continue on \"Connect directly on Wi-Fi?\" (iPhone, iPad, and Mac on macOS 15 or later), so the app can reach your host directly on the same network. Denied or off, it uses the relay, loopback and Tailscale; Settings › Host › Direct on Local Network turns it on or off."
   },
   "entitlements": {
     "aps-environment": "Push notifications through Apple's service. Nothing to grant; the notification prompt below decides whether they show.",

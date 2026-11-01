@@ -4,6 +4,7 @@ import YorozuWire
 struct RootView: View {
     let model: AppModel
     @Environment(\.scenePhase) private var scenePhase
+    @State private var explainingLocalNetwork = false
 
     var body: some View {
         Group {
@@ -19,6 +20,11 @@ struct RootView: View {
             if let failure = model.submit(url.absoluteString) { model.pairingError = failure }
         }
         .deviceAddingAlerts(model)
+        // #532: once, after the first session with a pairing; it stays up if the session drops, and a swipe away counts as Not Now.
+        .onChange(of: model.showLocalNetworkExplainer, initial: true) { _, due in if due { explainingLocalNetwork = true } }
+        .sheet(isPresented: $explainingLocalNetwork, onDismiss: { model.explainLocalNetwork() }) {
+            LocalNetworkExplainer(model: model).yorozuTint()
+        }
         .alert(String(localized: "Pair with this host?"),
             isPresented: Binding(get: { model.pendingPairing != nil }, set: { if !$0 { model.pendingPairing = nil } }),
             presenting: model.pendingPairing) { payload in
@@ -41,6 +47,7 @@ struct RootView: View {
             #endif
             case .active:
                 model.resume()
+                Task { await model.recheckLocalNetwork() }
                 #if os(iOS)
                 YorozuActivities.shared?.returned()
                 #endif
