@@ -156,7 +156,31 @@ struct JobRow: View {
             }
         }
         .accessibilityElement(children: .combine)
-        if let url = ActivityStyle.link(entry) { Link(destination: url) { row } } else { row }
+        let linked = Group { if let url = ActivityStyle.link(entry) { Link(destination: url) { row } } else { row } }
+        if job.kind == .recording, !job.finished {
+            HStack(spacing: 8) {
+                linked
+                RecordingButtons()
+            }
+        } else {
+            linked
+        }
+    }
+}
+
+/// Cancel and Stop for a running recording; they act in the app (`RecordingControl`) without opening it.
+struct RecordingButtons: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            Button(intent: CancelRecordingIntent()) { Image(systemName: "xmark") }
+                .accessibilityLabel(Text("Cancel Recording"))
+            Button(intent: StopRecordingIntent()) { Image(systemName: "stop.fill") }
+                .accessibilityLabel(Text("Stop Recording"))
+        }
+        .font(.callout.weight(.semibold))
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.circle)
+        .tint(ActivityStyle.tint)
     }
 }
 

@@ -3,8 +3,10 @@ import SpeechEngines
 import SwiftUI
 import VoiceText
 
-/// One dictation in the composer: record, then transcribe into the field or straight into a message.
-/// The clip is kept until a transcript is delivered or the owner cancels, so a failure can be retried.
+/// One conversation's dictation: record, then transcribe into its composer or straight into a message. `Dictation`
+/// owns it app-wide, so the composer, the Live Activity's Stop and Cancel and the Talk control drive the same one,
+/// in front or in the background. The clip stays on disk (`ClipStore`) until its text reaches the composer or the
+/// owner cancels, so neither a failure nor the app closing loses it. Its Live Activity row carries no content.
 @MainActor @Observable
 final class VoiceSession {
     enum Phase: Equatable {
@@ -12,13 +14,28 @@ final class VoiceSession {
         case failed(String)
     }
 
+    let convId: String
     private(set) var phase = Phase.idle
     var micDenied = false
-    let recorder = VoiceRecorder()
-    private var clip: [Float] = []
-    private var loading: Task<any SpeechEngine, Error>?
-    private var job: Task<Void, Never>?
-    private var deliver: ((String) -> Void)?
+    /// Text for the composer to take (`delivered()`); it puts it at the cursor.
+    private(set) var transcript: String?
+    /// Why the last recording stopped on its own.
+    var notice: String?
+    var recorder: VoiceRecorder { Dictation.shared.recorder }
+    /// Transcribing waits for the app to come forward: the engine needs the GPU, or the background time ran out.
+    @ObservationIgnored private(set) var queued = false
+    @ObservationIgnored private var clip: [Float] = []
+    @ObservationIgnored private var clipID: UUID?
+    /// Clips whose text waits in `transcript`.
+    @ObservationIgnored private var awaiting: [UUID] = []
+    @ObservationIgnored private var loading: Task<any SpeechEngine, Error>?
+    @ObservationIgnored private var job: Task<Void, Never>?
+    @ObservationIgnored private var row: YorozuJob?
+    @ObservationIgnored private var capped = false
+    @ObservationIgnored private var handingOff = false
+    @ObservationIgnored private var handed: VoiceClip?
+
+    init(convId: String) { self.convId = convId }
 
     func start() async {
         guard phase == .idle else { return }
@@ -30,54 +47,129 @@ final class VoiceSession {
             micDenied = true
             return
         }
+        guard phase == .idle else { return }
+        Dictation.shared.willRecord(self)
+        let id = UUID()
+        let writer = Dictation.shared.beginClip(id, convId: convId)
         do {
-            try recorder.start()
-            phase = .recording
-            // Load while the owner speaks, so only the transcription itself is left after ✓.
-            loading = VoiceSetup.shared.load()
+            try recorder.start(writer: writer)
         } catch {
-            _ = recorder.stop()
+            if writer != nil {
+                Task { await recorder.closeClip(); Dictation.shared.delete(id) }
+            }
             phase = .failed(error.localizedDescription)
+            return
         }
+        clipID = writer == nil ? nil : id
+        capped = false
+        notice = nil
+        phase = .recording
+        showRow(.recording)
+        // Load while the owner speaks, so only the transcription itself is left after ✓.
+        loading = VoiceSetup.shared.load()
     }
 
-    /// Stops recording and transcribes; `deliver` gets the text on success.
-    func finish(_ deliver: @escaping (String) -> Void) {
+    /// Stops recording and transcribes into the composer; never sends.
+    func stop(_ reason: StopReason = .user) {
         guard phase == .recording else { return }
-        clip = recorder.stop()
-        self.deliver = deliver
-        retry()
+        recorder.send(.stop(reason))
     }
+
+    /// Picks up after an interruption that ended without letting the recording resume by itself.
+    func resume() { recorder.send(.resumeRequested) }
 
     /// Stops recording and hands the clip over, leaving the composer free; nil unless recording.
     func handOff() -> VoiceClip? {
         guard phase == .recording else { return nil }
-        let handed = VoiceClip(samples: recorder.stop(), loading: loading)
-        loading = nil
-        reset()
-        return handed.samples.isEmpty ? nil : handed
+        handingOff = true
+        recorder.send(.stop(.user))
+        handingOff = false
+        defer { handed = nil }
+        return handed
+    }
+
+    /// What the recorder's machine asks for once it moved on.
+    func handle(_ effect: RecordingEffect) {
+        switch effect {
+        case .updateActivity:
+            if phase == .recording { showRow(.recording) }
+        case .announceCap:
+            capped = true
+            notice = String(localized: "Recording stopped at the 5-minute limit.")
+            Dictation.shared.notify(.cap, convId: convId)
+        case .discardClip:
+            let id = clipID
+            Task { await recorder.closeClip(); if let id { Dictation.shared.delete(id) } }
+            loading?.cancel()
+            removeRow()
+            reset()
+        case .persistClip:
+            clip = recorder.samples()
+            let id = clipID
+            Task { await recorder.closeClip(); if let id { Dictation.shared.seal(id) } }
+            guard handingOff else { return retry() }
+            handed = clip.isEmpty ? nil : VoiceClip(samples: clip, loading: loading, id: id)
+            if handed == nil, let id { Dictation.shared.delete(id) }
+            loading = nil
+            clipID = nil
+            removeRow()
+            reset()
+        case .startEngine, .pauseEngine, .resumeEngine, .restartEngine, .stopEngine:
+            break
+        }
+    }
+
+    /// A clip an earlier run of the app left on disk.
+    func recover(_ samples: [Float], id: UUID) -> Bool {
+        guard phase == .idle else { return false }
+        clip = samples
+        clipID = id
+        retry()
+        return true
     }
 
     func retry() {
-        guard let deliver, !clip.isEmpty else { return cancel() }
+        guard !clip.isEmpty else { return cancel() }
         phase = .transcribing
-        let clip = VoiceClip(samples: clip, loading: loading)
+        queued = false
+        showRow(.transcribing)
+        let voice = VoiceClip(samples: clip, loading: loading, id: clipID)
         loading = nil
         job = Task {
-            switch await clip.transcribe() {
+            guard let result = await Dictation.transcribe(voice) else { return queued = true }
+            guard !Task.isCancelled else { return }
+            switch result {
             case .success(let text):
-                reset()
-                deliver(text)
+                land(text)
             case .failure(let error):
-                guard !Task.isCancelled else { return }
-                phase = .failed(error.localizedDescription)
+                phase = .failed(error is CancellationError ? String(localized: "Transcription was stopped.") : error.localizedDescription)
+                finishRow(.failed, alert: .localFailure)
             }
         }
     }
 
+    /// The composer took `transcript`: its clips can go.
+    func delivered() {
+        transcript = nil
+        for id in awaiting { Dictation.shared.delete(id) }
+        awaiting = []
+    }
+
     func cancel() {
-        if phase == .recording { _ = recorder.stop() }
+        guard phase != .recording else { return recorder.send(.cancel) }
+        if let clipID { Dictation.shared.delete(clipID) }
         loading?.cancel()
+        removeRow()
+        reset()
+    }
+
+    private func land(_ text: String) {
+        let background = Dictation.inBackground
+        transcript = transcript.map { $0 + " " + text } ?? text
+        if let clipID { awaiting.append(clipID) }
+        clipID = nil
+        finishRow(.done, alert: background ? (capped ? .recordingCap : .transcriptReady) : nil)
+        if background { Dictation.shared.notify(.transcriptReady, convId: convId) }
         reset()
     }
 
@@ -86,15 +178,46 @@ final class VoiceSession {
         job = nil
         loading = nil
         clip = []
-        deliver = nil
+        clipID = nil
+        queued = false
+        capped = false
+        row = nil
         phase = .idle
+    }
+
+    // MARK: The Live Activity row
+
+    private func showRow(_ kind: YorozuJob.Kind) {
+        #if os(iOS)
+        var job = row ?? YorozuJob(kind: kind, startedAt: Date())
+        if job.kind != kind || job.finished { job.startedAt = Date() }
+        job.kind = kind
+        job.state = .running
+        row = job
+        YorozuActivities.shared?.upsert(job, convId: convId, title: Dictation.shared.title(convId))
+        #endif
+    }
+
+    private func finishRow(_ state: YorozuJob.State, alert: JobEvent.Alert?) {
+        #if os(iOS)
+        if let row { YorozuActivities.shared?.finish(id: row.token, state: state, alert: alert) }
+        #endif
+        if state != .failed { row = nil }
+    }
+
+    private func removeRow() {
+        #if os(iOS)
+        if let row { YorozuActivities.shared?.remove(id: row.token) }
+        #endif
+        row = nil
     }
 }
 
-/// A finished recording and the engine load started while it was spoken.
+/// A finished recording, the engine load started while it was spoken, and its clip on disk, if any.
 struct VoiceClip {
     let samples: [Float]
     var loading: Task<any SpeechEngine, Error>?
+    var id: UUID?
 
     /// The transcript in the chosen language with the voice dictionary applied; an empty one counts as a failure.
     @MainActor func transcribe() async -> Result<String, Error> {
@@ -142,7 +265,9 @@ final class VoiceSends {
         run(id, in: convId)
     }
 
+    /// Also once its message went out: the clip's file goes with it.
     func discard(_ id: UUID, in convId: String) {
+        if let clip = work[id]?.clip.id { Dictation.shared.delete(clip) }
         work[id] = nil
         pending[convId]?.removeAll { $0.id == id }
     }
@@ -204,11 +329,10 @@ struct PendingVoiceBubble: View {
     }
 }
 
-/// Replaces the composer's row while dictating: ✕, a waveform and timer (or progress, or an error with Retry),
-/// stop to put the text in the field, and send to post it as a message that transcribes in the chat.
+/// Replaces the composer's row while dictating: ✕, a waveform and timer (or Paused during a call, or progress, or
+/// an error with Retry), stop to put the text in the field, and send to post it as a message that transcribes in the chat.
 struct VoiceBar: View {
     let session: VoiceSession
-    let onInsert: (String) -> Void
     let onSend: () -> Void
     @Environment(\.accent) private var accent
 
@@ -220,6 +344,15 @@ struct VoiceBar: View {
                 .keyboardShortcut(.cancelAction)
             Group {
                 switch session.phase {
+                case .recording where session.recorder.phase != .recording:
+                    HStack(spacing: LayoutMetrics.inner) {
+                        Image(systemName: "pause.fill").foregroundStyle(.secondary)
+                        Text("Paused").textStyle(.body).foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                        if session.recorder.phase == .interrupted(resumable: false) {
+                            icon("mic.fill", label: String(localized: "Resume")) { session.resume() }
+                        }
+                    }
                 case .recording, .idle:
                     HStack(spacing: LayoutMetrics.inner) {
                         Waveform(levels: session.recorder.levels)
@@ -233,7 +366,7 @@ struct VoiceBar: View {
                 case .transcribing:
                     HStack(spacing: LayoutMetrics.inner) {
                         ProgressView().controlSize(.small)
-                        Text("Transcribing…").textStyle(.body).foregroundStyle(.secondary)
+                        Text(session.notice ?? String(localized: "Transcribing…")).textStyle(.body).foregroundStyle(.secondary).lineLimit(2)
                         Spacer(minLength: 0)
                     }
                 case .failed(let message):
@@ -246,7 +379,7 @@ struct VoiceBar: View {
             }
             .frame(maxWidth: .infinity)
             if session.phase == .recording {
-                icon("stop.fill", label: String(localized: "Insert Transcript")) { session.finish(onInsert) }
+                icon("stop.fill", label: String(localized: "Insert Transcript")) { session.stop() }
                     .keyboardShortcut(.defaultAction)
                 Button(action: onSend) {
                     Image(systemName: "arrow.up")

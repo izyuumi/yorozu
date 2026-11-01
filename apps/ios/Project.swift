@@ -60,8 +60,11 @@ let project = Project(
                 "LSApplicationCategoryType": "public.app-category.productivity",
                 "NSCameraUsageDescription": "Yorozu scans the pairing QR code shown by your Mac, and takes photos you choose to send in a message.",
                 "NSPhotoLibraryAddUsageDescription": "Yorozu saves pictures to your library when you ask it to.",
-                "NSMicrophoneUsageDescription": "Yorozu turns what you say into a message, on this device, when you use voice input.",
-                "UIBackgroundModes": ["remote-notification"],
+                "NSMicrophoneUsageDescription": "Yorozu turns what you say into a message, on this device, when you use voice input. It keeps listening when you switch apps, until you stop it.",
+                // audio: voice input keeps recording while the owner switches apps, until they stop it.
+                "UIBackgroundModes": ["remote-notification", "audio"],
+                // A GPU voice engine's transcription, continued after the owner leaves the app (iOS 26).
+                "BGTaskSchedulerPermittedIdentifiers": ["to.yumi.yorozu.ios.voice-transcribe.*"],
                 // One device-local Live Activity: started in the app, updated by the app and the notification service, never by push.
                 "NSSupportsLiveActivities": true,
                 // The voice model is an Apple-hosted asset pack on iPhone and iPad (YorozuAssets).
@@ -85,7 +88,7 @@ let project = Project(
             ]),
             sources: [
                 "Sources/YorozuIOS/**", "Sources/Shared/**", "Sources/Client/**", "Sources/ShareInbox/**",
-                "Sources/WidgetShared/**",
+                "Sources/WidgetShared/**", "Sources/VoiceCapture/**",
             ],
             resources: [
                 "Resources/AppIcon.icon",
@@ -101,6 +104,8 @@ let project = Project(
                 "com.apple.developer.associated-domains": ["applinks:yorozu.yumi.to"],
                 "keychain-access-groups": [.string(pairingKeychainGroup), .string(notificationKeychainGroup)],
                 "com.apple.security.application-groups": [.string(appGroup)],
+                // The GPU for a voice transcription's continued-processing task in the background.
+                "com.apple.developer.background-tasks.continued-processing.gpu": true,
             ]),
             scripts: [
                 .post(
@@ -239,6 +244,7 @@ let project = Project(
                 "Sources/Client/WidgetPublisher.swift", "Sources/Client/ActivityReports.swift",
                 "Sources/WidgetShared/Model/**", "Sources/WidgetShared/Interface/WidgetLink.swift",
                 "Sources/WidgetShared/Interface/Launcher.swift",
+                "Sources/VoiceCapture/**",
             ],
             dependencies: [.package(product: "YorozuWire")],
             settings: .settings(base: ["DEVELOPMENT_TEAM": "AN5KM8QGEF", "CODE_SIGN_STYLE": "Automatic"])

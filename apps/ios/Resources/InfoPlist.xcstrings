@@ -305,55 +305,55 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Yorozu turns what you say into a message, on this device, when you use voice input."
+            "value" : "Yorozu turns what you say into a message, on this device, when you use voice input. It keeps listening when you switch apps, until you stop it."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "音声入力を使うと、話した内容をこのデバイス上でメッセージにします。"
+            "value" : "音声入力を使うと、話した内容をこのデバイス上でメッセージにします。ほかのアプリに切り替えても、止めるまで聞き取りを続けます。"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用语音输入时，Yorozu 会在此设备上把你说的话转为信息。"
+            "value" : "使用语音输入时，Yorozu 会在此设备上把你说的话转为信息。切换到其他 App 时也会继续聆听，直到你停止。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用語音輸入時，Yorozu 會在此裝置上把你說的話轉為訊息。"
+            "value" : "使用語音輸入時，Yorozu 會在此裝置上把你說的話轉為訊息。切換到其他 App 時也會繼續聆聽，直到你停止。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "음성 입력을 사용하면 Yorozu가 이 기기에서 말한 내용을 메시지로 바꿉니다."
+            "value" : "음성 입력을 사용하면 Yorozu가 이 기기에서 말한 내용을 메시지로 바꿉니다. 다른 앱으로 전환해도 멈출 때까지 계속 듣습니다."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Cuando usas la entrada de voz, Yorozu convierte lo que dices en un mensaje, en este dispositivo."
+            "value" : "Cuando usas la entrada de voz, Yorozu convierte lo que dices en un mensaje, en este dispositivo. Sigue escuchando cuando cambias de app, hasta que lo detengas."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Avec la saisie vocale, Yorozu transforme ce que vous dites en message, sur cet appareil."
+            "value" : "Avec la saisie vocale, Yorozu transforme ce que vous dites en message, sur cet appareil. Elle continue d’écouter quand vous changez d’app, jusqu’à ce que vous l’arrêtiez."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bei der Spracheingabe macht Yorozu aus dem Gesagten eine Nachricht, auf diesem Gerät."
+            "value" : "Bei der Spracheingabe macht Yorozu aus dem Gesagten eine Nachricht, auf diesem Gerät. Sie hört weiter zu, wenn du die App wechselst, bis du sie beendest."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Com a entrada de voz, o Yorozu transforma o que você diz em uma mensagem, neste dispositivo."
+            "value" : "Com a entrada de voz, o Yorozu transforma o que você diz em uma mensagem, neste dispositivo. Ele continua ouvindo quando você muda de app, até você parar."
           }
         }
       }

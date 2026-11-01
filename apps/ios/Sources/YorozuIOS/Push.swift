@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, UNUserNotificationCenterDelegate {
     fileprivate func launched() {
         UNUserNotificationCenter.current().delegate = self
         SpotlightIndexer.start(model: model)
+        Dictation.shared.install(model: model)
         #if os(iOS)
         YorozuActivities.start(model: model)
         #endif

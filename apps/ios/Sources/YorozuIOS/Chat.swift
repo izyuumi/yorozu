@@ -165,7 +165,7 @@ extension ChatView {
     }
 
     private var composer: some View {
-        Composer(text: $draft, files: $files, automation: $automation, replyingTo: $replyingTo,
+        Composer(text: $draft, files: $files, automation: $automation, replyingTo: $replyingTo, convId: convId,
             attachLimit: model.attachmentsAvailable ? model.mediaMaxBytes : nil,
             focus: focus, focusKey: Self.focusKey(convId, focus: focus),
             request: model.composeRequest?.convId == convId ? model.composeRequest : nil,
@@ -603,6 +603,7 @@ private struct Composer: View {
     @Binding var files: [ChatAttachment]
     @Binding var automation: CronJob?
     @Binding var replyingTo: ChatItem?
+    let convId: String
     let attachLimit: Int?
     let focus: ChatView.Focus
     var focusKey: String? = nil
@@ -616,7 +617,6 @@ private struct Composer: View {
     var onVoiceSend: (VoiceClip) -> Void = { _ in }
     @Environment(\.accent) private var accent
     @AppStorage(VoiceModel.enabledKey) private var voiceEnabled = false
-    @State private var voice = VoiceSession()
     @State private var cursor = ComposerCursor()
     @State private var settingUpVoice = false
     @State private var requestedFocus: String?
@@ -653,10 +653,27 @@ private struct Composer: View {
                     .padding(.horizontal, LayoutMetrics.stack)
             }
             if voice.phase == .idle {
+                if let notice = voice.notice {
+                    Text(notice)
+                        .textStyle(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, LayoutMetrics.stack)
+                        .padding(.top, LayoutMetrics.inner)
+                        .task(id: notice) {
+                            try? await Task.sleep(for: .seconds(8))
+                            if voice.notice == notice { voice.notice = nil }
+                        }
+                }
                 row
             } else {
-                VoiceBar(session: voice, onInsert: { cursor.insert($0, into: &text) }, onSend: { if let clip = voice.handOff() { onVoiceSend(clip) } })
+                VoiceBar(session: voice, onSend: { if let clip = voice.handOff() { onVoiceSend(clip) } })
             }
+        }
+        // The transcript, from ✓ here or from Stop on the Lock Screen, lands at the cursor once the composer is up.
+        .task(id: voice.transcript) {
+            guard let transcript = voice.transcript else { return }
+            cursor.insert(transcript, into: &text)
+            voice.delivered()
         }
         .sheet(isPresented: $settingUpVoice) { VoiceSetupSheet() }
         .task(id: request) {
@@ -665,7 +682,7 @@ private struct Composer: View {
             guard request.talk else { return requestedFocus = request.convId }
             if voiceAvailable, VoiceSetup.shared.ready { await voice.start() } else { settingUpVoice = true }
         }
-        .alert(String(localized: "Microphone access is off"), isPresented: $voice.micDenied) {
+        .alert(String(localized: "Microphone access is off"), isPresented: Binding(get: { voice.micDenied }, set: { voice.micDenied = $0 })) {
             Button(String(localized: "Open Settings")) { openMicrophoneSettings() }
             Button(String(localized: "Cancel"), role: .cancel) {}
         } message: {
@@ -752,6 +769,9 @@ private struct Composer: View {
     private var hasContent: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || automation != nil
     }
+
+    /// This conversation's dictation, which outlives the composer (`Dictation`).
+    private var voice: VoiceSession { Dictation.shared.session(for: convId) }
 
     private var voiceAvailable: Bool { voiceEnabled && VoiceSetup.supported }
 

@@ -2,6 +2,12 @@
 
 Yorozu is a native chat client for an OpenClaw Gateway. Live use requires a paired Gateway running the Yorozu channel plugin. The app itself runs no AI model.
 
+## Background audio
+
+Yorozu declares the `audio` background mode for voice input only: live dictation continues while the user switches apps, until they stop it. The user starts it with the microphone button in a conversation (or the Talk to Yorozu control); it records with the `.record` audio session category, so the system's microphone indicator stays visible the whole time, and it stops by itself at 5 minutes. While it records, the Live Activity shows a Recording row with Stop (the transcript goes into the conversation's message field, never sent) and Cancel (the recording is discarded). Speech is transcribed on the device. The app plays no audio, and without voice input started it neither records nor stays running in the background.
+
+To try it: Settings › Voice Input, turn it on and get the model ready (Apple Speech needs no download on iOS 26), open a conversation, tap the microphone, switch to another app while speaking, then come back or tap Stop on the Lock Screen.
+
 ## Demo access
 
 An on-device demo substitutes for a demo account and needs no credentials or host:
