@@ -705,6 +705,7 @@ export class Room implements DurableObject {
           const push = parseHostPush(msg);
           if (!push) return this.drop(ws, CLOSE_PROTOCOL, "bad push");
           if ((await storage.get<number>(devicePrefix + push.device)) === undefined) return;
+          await storage.put(devicePrefix + push.device, now);
           return await this.registerPush(push.device, push.deviceToken);
         }
         if (conn.role !== "phone" || !conn.key) return this.drop(ws, CLOSE_PROTOCOL, "not joined");

@@ -434,10 +434,17 @@ test("host push registers an announced device without a relay socket for targete
   const mac = await connectMac(macKeys);
   const device = (await keypair()).pub;
   mac.send({ type: "devices", devices: [device] });
+  await macSettled(mac);
+  await runInDurableObject(room(name), async (_instance, state) => {
+    await state.storage.put(`p:${device}`, 0);
+  });
   mac.send({ type: "push", device, token: DEVICE_TOKEN });
   mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z", devices: [device] });
   await macSettled(mac);
   expect(await record(name, device)).toMatchObject({ deviceToken: DEVICE_TOKEN });
+  await runInDurableObject(room(name), async (_instance, state) => {
+    expect(await state.storage.get(`p:${device}`)).toBeGreaterThan(0);
+  });
   expect(calls).toHaveLength(2);
   expect(calls.every((call) => new URL(call.url).pathname.endsWith(`/device/${DEVICE_TOKEN}`))).toBe(true);
   expect(calls.map((call) => call.headers.get("apns-push-type"))).toEqual(["alert", "background"]);
@@ -451,6 +458,9 @@ test("host push for an unknown device stores nothing and sends nothing", async (
   mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z", devices: [device] });
   await macSettled(mac);
   expect(await record(name, device)).toBeUndefined();
+  await runInDurableObject(room(name), async (_instance, state) => {
+    expect(await state.storage.get(`p:${device}`)).toBeUndefined();
+  });
   expect(await record(name, keys.pub)).toEqual({ deviceToken: DEVICE_TOKEN });
   expect(calls).toHaveLength(0);
 });
@@ -508,6 +518,32 @@ test("evicting the oldest device removes its push registration and socket", asyn
   expect(await next.phone.next()).toMatchObject({ type: "joined" });
   expect(await record(name, keys.pub)).toBeUndefined();
   expect(await phone.closed()).toBe(4001);
+});
+
+test("host push refresh keeps the oldest device when a new token join evicts the next oldest", async () => {
+  const { mac, phone, keys, room: name } = await paired();
+  const second = await connectPhone(name, await mintToken(mac));
+  expect(await second.phone.next()).toMatchObject({ type: "joined" });
+  await runInDurableObject(room(name), async (_instance, state) => {
+    await state.storage.put(`p:${keys.pub}`, 0);
+    await state.storage.put(`p:${second.keys.pub}`, 1);
+    for (let i = 2; i < MAX_DEVICES; i++) await state.storage.put(`p:known-${i}`, i);
+  });
+  mac.send({ type: "push", device: keys.pub, token: DEVICE_TOKEN });
+  await macSettled(mac);
+
+  const next = await connectPhone(name, await mintToken(mac));
+  expect(await next.phone.next()).toMatchObject({ type: "joined" });
+  await runInDurableObject(room(name), async (_instance, state) => {
+    const devices = await state.storage.list<number>({ prefix: "p:" });
+    expect(devices.size).toBe(MAX_DEVICES);
+    expect(devices.has(`p:${keys.pub}`)).toBe(true);
+    expect(devices.has(`p:${second.keys.pub}`)).toBe(false);
+  });
+  expect(await record(name, keys.pub)).toEqual({ deviceToken: DEVICE_TOKEN });
+  expect(await second.phone.closed()).toBe(4001);
+  phone.send({ type: "ping" });
+  expect(await phone.next()).toEqual({ type: "pong" });
 });
 
 test("an unjoined socket cannot register push, and only the mac may notify", async () => {
