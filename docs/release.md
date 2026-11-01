@@ -14,7 +14,7 @@ How the client app (`apps/ios`) is versioned, built, shipped and compile-checked
 
   The script exits 64 on a non-numeric input and 65 unless minor and patch are below 100 and build is 1 to 999. Sparkle compares this integer, so it must only ever rise.
 - Every script passes `MARKETING_VERSION`, `CURRENT_PROJECT_VERSION` and `YOROZU_BUILD` to `xcodebuild` explicitly: Tuist caches the manifest, and the manifest holds only a placeholder version.
-- A wire-breaking change raises the protocol in `peer_info` (`protocolMin` / `protocolMax`, currently 3; [contract](ios-relay-contract.md#peer_info)) on both client and plugin; a client and plugin without a common version show an update-required state, so such a change ships to both together.
+- The wire has no version to raise: `protocolMin` / `protocolMax` in `peer_info` stay 3 ([contract](ios-relay-contract.md#peer_info)), and new behavior is gated on a capability the other side lists. A breaking change goes in phases: accept both, then send new, then drop old, and dropping is never in the same release as accepting both ([versioning rules](../OWNER_DECISIONS.md#versioning-rules)). `update_required` remains only for clients older than protocol 3.
 
 ## CI
 

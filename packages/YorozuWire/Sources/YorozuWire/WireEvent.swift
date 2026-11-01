@@ -153,6 +153,16 @@ public struct Reaction: Codable, Equatable, Sendable {
         self.emoji = emoji
         self.remove = remove ? true : nil
     }
+
+    /// A `by` this client doesn't know reads as absent, so the reaction still decodes (and is ignored).
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        convId = try c.decode(String.self, forKey: .convId)
+        messageId = try c.decode(String.self, forKey: .messageId)
+        emoji = try c.decode(String.self, forKey: .emoji)
+        remove = try c.decodeIfPresent(Bool.self, forKey: .remove)
+        by = (try? c.decodeIfPresent(String.self, forKey: .by)).flatMap(By.init(rawValue:))
+    }
 }
 
 /// The reactions on a message, one emoji per person.
@@ -439,6 +449,20 @@ public struct HistoryItem: Codable, Equatable, Sendable {
         self.replyTo = replyTo
         self.reactions = reactions
     }
+
+    /// A call whose status this client doesn't know is dropped; the item keeps the rest.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try c.decode(Kind.self, forKey: .kind)
+        id = try c.decode(String.self, forKey: .id)
+        seq = try c.decode(Int.self, forKey: .seq)
+        ts = try c.decode(Int64.self, forKey: .ts)
+        text = try c.decodeIfPresent(String.self, forKey: .text)
+        tools = try c.decodeIfPresent([Lossy<Call>].self, forKey: .tools)?.compactMap(\.value)
+        attachments = try c.decodeIfPresent([Attachment].self, forKey: .attachments)
+        replyTo = try c.decodeIfPresent(ReplyTo.self, forKey: .replyTo)
+        reactions = try c.decodeIfPresent(Reactions.self, forKey: .reactions)
+    }
 }
 
 private struct Lossy<T: Decodable>: Decodable {
@@ -506,6 +530,11 @@ public struct DevicePatch: Codable, Equatable, Sendable {
 
 public enum Invite {
     public static let capability = "invite"
+}
+
+/// Introduced by #532; listed by the plugin only once its direct listener exists (#532 step 3).
+public enum Direct {
+    public static let capability = "direct"
 }
 
 public struct PairInvite: Codable, Equatable, Sendable {
