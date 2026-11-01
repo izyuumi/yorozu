@@ -36,6 +36,7 @@ const adapter: Adapter = {
     const peer = client(relay.port, room);
     peers.push(peer);
     await peer.open;
+    const closedReason = new Promise<string>((resolve) => peer.ws.once("close", (_code, reason) => resolve(reason.toString())));
     return {
       phones: peer.phones,
       send: peer.send,
@@ -43,6 +44,7 @@ const adapter: Adapter = {
       close: (code, reason) => peer.ws.close(code, reason),
       next: peer.next,
       closed: () => peer.closed,
+      closedReason: () => closedReason,
     };
   },
   advance: async (_room, ms) => {
