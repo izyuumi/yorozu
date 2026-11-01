@@ -162,6 +162,23 @@ struct AudioWindowPlanTests {
         #expect(windows.last?.voiced == false)
     }
 
+    @Test func theOverlapCountsOnlyItsSpeech() {
+        // Tone with a pause from 10 s to 12 s.
+        let samples = clip(seconds: 30, gaps: [(10, 2)])
+        let activity = VoiceActivity(samples: samples, sampleRate: rate)
+        func window(_ from: Double, _ to: Double) -> AudioWindow {
+            AudioWindow(range: Int(from * Double(rate))..<Int(to * Double(rate)), activity: activity)
+        }
+        // A cut in the pause: the second it shares is silent.
+        #expect(AudioWindowPlan.overlapSpeechSeconds(window(0, 11.5), window(10.5, 30), activity: activity) == 0)
+        // A cut in speech: all of it is speech.
+        #expect(abs(AudioWindowPlan.overlapSpeechSeconds(window(0, 6), window(5, 30), activity: activity) - 1) < 0.001)
+        // Half of it in the pause.
+        #expect(abs(AudioWindowPlan.overlapSpeechSeconds(window(0, 10.5), window(9.5, 30), activity: activity) - 0.5) < 0.001)
+        // Windows that don't meet share nothing.
+        #expect(AudioWindowPlan.overlapSpeechSeconds(window(0, 5), window(6, 30), activity: activity) == 0)
+    }
+
     @Test func tinyWindowsStillMoveForward() {
         let activity = VoiceActivity(energies: [], frameLength: 1_600)
         let windows = AudioWindowPlan.windows(sampleCount: 10_000, sampleRate: rate, activity: activity,

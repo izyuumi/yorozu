@@ -49,4 +49,42 @@ struct TranscriptSeamTests {
         let kana = "いろはにほへとちりぬるをわかよたれそつねならむうゐのおくやま"
         #expect(TranscriptSeam.join([kana, kana]) == kana + kana)
     }
+
+    @Test func aRepeatAcrossASilentOverlapIsKept() {
+        #expect(TranscriptSeam.join(["彼はそう言った", "言ったことを覚えている"], overlapSpeechSeconds: [0])
+            == "彼はそう言った言ったことを覚えている")
+        #expect(TranscriptSeam.join(["Thank you, you know", "You know, it was great"], overlapSpeechSeconds: [0])
+            == "Thank you, you know You know, it was great")
+    }
+
+    @Test func twoCJKCharactersAreKeptAndThreeDropped() {
+        #expect(TranscriptSeam.join(["これは本当", "本当にいい"], overlapSpeechSeconds: [1]) == "これは本当本当にいい")
+        #expect(TranscriptSeam.join(["今日は晴れた", "晴れた日だ"], overlapSpeechSeconds: [1]) == "今日は晴れた日だ")
+    }
+
+    @Test func theSpeechInTheOverlapCapsTheRepeat() {
+        // 1 s of speech: 4 words, 10 characters.
+        #expect(TranscriptSeam.join(["We said one two three four five", "one two three four five again"], overlapSpeechSeconds: [1])
+            == "We said one two three four five one two three four five again")
+        #expect(TranscriptSeam.join(["We said one two three four", "one two three four again"], overlapSpeechSeconds: [1])
+            == "We said one two three four again")
+        #expect(TranscriptSeam.join(["前あいうえおかきくけこさ", "あいうえおかきくけこさ後"], overlapSpeechSeconds: [1])
+            == "前あいうえおかきくけこさあいうえおかきくけこさ後")
+        #expect(TranscriptSeam.join(["前あいうえおかきくけこ", "あいうえおかきくけこ後"], overlapSpeechSeconds: [1])
+            == "前あいうえおかきくけこ後")
+        // 0.5 s: 2 words, 5 characters.
+        #expect(TranscriptSeam.join(["x one two three", "one two three y"], overlapSpeechSeconds: [0.5])
+            == "x one two three one two three y")
+        #expect(TranscriptSeam.join(["x one two", "one two y"], overlapSpeechSeconds: [0.5]) == "x one two y")
+        #expect(TranscriptSeam.join(["前あいうえおか", "あいうえおか後"], overlapSpeechSeconds: [0.5]) == "前あいうえおかあいうえおか後")
+        #expect(TranscriptSeam.join(["前あいうえお", "あいうえお後"], overlapSpeechSeconds: [0.5]) == "前あいうえお後")
+        // Never more than the overlap's length allows.
+        #expect(TranscriptSeam.caps(speechSeconds: 5) == (4, 10))
+        #expect(TranscriptSeam.caps(speechSeconds: 0.3) == (2, 3))
+    }
+
+    @Test func aPartAfterAnEmptyOneSharesNoAudio() {
+        #expect(TranscriptSeam.join(["See you tomorrow", "", "see you tomorrow."], overlapSpeechSeconds: [1, 1])
+            == "See you tomorrow see you tomorrow.")
+    }
 }
