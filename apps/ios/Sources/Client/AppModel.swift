@@ -262,7 +262,8 @@ final class AppModel {
     private func connect() {
         guard !isDemo, let pairing else { return }
         let local = PeerInfo(app: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
-            name: DeviceModel.name, capabilities: [Attachment.capability, Devices.capability, ReplyTo.capability, Reaction.capability])
+            name: DeviceModel.name, capabilities: [Attachment.capability, Devices.capability, ReplyTo.capability, Reaction.capability,
+                Attachment.resumeCapability])
         guard let connection = try? RelayConnection(pairing: pairing.pairing, identity: pairing.identity,
             relayKnows: pairing.relayKnows, local: local) else {
             return failPairing(String(localized: "This pairing code can’t be used."))
@@ -455,6 +456,7 @@ final class AppModel {
         case .sessionOpen(let host):
             Self.connectionLog.info("session open, host \(host.app, privacy: .public) OpenClaw \(host.hostVersion ?? "?", privacy: .public)")
             hostInfo = host
+            transfers.resumable = host.capabilities.contains(Attachment.resumeCapability)
             if !paired { updatePairing { $0.paired = true; $0.pairedAt = Date(); $0.pairing.secret = nil } }
             requestNotifications()
             publishShareDirectory()
@@ -621,7 +623,7 @@ final class AppModel {
             progressed(reply.convId)
         case .reaction(let reaction):
             receive(reaction)
-        case .uploadAck, .chunk:
+        case .uploadAck, .uploadState, .chunk:
             transfers.receive(event)
         case .tool(let tool):
             self.tool(tool)
@@ -686,7 +688,7 @@ final class AppModel {
             guard answer.link != nil || answer.error != nil else { return }
             invite = answer
             if case .asking(let code) = deviceAdding { deliver(answer, to: code) }
-        case .peerInfo, .message, .upload, .download, .foreground, .historyRequest, .convPatch, .devicePatch, .unknown:
+        case .peerInfo, .message, .upload, .uploadStatus, .download, .foreground, .historyRequest, .convPatch, .devicePatch, .unknown:
             break
         }
     }

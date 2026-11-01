@@ -33,7 +33,7 @@ enum ShareSender {
     @MainActor
     static func send(_ message: Message, file: File?, pairing: Pairing, progress: (Double) -> Void) async throws {
         let local = PeerInfo(app: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
-            name: DeviceModel.name, capabilities: [Attachment.capability])
+            name: DeviceModel.name, capabilities: [Attachment.capability, Attachment.resumeCapability])
         let connection = try RelayConnection(pairing: pairing.pairing, identity: pairing.identity,
             relayKnows: pairing.relayKnows, local: local)
         let (steps, feed) = AsyncStream<Step>.makeStream()
@@ -65,22 +65,22 @@ enum ShareSender {
         steps: AsyncStream<Step>, progress: (Double) -> Void) async throws {
         let reader = try file.map { try FileHandle(forReadingFrom: $0.url) }
         defer { try? reader?.close() }
-        let count = file.map { Attachment.chunkCount($0.attachment.size) } ?? 0
+        var sender = UploadSender(size: file?.attachment.size ?? 0, window: window)
         var state = RelayConnection.State.connecting
         var heard = ContinuousClock.now
         var uploaded = file == nil
-        var next = 0, inFlight = 0, acked = 0
+        var sha256: String?
+        var restarted = false
 
         func pump() async throws {
             guard let file, let reader else { return }
-            while inFlight < window && next < count {
-                try reader.seek(toOffset: UInt64(next * Attachment.chunkBytes))
-                let data = try reader.read(upToCount: Attachment.chunkBytes) ?? Data()
+            while let index = sender.next() {
+                let range = sender.range(of: index)
+                try reader.seek(toOffset: UInt64(range.lowerBound))
+                let data = try reader.read(upToCount: range.count) ?? Data()
                 let upload = Upload(attachmentId: file.attachment.id, name: file.attachment.name, mime: file.attachment.mime,
-                    size: file.attachment.size, index: next, count: count, data: data.base64EncodedString())
+                    size: file.attachment.size, index: index, count: sender.count, data: data.base64EncodedString(), sha256: sha256)
                 guard await connection.send(.upload(upload)) else { return }
-                next += 1
-                inFlight += 1
             }
         }
 
@@ -100,13 +100,39 @@ enum ShareSender {
                 case .updateRequired: throw Failure.needsUpdate
                 default: break
                 }
-            case .update(.sessionOpen):
-                // A new session starts the upload over; the host drops partial uploads with the old one.
+            case .update(.sessionOpen(let host)):
+                // A host listing `resume` says which chunks it kept; an older one starts the upload over.
                 heard = .now
-                (next, inFlight, acked) = (0, 0, 0)
-                if uploaded { await connection.send(message) } else { try await pump() }
+                guard !uploaded else {
+                    await connection.send(message)
+                    continue
+                }
+                let resumes = host.capabilities.contains(Attachment.resumeCapability)
+                if !resumes {
+                    sha256 = nil
+                } else if sha256 == nil, let url = file?.url {
+                    sha256 = await Task.detached(priority: .userInitiated) { try? FileDigest.sha256(of: url) }.value
+                }
+                if resumes, let file, let sha256 {
+                    await connection.send(.uploadStatus(UploadStatus(attachmentId: file.attachment.id, size: file.attachment.size,
+                        count: sender.count, sha256: sha256)))
+                } else {
+                    sender.restart()
+                    try await pump()
+                }
             case .update(.event(let event)):
                 switch event {
+                case .uploadState(let held) where held.attachmentId == file?.attachment.id && !uploaded:
+                    heard = .now
+                    if held.done {
+                        uploaded = true
+                        progress(1)
+                        await connection.send(message)
+                    } else {
+                        sender.resume(have: held.have)
+                        progress(sender.progress)
+                        try await pump()
+                    }
                 case .uploadAck(let ack) where ack.attachmentId == file?.attachment.id:
                     heard = .now
                     if ack.done {
@@ -114,11 +140,17 @@ enum ShareSender {
                         progress(1)
                         await connection.send(message)
                     } else {
-                        inFlight -= 1
-                        acked += 1
-                        progress(Double(acked) / Double(count))
+                        sender.ack(ack.index)
+                        progress(sender.progress)
                         try await pump()
                     }
+                case .error(let error) where error.code == ErrorInfo.hashMismatch && error.attachmentId != nil
+                    && error.attachmentId == file?.attachment.id && !restarted:
+                    heard = .now
+                    restarted = true
+                    sender.restart()
+                    progress(0)
+                    try await pump()
                 case .delivered(let ref) where ref.messageId == message.messageId:
                     return
                 case .runStarted(let ref) where ref.messageId == message.messageId:

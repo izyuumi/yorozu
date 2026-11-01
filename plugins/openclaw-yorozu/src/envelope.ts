@@ -15,6 +15,7 @@ export const DEVICES = "devices";
 export const INVITE = "invite";
 export const REPLIES = "replies";
 export const REACTIONS = "reactions";
+export const RESUME = "resume";
 export const CHUNK_BYTES = 160 * 1024;
 export type Attachment = { id: string; name: string; mime: string; size: number };
 // Capability `replies`.
@@ -35,7 +36,11 @@ export type Upload = {
   index: number;
   count: number;
   data: string;
+  sha256?: string;
 };
+// Capability `resume`: the chunks the plugin already holds, as sorted half-open index ranges.
+export type UploadStatus = { attachmentId: string; size: number; count: number; sha256: string };
+export type UploadState = { attachmentId: string; done: boolean; have: [number, number][] };
 export type UploadAck = { attachmentId: string; index: number; done: boolean };
 export type Download = { attachmentId: string; index: number };
 export type Chunk = { attachmentId: string; index: number; count: number; data: string };
@@ -94,6 +99,8 @@ export type Event =
   | { kind: "conv_update"; data: ConvUpdate }
   | { kind: "upload"; data: Upload }
   | { kind: "upload_ack"; data: UploadAck }
+  | { kind: "upload_status"; data: UploadStatus }
+  | { kind: "upload_state"; data: UploadState }
   | { kind: "download"; data: Download }
   | { kind: "chunk"; data: Chunk };
 
@@ -117,6 +124,7 @@ const int = (v: unknown): v is number => Number.isSafeInteger(v);
 const optInt = (v: unknown): boolean => v === undefined || int(v);
 const ref = (d: Fields): boolean => isId(d.convId) && isId(d.messageId);
 const nat = (v: unknown): v is number => int(v) && v >= 0;
+const sha256 = (v: unknown): boolean => str(v) && /^[0-9a-f]{64}$/.test(v);
 const label = (v: unknown, max: number): boolean => str(v) && v.length > 0 && v.length <= max;
 const attachment = (a: unknown): boolean => {
   if (typeof a !== "object" || a === null) return false;
@@ -159,8 +167,14 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
     label(d.id, 64) && (d.push === undefined || typeof d.push === "boolean") && (d.removed === undefined || d.removed === true),
   upload: (d) =>
     part(d) && label(d.name, 255) && label(d.mime, 255) && nat(d.size) && int(d.count) && d.count >= 1 &&
-    (d.index as number) < d.count && str(d.data),
+    (d.index as number) < d.count && str(d.data) && (d.sha256 === undefined || sha256(d.sha256)),
   upload_ack: (d) => part(d) && typeof d.done === "boolean",
+  upload_status: (d) => isId(d.attachmentId) && nat(d.size) && int(d.count) && d.count >= 1 && sha256(d.sha256),
+  upload_state: (d) =>
+    isId(d.attachmentId) &&
+    typeof d.done === "boolean" &&
+    Array.isArray(d.have) &&
+    d.have.every((r) => Array.isArray(r) && r.length === 2 && r.every(nat)),
   download: part,
   chunk: (d) => part(d) && int(d.count) && d.count >= 1 && (d.index as number) < d.count && str(d.data),
   conv_patch: (d) =>

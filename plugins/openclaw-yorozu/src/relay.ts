@@ -4,7 +4,7 @@ import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract
 import { captureEffectAuthority } from "openclaw/plugin-sdk/fetch-runtime";
 import { computeBackoff, sleepWithAbort } from "openclaw/plugin-sdk/runtime-env";
 import { WebSocket } from "openclaw/plugin-sdk/websocket-runtime";
-import { receiveUpload, serveDownload } from "./attachments.js";
+import { receiveUpload, receiveUploadStatus, serveDownload } from "./attachments.js";
 import { getDevice, listDevices, putDevice, removeDevice } from "./devices.js";
 import {
   ATTACHMENTS,
@@ -13,6 +13,7 @@ import {
   INVITE,
   REACTIONS,
   REPLIES,
+  RESUME,
   negotiate,
   parseEvent,
   PROTOCOL_VERSION,
@@ -54,7 +55,7 @@ const PEER_INFO: PeerInfo = {
   protocolMax: PROTOCOL_VERSION,
   app: "0.1.0",
   name: os.hostname().replace(/\.local$/, ""),
-  capabilities: [ATTACHMENTS, DEVICES, INVITE, REPLIES, REACTIONS],
+  capabilities: [ATTACHMENTS, DEVICES, INVITE, REPLIES, REACTIONS, RESUME],
 };
 
 function downgrade(event: Event, peer: PeerInfo): Event {
@@ -382,9 +383,13 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           if (!merged.unread) syncHere(merged.convId, deviceKey);
           return;
         }
-        if (event?.kind === "upload" || event?.kind === "download") {
+        if (event?.kind === "upload" || event?.kind === "upload_status" || event?.kind === "download") {
           const replies =
-            event.kind === "upload" ? await receiveUpload(event.data, opts.mediaMaxBytes) : [await serveDownload(event.data)];
+            event.kind === "upload"
+              ? await receiveUpload(event.data, opts.mediaMaxBytes)
+              : event.kind === "upload_status"
+                ? await receiveUploadStatus(event.data, opts.mediaMaxBytes)
+                : [await serveDownload(event.data)];
           const now = served.get(deviceKey);
           if (now?.peer) sendFrames(replies.map((reply) => seal(now.session, reply)));
           return;

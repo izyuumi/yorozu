@@ -1,6 +1,7 @@
 import Foundation
 import ImageIO
 import Observation
+import OSLog
 import UniformTypeIdentifiers
 import YorozuWire
 
@@ -16,8 +17,40 @@ enum AttachmentFiles {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
-    static func write(_ data: Data, for attachment: ChatAttachment) throws {
-        let url = url(attachment)
+    static func write(_ data: Data, for attachment: ChatAttachment) throws { try write(data, to: url(attachment)) }
+
+    /// A file of the transfer's own next to the attachment (`.upload.json`, `.download.part`, …).
+    static func sidecar(_ name: String, of attachment: ChatAttachment) -> URL {
+        url(attachment).deletingLastPathComponent().appending(path: name)
+    }
+
+    static func save<T: Encodable>(_ value: T, as name: String, of attachment: ChatAttachment) {
+        guard let data = try? JSONEncoder().encode(value) else { return }
+        try? write(data, to: sidecar(name, of: attachment))
+    }
+
+    static func load<T: Decodable>(_ type: T.Type, from name: String, of attachment: ChatAttachment) -> T? {
+        (try? Data(contentsOf: sidecar(name, of: attachment))).flatMap { try? JSONDecoder().decode(type, from: $0) }
+    }
+
+    static func discard(_ names: String..., of attachment: ChatAttachment) {
+        for name in names { try? FileManager.default.removeItem(at: sidecar(name, of: attachment)) }
+    }
+
+    /// An empty file, protected like the attachments, replacing any there.
+    static func create(_ url: URL) throws {
+        try makeDirectory(url.deletingLastPathComponent())
+        #if os(iOS)
+        let attributes: [FileAttributeKey: Any] = [.protectionKey: FileProtectionType.complete]
+        #else
+        let attributes: [FileAttributeKey: Any] = [:]
+        #endif
+        guard FileManager.default.createFile(atPath: url.path, contents: nil, attributes: attributes) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+    }
+
+    private static func write(_ data: Data, to url: URL) throws {
         try makeDirectory(url.deletingLastPathComponent())
         var options: Data.WritingOptions = [.atomic]
         #if os(iOS)
@@ -123,9 +156,11 @@ final class Transfers {
     private(set) var progress: [String: Double] = [:]
     private(set) var failures: [String: String] = [:]
 
-    enum Outcome { case ack(index: Int, done: Bool), chunk(Chunk), refused(String), lost }
+    enum Outcome { case ack(index: Int, done: Bool), state(UploadState), chunk(Chunk), refused(code: String, message: String), lost }
 
     @ObservationIgnored var send: (WireEvent) async -> Bool = { _ in false }
+    /// The host's `peer_info` lists `resume`: uploads ask what it holds and carry the file's SHA-256.
+    @ObservationIgnored var resumable = false
     @ObservationIgnored private var inbox: [String: [Outcome]] = [:]
     @ObservationIgnored private var waiters: [String: CheckedContinuation<Outcome, Never>] = [:]
     @ObservationIgnored private var wanted: [ChatAttachment] = []
@@ -134,13 +169,20 @@ final class Transfers {
     static let uploadWindow = 4
     static let downloadWindow = 2
     static let ackTimeout: Duration = .seconds(30)
+    static let ledgerEvery = 16
+    static let ledgerInterval: Duration = .seconds(1)
+    static let uploadLedger = ".upload.json"
+    static let downloadLedger = ".download.json"
+    static let downloadPart = ".download.part"
+    private static let log = Logger(subsystem: "to.yumi.yorozu", category: "Transfers")
 
     func receive(_ event: WireEvent) {
         switch event {
         case .uploadAck(let ack): deliver(.ack(index: ack.index, done: ack.done), to: ack.attachmentId)
+        case .uploadState(let state): deliver(.state(state), to: state.attachmentId)
         case .chunk(let chunk): deliver(.chunk(chunk), to: chunk.attachmentId)
         case .error(let error):
-            if let id = error.attachmentId { deliver(.refused(error.message), to: id) }
+            if let id = error.attachmentId { deliver(.refused(code: error.code, message: error.message), to: id) }
         default: break
         }
     }
@@ -177,31 +219,98 @@ final class Transfers {
             return .refused(String(localized: "The file is no longer on this device."))
         }
         let id = attachment.id
-        let count = Attachment.chunkCount(data.count)
         inbox[id] = nil
         progress[id] = 0
         defer { progress[id] = nil; inbox[id] = nil }
-        var next = 0, inFlight = 0, acked = 0
-        while true {
-            while inFlight < Self.uploadWindow && next < count {
-                let range = (next * Attachment.chunkBytes)..<min(data.count, (next + 1) * Attachment.chunkBytes)
-                let upload = Upload(attachmentId: id, name: attachment.wire.name, mime: attachment.wire.mime, size: data.count,
-                    index: next, count: count, data: data.subdata(in: range).base64EncodedString())
-                guard await send(.upload(upload)) else { return .interrupted }
-                next += 1
-                inFlight += 1
-            }
-            switch await self.next(id) {
-            case .ack(_, let done):
-                if done { return .stored }
-                inFlight -= 1
-                acked += 1
-                progress[id] = Double(acked) / Double(count)
-            case .refused(let why): return .refused(why)
-            case .lost: return .interrupted
-            case .chunk: break
+        var sender = UploadSender(size: data.count, window: Self.uploadWindow)
+        var ledger: UploadLedger?
+        if resumable {
+            ledger = await uploadLedger(attachment, at: url, size: data.count)
+            if let known = ledger {
+                let status = UploadStatus(attachmentId: id, size: data.count, count: sender.count, sha256: known.sha256)
+                guard await send(.uploadStatus(status)) else { return .interrupted }
+                switch await held(id) {
+                case .state(let state):
+                    if state.done {
+                        AttachmentFiles.discard(Self.uploadLedger, of: attachment)
+                        return .stored
+                    }
+                    let lacked = known.acked.ranges.joined().filter { !state.have.contains($0) }.count
+                    if lacked > 0 { Self.log.info("upload resumes; the host lacks \(lacked) of \(known.acked.covered) acked chunks") }
+                    sender.resume(have: state.have)
+                    progress[id] = sender.progress
+                case .refused(_, let why):
+                    AttachmentFiles.discard(Self.uploadLedger, of: attachment)
+                    return .refused(why)
+                default: return .interrupted
+                }
             }
         }
+        var restarted = false, unsaved = 0, savedAt = ContinuousClock.now
+        func persist() {
+            guard var known = ledger else { return }
+            known.acked = sender.acked
+            ledger = known
+            AttachmentFiles.save(known, as: Self.uploadLedger, of: attachment)
+            (unsaved, savedAt) = (0, .now)
+        }
+        persist()
+        while true {
+            while let index = sender.next() {
+                let upload = Upload(attachmentId: id, name: attachment.wire.name, mime: attachment.wire.mime, size: data.count,
+                    index: index, count: sender.count, data: data.subdata(in: sender.range(of: index)).base64EncodedString(),
+                    sha256: ledger?.sha256)
+                guard await send(.upload(upload)) else { persist(); return .interrupted }
+            }
+            switch await self.next(id) {
+            case .ack(let index, let done):
+                if done {
+                    AttachmentFiles.discard(Self.uploadLedger, of: attachment)
+                    return .stored
+                }
+                sender.ack(index)
+                progress[id] = sender.progress
+                unsaved += 1
+                if unsaved >= Self.ledgerEvery || ContinuousClock.now - savedAt >= Self.ledgerInterval { persist() }
+            case .refused(let code, let why):
+                // The host dropped what it had; start over once, with the hash read again.
+                if code == ErrorInfo.hashMismatch, ledger != nil, !restarted,
+                   let sha256 = await Self.sha256(of: url) {
+                    restarted = true
+                    ledger = UploadLedger(attachmentId: id, size: data.count, sha256: sha256)
+                    sender.restart()
+                    progress[id] = 0
+                    persist()
+                    continue
+                }
+                AttachmentFiles.discard(Self.uploadLedger, of: attachment)
+                return .refused(why)
+            case .lost:
+                persist()
+                return .interrupted
+            case .chunk, .state: break
+            }
+        }
+    }
+
+    private func held(_ id: String) async -> Outcome {
+        while true {
+            switch await next(id) {
+            case .ack, .chunk: continue
+            case let outcome: return outcome
+            }
+        }
+    }
+
+    /// The saved ledger when it is for this file, else a new one with the file's SHA-256.
+    private func uploadLedger(_ attachment: ChatAttachment, at url: URL, size: Int) async -> UploadLedger? {
+        if let saved = AttachmentFiles.load(UploadLedger.self, from: Self.uploadLedger, of: attachment),
+           saved.attachmentId == attachment.id, saved.size == size, FileDigest.isSHA256(saved.sha256) { return saved }
+        return await Self.sha256(of: url).map { UploadLedger(attachmentId: attachment.id, size: size, sha256: $0) }
+    }
+
+    private nonisolated static func sha256(of url: URL) async -> String? {
+        await Task.detached(priority: .utility) { try? FileDigest.sha256(of: url) }.value
     }
 
     func fetch(_ attachment: ChatAttachment) {
@@ -228,39 +337,78 @@ final class Transfers {
         }
     }
 
+    /// What a download holds so far in `.download.part`; `count` is known from the first chunk.
+    private struct DownloadLedger: Codable {
+        var size: Int
+        var count: Int?
+        var have = ChunkRanges()
+    }
+
     private func download(_ attachment: ChatAttachment) async -> Bool {
         let id = attachment.id
         inbox[id] = nil
-        var parts: [Int: Data] = [:]
-        var count = 1, next = 0, inFlight = 0
+        let part = AttachmentFiles.sidecar(Self.downloadPart, of: attachment)
+        let damaged = String(localized: "The file arrived damaged.")
         let fail = { (why: String) -> Bool in
             self.failures[id] = why
             self.progress[id] = nil
+            AttachmentFiles.discard(Self.downloadPart, Self.downloadLedger, of: attachment)
             return true
         }
+        var ledger = AttachmentFiles.load(DownloadLedger.self, from: Self.downloadLedger, of: attachment)
+            .flatMap { $0.size == attachment.size && FileManager.default.fileExists(atPath: part.path) ? $0 : nil }
+            ?? DownloadLedger(size: attachment.size)
+        let handle: FileHandle
+        do {
+            if ledger.have.covered == 0 { try AttachmentFiles.create(part) }
+            handle = try FileHandle(forUpdating: part)
+        } catch { return fail(error.localizedDescription) }
+        defer { try? handle.close() }
+        if let count = ledger.count { progress[id] = Double(ledger.have.covered) / Double(count) }
+        var asked = Set<Int>(), unsaved = 0, savedAt = ContinuousClock.now
+        func persist() {
+            try? handle.synchronize()
+            AttachmentFiles.save(ledger, as: Self.downloadLedger, of: attachment)
+            (unsaved, savedAt) = (0, .now)
+        }
         while true {
-            while inFlight < Self.downloadWindow && next < count {
-                guard await send(.download(Download(attachmentId: id, index: next))) else { return false }
-                next += 1
-                inFlight += 1
+            let count = ledger.count ?? 1
+            while asked.count < Self.downloadWindow,
+                  let index = (0..<count).first(where: { !ledger.have.contains($0) && !asked.contains($0) }) {
+                guard await send(.download(Download(attachmentId: id, index: index))) else { persist(); return false }
+                asked.insert(index)
             }
             switch await self.next(id) {
             case .chunk(let chunk):
-                inFlight -= 1
-                guard let bytes = Data(base64Encoded: chunk.data) else { return fail(String(localized: "The file arrived damaged.")) }
-                count = chunk.count
-                parts[chunk.index] = bytes
-                progress[id] = Double(parts.count) / Double(count)
-                guard parts.count == count else { continue }
-                let data = (0..<count).reduce(into: Data()) { $0.append(parts[$1] ?? Data()) }
-                guard data.count == attachment.size || attachment.size == 0 else { return fail(String(localized: "The file arrived damaged.")) }
-                do { try AttachmentFiles.write(data, for: attachment) } catch { return fail(error.localizedDescription) }
+                asked.remove(chunk.index)
+                guard let bytes = Data(base64Encoded: chunk.data), ledger.count.map({ $0 == chunk.count }) ?? true,
+                      chunk.index == chunk.count - 1 || bytes.count == Attachment.chunkBytes else { return fail(damaged) }
+                do {
+                    try handle.seek(toOffset: UInt64(chunk.index * Attachment.chunkBytes))
+                    try handle.write(contentsOf: bytes)
+                } catch { return fail(error.localizedDescription) }
+                ledger.count = chunk.count
+                ledger.have.insert(chunk.index)
+                progress[id] = Double(ledger.have.covered) / Double(chunk.count)
+                guard ledger.have.covered == chunk.count else {
+                    unsaved += 1
+                    if unsaved >= Self.ledgerEvery || ContinuousClock.now - savedAt >= Self.ledgerInterval { persist() }
+                    continue
+                }
+                do {
+                    try handle.synchronize()
+                    let length = try handle.seekToEnd()
+                    guard attachment.size == 0 || length == UInt64(attachment.size) else { return fail(damaged) }
+                    try FileManager.default.moveItem(at: part, to: AttachmentFiles.url(attachment))
+                } catch { return fail(error.localizedDescription) }
+                AttachmentFiles.discard(Self.downloadLedger, of: attachment)
                 progress[id] = nil
                 return true
-            case .refused(let why): return fail(why)
+            case .refused(_, let why): return fail(why)
             case .lost:
+                persist()
                 return false
-            case .ack: break
+            case .ack, .state: break
             }
         }
     }
