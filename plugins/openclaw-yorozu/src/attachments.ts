@@ -8,13 +8,13 @@ import {
 } from "openclaw/plugin-sdk/media-runtime";
 import type { OutboundMediaAccess } from "openclaw/plugin-sdk/media-runtime";
 import { saveMediaBuffer } from "openclaw/plugin-sdk/media-store";
-import { CHUNK_BYTES, type Attachment, type Download, type Event, type Upload } from "./envelope.js";
+import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
+import { CHUNK_BYTES, type Attachment, type Download, type Event, type Upload, type UploadStatus } from "./envelope.js";
 import { yorozuRuntime } from "./runtime.js";
+import { receiveChunk, receiveStatus, Spool, type Receiver } from "./spool.js";
 
 const MB = 1024 * 1024;
 export const DEFAULT_MEDIA_MAX_BYTES = 128 * MB;
-const PARTIALS_MAX = 8;
-const PARTIAL_MS = 30 * 60 * 1000;
 
 type Stored = Attachment & { path: string; reply?: string };
 
@@ -33,6 +33,7 @@ const register = async (stored: Stored) => {
 
 export async function loadAttachmentIndex(): Promise<void> {
   for (const entry of await store().entries()) index(entry.value);
+  await spool().sweep();
 }
 
 export const attachmentAt = (path: string): Attachment | undefined => byPath.get(path.trim());
@@ -61,55 +62,23 @@ export function mediaMaxBytes(cfg: OpenClawConfig, accountId?: string | null): n
 const chunkCount = (size: number) => Math.max(1, Math.ceil(size / CHUNK_BYTES));
 const megabytes = (bytes: number) => `${Math.round((bytes / MB) * 10) / 10} MB`;
 
-type Partial = { meta: Attachment; chunks: (Buffer | undefined)[]; have: number; at: number };
-const partials = new Map<string, Partial>();
+let uploads: Spool | undefined;
+const spool = () =>
+  (uploads ??= new Spool({ dir: path.join(resolveStateDir(), "yorozu", "upload-spool"), chunkBytes: CHUNK_BYTES }));
 
-export async function receiveUpload(upload: Upload, maxBytes: number): Promise<Event[]> {
-  const { attachmentId, index } = upload;
-  const fail = (code: string, message: string): Event[] => {
-    partials.delete(attachmentId);
-    return [{ kind: "error", data: { code, message, attachmentId } }];
-  };
-  if (upload.size > maxBytes) {
-    return fail("too_large", `${upload.name} is ${megabytes(upload.size)}; the limit is ${megabytes(maxBytes)}`);
-  }
-  if (upload.count !== chunkCount(upload.size)) return fail("bad_request", "chunk count does not match the size");
-  if (await store().lookup(attachmentId)) return [{ kind: "upload_ack", data: { attachmentId, index, done: true } }];
+const receiver = (maxBytes: number): Receiver => ({
+  spool: spool(),
+  maxBytes,
+  isStored: async (id) => !!(await store().lookup(id)),
+  store: async ({ meta, path: file }) => {
+    const saved = await saveMediaBuffer(await fs.readFile(file), meta.mime, "inbound", maxBytes, meta.name);
+    await register({ id: meta.id, name: meta.name, mime: saved.contentType ?? meta.mime, size: meta.size, path: saved.path });
+  },
+});
 
-  const now = Date.now();
-  for (const [id, p] of partials) if (p.at < now - PARTIAL_MS) partials.delete(id);
-  let partial = partials.get(attachmentId);
-  if (partial && (partial.meta.size !== upload.size || partial.chunks.length !== upload.count)) {
-    return fail("bad_request", "chunk does not match the upload it continues");
-  }
-  if (!partial) {
-    if (partials.size >= PARTIALS_MAX) partials.delete(partials.keys().next().value!);
-    partial = {
-      meta: { id: attachmentId, name: path.basename(upload.name), mime: upload.mime, size: upload.size },
-      chunks: new Array(upload.count),
-      have: 0,
-      at: now,
-    };
-    partials.set(attachmentId, partial);
-  }
-  const bytes = Buffer.from(upload.data, "base64");
-  const expected = index === upload.count - 1 ? upload.size - index * CHUNK_BYTES : CHUNK_BYTES;
-  if (bytes.length !== expected) return fail("bad_request", `chunk ${index} has ${bytes.length} bytes, not ${expected}`);
-  if (!partial.chunks[index]) partial.have += 1;
-  partial.chunks[index] = bytes;
-  partial.at = now;
-  if (partial.have < partial.chunks.length) return [{ kind: "upload_ack", data: { attachmentId, index, done: false } }];
-
-  partials.delete(attachmentId);
-  try {
-    const { meta } = partial;
-    const saved = await saveMediaBuffer(Buffer.concat(partial.chunks as Buffer[]), meta.mime, "inbound", maxBytes, meta.name);
-    await register({ ...meta, mime: saved.contentType ?? meta.mime, path: saved.path });
-  } catch (error) {
-    return fail("internal", `could not store ${partial.meta.name}: ${String(error).slice(0, 200)}`);
-  }
-  return [{ kind: "upload_ack", data: { attachmentId, index, done: true } }];
-}
+export const receiveUpload = (upload: Upload, maxBytes: number): Promise<Event[]> => receiveChunk(receiver(maxBytes), upload);
+export const receiveUploadStatus = (query: UploadStatus, maxBytes: number): Promise<Event[]> =>
+  receiveStatus(receiver(maxBytes), query);
 
 export async function uploadedFiles(attachments: Attachment[] | undefined): Promise<Stored[]> {
   const found = await Promise.all((attachments ?? []).map((a) => store().lookup(a.id)));

@@ -23,6 +23,8 @@ public enum WireEvent: Equatable, Sendable {
     case pairInvite(PairInvite)
     case upload(Upload)
     case uploadAck(UploadAck)
+    case uploadStatus(UploadStatus)
+    case uploadState(UploadState)
     case download(Download)
     case chunk(Chunk)
     case unknown(kind: String, data: JSONValue?)
@@ -50,6 +52,8 @@ public enum WireEvent: Equatable, Sendable {
         case .pairInvite: "pair_invite"
         case .upload: "upload"
         case .uploadAck: "upload_ack"
+        case .uploadStatus: "upload_status"
+        case .uploadState: "upload_state"
         case .download: "download"
         case .chunk: "chunk"
         case .unknown(let kind, _): kind
@@ -199,6 +203,8 @@ public struct Reply: Codable, Equatable, Sendable {
 }
 
 public struct ErrorInfo: Codable, Equatable, Sendable {
+    public static let hashMismatch = "hash_mismatch"
+
     public var code: String
     public var message: String
     public var convId: String?
@@ -216,6 +222,7 @@ public struct ErrorInfo: Codable, Equatable, Sendable {
 
 public struct Attachment: Codable, Equatable, Sendable, Identifiable {
     public static let capability = "attachments"
+    public static let resumeCapability = "resume"
     public static let chunkBytes = 160 * 1024
     public static let defaultMaxBytes = 128 * 1024 * 1024
     public static let maxPerMessage = 32
@@ -258,8 +265,11 @@ public struct Upload: Codable, Equatable, Sendable {
     public var index: Int
     public var count: Int
     public var data: String
+    /// The whole file's SHA-256, lowercase hex; sent only to a plugin listing `resume`.
+    public var sha256: String?
 
-    public init(attachmentId: String, name: String, mime: String, size: Int, index: Int, count: Int, data: String) {
+    public init(attachmentId: String, name: String, mime: String, size: Int, index: Int, count: Int, data: String,
+        sha256: String? = nil) {
         self.attachmentId = attachmentId
         self.name = name
         self.mime = mime
@@ -267,6 +277,7 @@ public struct Upload: Codable, Equatable, Sendable {
         self.index = index
         self.count = count
         self.data = data
+        self.sha256 = sha256
     }
 }
 
@@ -621,9 +632,17 @@ extension WireEvent: Codable {
         case "pair_invite":
             if let v = data(PairInvite.self) { self = .pairInvite(v); return }
         case "upload":
-            if let v = data(Upload.self), part(v.attachmentId, v.index, v.count) { self = .upload(v); return }
+            if let v = data(Upload.self), part(v.attachmentId, v.index, v.count), v.sha256.map(FileDigest.isSHA256) ?? true {
+                self = .upload(v); return
+            }
         case "upload_ack":
             if let v = data(UploadAck.self), part(v.attachmentId, v.index, v.index + 1) { self = .uploadAck(v); return }
+        case "upload_status":
+            if let v = data(UploadStatus.self), part(v.attachmentId, 0, v.count), v.size >= 0, FileDigest.isSHA256(v.sha256) {
+                self = .uploadStatus(v); return
+            }
+        case "upload_state":
+            if let v = data(UploadState.self), WireEvent.isId(v.attachmentId) { self = .uploadState(v); return }
         case "download":
             if let v = data(Download.self), part(v.attachmentId, v.index, v.index + 1) { self = .download(v); return }
         case "chunk":
@@ -659,6 +678,8 @@ extension WireEvent: Codable {
         case .pairInvite(let v): try c.encode(v, forKey: .data)
         case .upload(let v): try c.encode(v, forKey: .data)
         case .uploadAck(let v): try c.encode(v, forKey: .data)
+        case .uploadStatus(let v): try c.encode(v, forKey: .data)
+        case .uploadState(let v): try c.encode(v, forKey: .data)
         case .download(let v): try c.encode(v, forKey: .data)
         case .chunk(let v): try c.encode(v, forKey: .data)
         case .unknown(_, let v): try c.encodeIfPresent(v, forKey: .data)
