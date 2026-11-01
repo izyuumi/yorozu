@@ -92,7 +92,12 @@ test("a report carries only opaque tokens, kinds, states, counts and times", () 
   assert.equal(validReport({ jobs: [], turns: {} }), true);
   assert.equal(validReport({ ...report, pushToken: "xyz" }), false);
   assert.equal(validReport({ ...report, turns: { [TURN]: "not-a-conversation" } }), false);
-  assert.equal(validReport({ ...report, jobs: [{ ...turn(), kind: "tool" }] }), false);
+  // A job of a kind or state this plugin does not know is valid, and dropped before it reaches the relay.
+  const unknown = [{ ...turn(), kind: "tool" }, { ...recording, state: "paused" }] as unknown as WireJob[];
+  assert.equal(validReport({ ...report, jobs: [...unknown, turn()] }), true);
+  assert.deepEqual(cleanJobs([...unknown, turn()]), [turn()]);
+  assert.equal(validReport({ ...report, jobs: [{ ...turn(), kind: 1 }] }), false);
+  assert.equal(validReport({ ...report, extra: 1 }), true);
   assert.equal(validReport({ ...report, jobs: [{ ...turn(), token: "short" }] }), false);
   assert.equal(validReport({ ...report, jobs: Array(9).fill(turn()) }), false);
   const extra = { ...turn(), title: "secret" } as WireJob;

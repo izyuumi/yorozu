@@ -20,13 +20,15 @@ export const REACTIONS = "reactions";
 /** Counts-only Live Activity pushes through the relay; listed only while the relay can send them. */
 export const LIVE_ACTIVITY_PUSH = "liveActivityPush";
 export const RESUME = "resume";
+/** Introduced by #532; listed by the plugin only once its direct listener exists (#532 step 3). */
+export const DIRECT = "direct";
 export const CHUNK_BYTES = 160 * 1024;
 export type Attachment = { id: string; name: string; mime: string; size: number };
 // Capability `replies`.
 export type ReplyTo = { messageId: string; text?: string };
 export type Message = { convId: string; messageId: string; text: string; attachments?: Attachment[]; replyTo?: ReplyTo };
 // Capability `reactions`: one emoji per person per message; `by` is set by the plugin.
-export type Reaction = { convId: string; messageId: string; emoji: string; remove?: true; by?: "user" | "agent" };
+export type Reaction = { convId: string; messageId: string; emoji: string; remove?: boolean; by?: "user" | "agent" };
 export type Reactions = { user?: string; agent?: string };
 export type MessageRef = { convId: string; messageId: string };
 export type Typing = { convId: string; active: boolean };
@@ -52,7 +54,7 @@ export type Tool = { convId: string; messageId: string; callId: string; name: st
 export type ToolStatus = "running" | "done" | "failed";
 export type ConvList = { conversations: ConvSummary[] };
 export type ConvSummary = { convId: string; updatedAt: number; rev: number; title?: string; archived?: true; pinnedAt?: number };
-export type ConvPatch = { convId: string; title?: string; archived?: boolean; pinned?: boolean; deleted?: true };
+export type ConvPatch = { convId: string; title?: string; archived?: boolean; pinned?: boolean; deleted?: boolean };
 export type ConvUpdate = { convId: string; title?: string; archived?: true; pinnedAt?: number; deleted?: true };
 export type HistoryRequest = { convId: string; before?: number; after?: number };
 export type History = HistoryRequest & { items: HistoryItem[]; more: boolean; rev: number };
@@ -65,7 +67,7 @@ export type ReadCursor = { convId: string; messageId: string; ts: number; unread
 export type Foreground = { convId?: string | null; active?: boolean };
 export type DeviceInfo = { id: string; name?: string; pairedAt: number; push: boolean; current: boolean };
 export type DeviceList = { devices?: DeviceInfo[]; error?: string };
-export type DevicePatch = { id: string; push?: boolean; removed?: true };
+export type DevicePatch = { id: string; push?: boolean; removed?: boolean };
 export type PairInvite = { link?: string; webLink?: string; fingerprint?: string; expiresAt?: number; error?: string };
 export type CronJob = {
   id: string;
@@ -125,6 +127,7 @@ export const encodeEvent = (event: Event): Buffer => Buffer.from(JSON.stringify(
 type Fields = Record<string, unknown>;
 const str = (v: unknown): v is string => typeof v === "string";
 const optStr = (v: unknown): boolean => v === undefined || typeof v === "string";
+const optBool = (v: unknown): boolean => v === undefined || typeof v === "boolean";
 const int = (v: unknown): v is number => Number.isSafeInteger(v);
 const optInt = (v: unknown): boolean => v === undefined || int(v);
 const ref = (d: Fields): boolean => isId(d.convId) && isId(d.messageId);
@@ -156,10 +159,11 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
   typing: (d) => isId(d.convId) && typeof d.active === "boolean",
   reply: (d) => ref(d) && str(d.text) && int(d.ts) && attachments(d.attachments) && replyTo(d.replyTo),
   reaction: (d) =>
-    ref(d) && label(d.emoji, 32) && (d.remove === undefined || d.remove === true) && (d.by === undefined || d.by === "user" || d.by === "agent"),
+    // `by` from a device is ignored (the plugin sets it), so any string passes.
+    ref(d) && label(d.emoji, 32) && optBool(d.remove) && optStr(d.by),
   error: (d) => str(d.code) && str(d.message) && optStr(d.convId) && optStr(d.messageId) && optStr(d.attachmentId),
   tool: (d) =>
-    ref(d) && str(d.callId) && str(d.name) && (d.status === "running" || d.status === "done" || d.status === "failed"),
+    ref(d) && str(d.callId) && str(d.name) && str(d.status),
   conv_list: (d) => d.conversations === undefined || Array.isArray(d.conversations),
   history: (d) => isId(d.convId) && optInt(d.before) && optInt(d.after) && (d.items === undefined || Array.isArray(d.items)),
   read_cursor: (d) => ref(d) && int(d.ts) && typeof d.unread === "boolean",
@@ -169,7 +173,7 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
   device_list: (d) => (d.devices === undefined || Array.isArray(d.devices)) && optStr(d.error),
   pair_invite: (d) => optStr(d.link) && optStr(d.webLink) && optStr(d.fingerprint) && optInt(d.expiresAt) && optStr(d.error),
   device_patch: (d) =>
-    label(d.id, 64) && (d.push === undefined || typeof d.push === "boolean") && (d.removed === undefined || d.removed === true),
+    label(d.id, 64) && optBool(d.push) && optBool(d.removed),
   upload: (d) =>
     part(d) && label(d.name, 255) && label(d.mime, 255) && nat(d.size) && int(d.count) && d.count >= 1 &&
     (d.index as number) < d.count && str(d.data) && (d.sha256 === undefined || sha256(d.sha256)),
@@ -187,7 +191,7 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
     optStr(d.title) &&
     (d.archived === undefined || typeof d.archived === "boolean") &&
     (d.pinned === undefined || typeof d.pinned === "boolean") &&
-    (d.deleted === undefined || d.deleted === true),
+    optBool(d.deleted),
   conv_update: (d) => isId(d.convId),
   live_activity: validReport,
 };
