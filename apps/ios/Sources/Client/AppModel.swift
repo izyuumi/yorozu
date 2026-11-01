@@ -19,7 +19,11 @@ final class AppModel {
     /// Conversations whose running turn has sent no reply or tool event for `stallTimeout`.
     private(set) var stalled: Set<String> = []
     private(set) var loadingOlder: Set<String> = []
-    var pendingPairing: QrPayload?
+    var pairingEntry = PairingEntry()
+    var pendingPairing: QrPayload? {
+        get { pairingEntry.pendingPairing }
+        set { pairingEntry.pendingPairing = newValue }
+    }
     var pairingError: String?
     var requestedConversation: String?
     /// What a widget or control asked the opened conversation's composer to do.
@@ -214,12 +218,24 @@ final class AppModel {
             pairingError = String(localized: "Couldn’t save the pairing: \(error.localizedDescription)")
             return
         }
+        pairingEntry.text = ""
         // The code's direct hints go where the host's later ones go (#532 step 5): the racer reads them there.
         if let hints, let room = payload.roomId { DirectHintStore().save(hints, room: room) }
         pairingRelayUnreachable = false
         pairing = new
         publishWidgets()
         connect()
+    }
+
+    /// Handles Cancel in the “Pair with this host?” alert.
+    func dismissPendingPairing() {
+        pairingEntry.cancel()
+    }
+
+    /// Handles Cancel in the “Pairing…” section.
+    func cancelPairing() {
+        pairingEntry.cancel()
+        if connecting { unpair() }
     }
 
     func unpair() {
