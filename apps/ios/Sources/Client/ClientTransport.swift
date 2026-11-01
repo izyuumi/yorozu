@@ -12,6 +12,7 @@ protocol ClientTransport: Sendable {
 }
 
 extension RelayConnection: ClientTransport {}
+extension RacingConnection: ClientTransport {}
 
 actor DemoTransport: ClientTransport {
     private var continuation: AsyncStream<RelayConnection.Update>.Continuation?

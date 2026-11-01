@@ -28,6 +28,7 @@ public enum WireEvent: Equatable, Sendable {
     case download(Download)
     case chunk(Chunk)
     case liveActivity(ActivityReport)
+    case pushToken(PushToken)
     case unknown(kind: String, data: JSONValue?)
 
     public var kind: String {
@@ -58,6 +59,7 @@ public enum WireEvent: Equatable, Sendable {
         case .download: "download"
         case .chunk: "chunk"
         case .liveActivity: "live_activity"
+        case .pushToken: "push_token"
         case .unknown(let kind, _): kind
         }
     }
@@ -532,9 +534,22 @@ public enum Invite {
     public static let capability = "invite"
 }
 
-/// Introduced by #532; listed by the plugin only once its direct listener exists (#532 step 3).
+/// #532: listed by the plugin only while its direct listener is listening; the probe and the race are in `Direct.swift`.
 public enum Direct {
     public static let capability = "direct"
+}
+
+/// #532: listed by the plugin only while its relay offers `pushProxy`; a client on the direct path then sends its APNs
+/// token in the session (`push_token`), and the plugin registers it at the relay for that device.
+public enum PushProxy {
+    public static let capability = "push-proxy"
+}
+
+/// Client → plugin, only over a direct session and only to a plugin listing `push-proxy` (#532); `token` is hex.
+public struct PushToken: Codable, Equatable, Sendable {
+    public var token: String
+
+    public init(token: String) { self.token = token }
 }
 
 public struct PairInvite: Codable, Equatable, Sendable {
@@ -716,6 +731,8 @@ extension WireEvent: Codable {
             if let v = data(Chunk.self), part(v.attachmentId, v.index, v.count) { self = .chunk(v); return }
         case "live_activity":
             if let v = data(ActivityReport.self) { self = .liveActivity(v); return }
+        case "push_token":
+            if let v = data(PushToken.self) { self = .pushToken(v); return }
         default:
             break
         }
@@ -752,6 +769,7 @@ extension WireEvent: Codable {
         case .download(let v): try c.encode(v, forKey: .data)
         case .chunk(let v): try c.encode(v, forKey: .data)
         case .liveActivity(let v): try c.encode(v, forKey: .data)
+        case .pushToken(let v): try c.encode(v, forKey: .data)
         case .unknown(_, let v): try c.encodeIfPresent(v, forKey: .data)
         }
     }

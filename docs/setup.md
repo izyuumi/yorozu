@@ -40,6 +40,7 @@ Every key under `channels.yorozu` is optional:
 | `channels.yorozu.relayUrl` | `wss://relay.yumi.to` | The relay that the plugin and the apps meet on. It goes into the pairing link. |
 | `channels.yorozu.mediaMaxMb` | `agents.defaults.mediaMaxMb`, else 128 | Attachment size limit, both ways |
 | `channels.yorozu.textChunkLimit` | 4000 | Longest reply chunk, in characters |
+| `channels.yorozu.direct` | `{enabled: true, port: 8738}` | The plugin's own listener for direct connections ([wire](ios-relay-contract.md#direct-path)), bound only to loopback and private addresses. `direct.enabled: false` turns it off; `direct.port` is an integer from 1024 to 65535. A Mac app on the same machine reaches it over loopback; the apps reach it only on port 8738 for now |
 
 ```sh
 openclaw config set channels.yorozu.agent <agent id>

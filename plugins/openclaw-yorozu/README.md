@@ -1,6 +1,6 @@
 # openclaw-yorozu
 
-The OpenClaw channel plugin `yorozu`. It holds the host keys and one outbound WebSocket to the relay, answers wire handshakes from allowlisted devices ([docs/ios-relay-contract.md](../../docs/ios-relay-contract.md)), and runs one agent turn per incoming message. Install, config keys, pairing and troubleshooting: [docs/setup.md](../../docs/setup.md). The OpenClaw SDK surface it relies on: [docs/openclaw-channel.md](../../docs/openclaw-channel.md).
+The OpenClaw channel plugin `yorozu`. It holds the host keys, one outbound WebSocket to the relay and a [direct listener](#direct-listener-srcdirectts) on private addresses, answers wire handshakes from allowlisted devices ([docs/ios-relay-contract.md](../../docs/ios-relay-contract.md)), and runs one agent turn per incoming message. Install, config keys, pairing and troubleshooting: [docs/setup.md](../../docs/setup.md). The OpenClaw SDK surface it relies on: [docs/openclaw-channel.md](../../docs/openclaw-channel.md).
 
 ## Entry points
 
@@ -20,10 +20,24 @@ A method fails with `UNAVAILABLE` and the error text, for example while the chan
 
 - Connects to `<relayUrl>?room=<room id>`, registers by signing the relay's nonce, then sends the device allowlist (`devices`). Pings every 30 s and drops a half-open socket. Redials with backoff from 1 s up to 30 s until the account stops.
 - A handshake is answered only when the device's Ed25519 key and the X25519 key its handshake authenticates both match an allowlist row, or when it proves a pending pairing. Anything else gets a `revoke` to the relay. A handshake id that was already answered is not answered again within the 5-minute freshness window.
-- One session per device, in memory. Sessions survive relay reconnects but not a channel or Gateway restart.
-- Each device must send `peer_info` before anything else counts. If the protocol versions do not overlap, the device gets `error update_required` and its session is dropped. The host's `peer_info` carries the agent, the OpenClaw version, `mediaMaxBytes` and the capabilities `attachments`, `devices`, `invite`, `replies` and `reactions`, plus `liveActivityPush` while the relay can push. `direct` is defined (`DIRECT`) but not listed until the direct listener exists (#532 step 3).
+- One session per device, in memory (`src/hub.ts`), each over its own path: the relay or the direct listener. A new session on either path replaces the old one, and an older direct socket is closed `4102`. Relay sessions survive relay reconnects; no session survives a channel or Gateway restart.
+- Each device must send `peer_info` before anything else counts. If the protocol versions do not overlap, the device gets `error update_required` and its session is dropped. The host's `peer_info` carries the agent, the OpenClaw version, `mediaMaxBytes` and the capabilities `attachments`, `devices`, `invite`, `replies` and `reactions`, plus `liveActivityPush` while the relay can push, `direct` while the direct listener is listening, and `push-proxy` while the relay's `registered` says `pushProxy: true`.
 - Unknown input never ends a session: an unknown kind is answered `error unsupported`, unknown fields are ignored, an unknown enum value passes validation (an unknown `live_activity` job kind or state is dropped before it reaches the relay), and an unknown relay message type is ignored.
-- Frames the relay buffered (`seq`) are acked after handling. Host frames are batched at up to 16 frames and under 1 MiB per batch.
+- Frames the relay buffered (`seq`) are acked after handling. Host frames are batched at up to 16 frames and under 1 MiB per batch. Fan-out over the relay leaves out devices connected directly.
+
+## Direct listener (`src/direct.ts`)
+
+Capability `direct` (#532): clients reach the plugin without the relay, over the same Noise sessions ([wire](../../docs/ios-relay-contract.md#direct-path)).
+
+| Config key | Default | Meaning |
+|---|---|---|
+| `channels.yorozu.direct.enabled` | `true` | `false` turns the listener off |
+| `channels.yorozu.direct.port` | `8738` | Its port, an integer from 1024 to 65535 (anything else falls back to 8738) |
+
+- Its own WebSocket server (`WebSocketServer` from `openclaw/plugin-sdk/websocket-runtime`), not a Gateway route: one per local address that is loopback, RFC 1918, ULA or 100.64.0.0/10, read from `os.networkInterfaces()` when the channel starts. It never binds `0.0.0.0`, `::` or a public address. A port that no address can bind is logged, and the channel runs relay only.
+- A socket must send `probe {nonce}` first; the plugin answers with the host's Ed25519 key and its signature over `yorozu-direct|<room>|<nonce>`. Then an init frame from an allowlisted device (no pairing here yet), then signed boxes, each answered `accepted`. At most 8 sockets wait for their handshake, each for 10 s; a message over 1 MiB closes `4103`; anything out of order, a refused handshake, a bad signature or a browser `Origin` closes `4101`; a socket silent for 90 s is dropped.
+- `push_token {token}` from a device (capability `push-proxy`) goes to the relay as `push {device, token}` while the relay offers `pushProxy`, and is dropped otherwise.
+- `node --test` covers the address filter, the probe and the limits (`test/direct.test.ts`); `apps/relay/src/direct.test.ts` runs the listener and `hub.ts` end to end with a device, directly and through the Node relay.
 
 ## Keys and devices (`src/keys.ts`, `src/devices.ts`)
 
@@ -110,4 +124,4 @@ No output means the plugin typechecks. The `grep` drops errors from inside the O
 
 ## Tests
 
-`src/liveactivity.ts` and `src/envelope.ts` import nothing from OpenClaw, so Node runs their tests without it: `node --test test/*.test.ts` (Node 26, from this folder; `test/envelope.test.ts` maps the sibling `./x.js` imports to `./x.ts` with a resolve hook). The Live Activity tests share `apps/ios/Tests/Fixtures/activity-content-state.json` with the relay's and the app's tests.
+`src/liveactivity.ts`, `src/envelope.ts`, `src/direct.ts` and `src/hub.ts` import nothing from OpenClaw, so Node runs their tests without it: `node --test test/*.test.ts` (Node 26, from this folder; `test/envelope.test.ts` maps the sibling `./x.js` imports to `./x.ts` with a resolve hook). The Live Activity tests share `apps/ios/Tests/Fixtures/activity-content-state.json` with the relay's and the app's tests.

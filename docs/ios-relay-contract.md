@@ -4,15 +4,15 @@ The wire between the Yorozu client app (iPhone, iPad, Mac) and the OpenClaw chan
 
 | Side | Code |
 |---|---|
-| Client (Swift, CryptoKit) | `packages/YorozuWire/Sources/YorozuWire/`: `Wire.swift` (Noise, frames, boxes), `WireEvent.swift` (envelope), `RelayConnection.swift` (relay link), `Pairing.swift`, `DeviceCode.swift`, `PushPreview.swift`, `Crypto.swift` |
-| Plugin (TypeScript, `node:crypto`) | `plugins/openclaw-yorozu/src/`: `wire.ts`, `envelope.ts`, `relay.ts` (relay link and dispatch), `push.ts`, `attachments.ts`, `history.ts`, `sessions.ts`, `reads.ts`, `cron.ts` |
+| Client (Swift, CryptoKit) | `packages/YorozuWire/Sources/YorozuWire/`: `Wire.swift` (Noise, frames, boxes), `WireEvent.swift` (envelope), `RelayConnection.swift` (relay or direct link), `Direct.swift` (probe, race), `Pairing.swift`, `DeviceCode.swift`, `PushPreview.swift`, `Crypto.swift` |
+| Plugin (TypeScript, `node:crypto`) | `plugins/openclaw-yorozu/src/`: `wire.ts`, `envelope.ts`, `hub.ts` (sessions on either path), `direct.ts` (direct listener), `relay.ts` (relay link and dispatch), `push.ts`, `attachments.ts`, `history.ts`, `sessions.ts`, `reads.ts`, `cron.ts` |
 | Relay | `apps/relay/src/`: `protocol.ts` (shared rules), `worker.ts` (deployed), `index.ts` (Node), `mailbox.ts` |
 
-Change a message only with a matching change on both sides. No test exercises the client and plugin against each other: the relay has tests (`apps/relay/src/*.test.ts`), the plugin's Live Activity math has `node --test` tests (`plugins/openclaw-yorozu/test/`), and one fixture (`apps/ios/Tests/Fixtures/activity-content-state.json`) is shared by the plugin, relay and app tests; the rest is checked by compiling and running. Merging a change under `apps/relay/**` deploys the Worker (`.github/workflows/deploy-relay.yml`, `wrangler deploy` on push to `main`).
+Change a message only with a matching change on both sides. The Swift client and the plugin never run against each other in a test: the relay has tests (`apps/relay/src/*.test.ts`), among them `direct.test.ts`, which runs the plugin's session core and direct listener against a device built on the plugin's own Noise code, directly and through the Node relay; the plugin's pure files have `node --test` tests (`plugins/openclaw-yorozu/test/`); and one fixture (`apps/ios/Tests/Fixtures/activity-content-state.json`) is shared by the plugin, relay and app tests. The rest is checked by compiling and running. Merging a change under `apps/relay/**` deploys the Worker (`.github/workflows/deploy-relay.yml`, `wrangler deploy` on push to `main`).
 
 Layers, outside in:
 
-1. [Relay](#relay): rooms, joins, Ed25519-signed frames, offline buffer, push.
+1. [Relay](#relay): rooms, joins, Ed25519-signed frames, offline buffer, push. Or the [direct path](#direct-path): the plugin's own listener, a probe, the same signed frames.
 2. [Frames](#frames): the relay `payload`, binary, base64url.
 3. [Handshake](#handshake): Noise IK per connection.
 4. [Transport boxes](#transport-boxes): numbered ChaCha20-Poly1305 boxes under the session keys.
@@ -52,6 +52,46 @@ The relay parses only its own JSON envelope and forwards `payload` unread. Messa
 | `activityPush` per room, a budget of its own | 60 per minute | `state {state: "activity rate limit"}`, not sent |
 
 The client acks flow every 256 KiB or 16 frames. Because every host frame counts against every device's window, the plugin sends bulk data (history pages, attachment chunks) only to the device that asked and only on request.
+
+## Direct path
+
+Capability `direct` ([#532](https://github.com/izyuumi/yorozu/issues/532)): a client reaches the plugin without the relay. The direct path is a byte pipe for the same Noise sessions; it adds no encryption of its own and buffers nothing.
+
+**Listener** (`direct.ts`). The plugin runs its own WebSocket server (not a Gateway route), on by default (`channels.yorozu.direct.enabled`), on port 8738 (`channels.yorozu.direct.port`, 1024–65535, [setup](setup.md#2-config)). It binds one server per local address of an allowed kind, read from the network interfaces when the channel starts: loopback (127.0.0.0/8, `::1`), RFC 1918 (10/8, 172.16/12, 192.168/16), ULA (fc00::/7) and 100.64.0.0/10. Never `0.0.0.0`, `::`, a link-local or a public address; no setting widens that (`directAddress`). A request carrying an `Origin` header (a browser page) is refused. The plugin lists `direct` in its `peer_info` only while at least one server is listening.
+
+**Clients.** This step dials only loopback on a Mac: `ws://127.0.0.1:8738` and `ws://[::1]:8738` (`Direct.candidates`), so a Mac on the Gateway's machine needs no Local Network permission. iPhone and iPad have no candidate yet (address hints and Bonjour come later in #532). A client still holding its pairing secret pairs over the relay first.
+
+**Messages**, JSON objects with a `type`, both ways:
+
+| Message | Direction | Fields |
+|---|---|---|
+| `probe` | client → plugin, first | `nonce`: 32 random bytes, base64url |
+| `probe` | plugin → client | `pubkey`: the host's Ed25519 key, base64url; `sig`: Ed25519 over UTF-8 `yorozu-direct\|<room id>\|<nonce>` |
+| `frame` | both | `payload`, `sig`: one [frame](#frames), signed as on the relay (the client with its Ed25519 key, the plugin with the host's); never batched |
+| `accepted` | plugin → client | `sig` of a client frame whose box the plugin opened: the client's ✓ sent |
+| `ping` / `pong` | client → plugin / answer | the exact strings `{"type":"ping"}` and `{"type":"pong"}` |
+
+- The client sends nothing but the probe until the answer checks out: `base64url(sha256(pubkey))` equals the pairing's room id and `sig` verifies (`Direct.verifyProbe`, `verifyProbe`). Otherwise it closes the socket. A listener that has not proven the key gets neither the client's key nor an init, and a direct socket never handles `nonce`, `joined` or `owner`, so it can never obtain a join signature.
+- Then the client sends its init frame, and the session goes as over the relay: response and `peer_info`, then boxes. The plugin checks every frame's `sig` against the device key the init frame named, opens boxes only under that socket's session, and ignores unknown message types once the session is open.
+- Only an allowlisted device's init is answered; pairing over the direct path is not yet possible.
+- The client pings every 25 s; the plugin drops a direct socket silent for 90 s.
+
+**Limits and close codes**, a range of their own, never the relay's:
+
+| Limit or event | Value | Close |
+|---|---|---|
+| Sockets waiting for their handshake | 8 | `4101 unauthorized`, for the ninth |
+| Time to an open session | 10 s | `4101` |
+| Anything but a probe first, a malformed nonce, anything but an init frame next, a refused handshake (unknown device, stale, replayed), a bad frame signature, an `Origin` header | — | `4101` |
+| Another session for the same device, on either path | newest wins | `4102 replaced`, for the older direct socket |
+| One WebSocket message | 1 MiB | `4103 too large` (`1009` from the WebSocket layer above 2 MiB) |
+| Device removed or revoked | — | `4101` |
+
+**Race** (`RacingConnection`). The Mac dials the loopback candidates and the relay together. One leg handshakes at a time, the first ready (probe verified, or relay `joined` with the host online): the plugin keeps a device's newest session, so two inits in flight could leave it holding the loser's. The first path whose session opens wins and the others are closed, so a client on the direct path keeps no relay socket. If the direct leg fails (refused, closed, or 15 s without a session), the next ready leg handshakes, normally the relay, which then goes on as without a race. Any network path change (`NWPathMonitor`) and the app's own reconnects start a new race; a lost direct session starts one after 1 s. Nothing migrates: each race is a new session, after which the app resends every message without ✓✓. The share extension stays on the relay.
+
+**Each device on its own path** (`hub.ts`). Every session has its path and its send; a new session on either path replaces the device's old one. Relay fan-out leaves out devices connected directly, whose frames go over their own sockets; the silent `sync` notify skips them too. Presence (`foreground`, `active`) counts sessions on both paths, and the relay's `phones {count: 0}` clears it only for relay sessions. The plugin's `messageId` dedupe spans both paths, so a message resent after a race on the other path runs once.
+
+**Push** (`push-proxy`). A direct client opens no relay socket, so it cannot send the relay its APNs token. The plugin lists `push-proxy` while its relay's `registered` said `pushProxy: true`; a client on a direct session then sends [`push_token`](#kinds) whenever it has a token, and the plugin forwards it as `push {device, token}`. Without `pushProxy` the plugin drops it. The Mac registers no token, so in this step nothing sends it yet.
 
 ## Pairing
 
@@ -124,11 +164,11 @@ Client (`RelayConnection`, `ClientHandshake`):
 2. Ignores responses for other `sid`s. A response that fails to verify leaves the handshake waiting, so a forged one cannot spoil the real one.
 3. On a valid response, sends its `peer_info` as its first box.
 
-Plugin (`acceptHandshake` in `wire.ts`, the decision in `relay.ts`), per init frame:
+Plugin (`acceptHandshake` in `wire.ts`, the decision in `hub.ts`), per init frame:
 
 1. Verifies `sig` against the frame's own Ed25519 key and reads message 1. Any failure: dropped, no answer.
 2. Drops it if `ts` is more than 5 minutes (`HANDSHAKE_MAX_AGE_MS`) from its clock either way, or if its `sid` was already answered within that window.
-3. Serves a stored device whose Ed25519 key **and** handshake-authenticated X25519 key both match, or a device whose `proof` matches a pending secret (it is then stored, the oldest of 16 making way, and the secret spent). Otherwise it sends the relay `revoke` for that key and drops the frame.
+3. Serves a stored device whose Ed25519 key **and** handshake-authenticated X25519 key both match, or a device whose `proof` matches a pending secret (it is then stored, the oldest of 16 making way, and the secret spent). Otherwise it sends the relay `revoke` for that key and drops the frame (on the [direct path](#direct-path), only stored devices are served, and a refusal closes the socket).
 4. Sends the response frame and its `peer_info` box together. The new session replaces the device's previous one.
 
 ### Freshness and replays
@@ -184,6 +224,7 @@ Every box's plaintext is one UTF-8 JSON object `{"kind": <string>, "data": <obje
 | `download` | client → plugin | `attachmentId`, `index` |
 | `chunk` | plugin → that client | `attachmentId`, `index`, `count`, `data` (base64) |
 | `live_activity` | client → plugin | `pushToken`? (hex), `jobs`, `turns` ([Live Activity push](#live-activity-push)) |
+| `push_token` | client → plugin, only on a direct session to a plugin listing `push-proxy` | `token`: APNs token, hex ([Direct path](#direct-path)) |
 
 A request and its answer share a kind; a `cron_list`, `device_list` or `pair_invite` with none of the answer fields is a request, and a client ignores one.
 
@@ -195,10 +236,10 @@ Each side sends its own as its first box and acts on nothing else until it has t
 |---|---|---|
 | `app` | the app version | the plugin version (`0.1.0`) |
 | `name` | device model | the host's hostname |
-| `capabilities` | `attachments`, `devices`, `replies`, `reactions`, `resume` | `attachments`, `devices`, `invite`, `replies`, `reactions`, `resume`, and `liveActivityPush` while its relay's `registered` said `liveActivity: true` |
+| `capabilities` | `attachments`, `devices`, `replies`, `reactions`, `resume` | `attachments`, `devices`, `invite`, `replies`, `reactions`, `resume`, `liveActivityPush` while its relay's `registered` said `liveActivity: true`, `direct` while its direct listener is listening, and `push-proxy` while its relay's `registered` said `pushProxy: true` |
 | `mediaMaxBytes`, `agent`, `hostVersion` | — | attachment limit; `channels.yorozu.agent`; OpenClaw version |
 
-Reserved: `direct`, introduced by [#532](https://github.com/izyuumi/yorozu/issues/532); the plugin lists it only once its direct listener exists (#532 step 3), and no side lists it yet (`Direct.capability`, `DIRECT`). `protocolMin` and `protocolMax` stay 3; new behavior is gated on a capability, never on a version.
+`direct` and `push-proxy` were introduced by [#532](https://github.com/izyuumi/yorozu/issues/532) (`Direct.capability`, `DIRECT`; `PushProxy.capability`, `PUSH_PROXY`; [Direct path](#direct-path)). The client lists neither: it learns the direct path from the listener's probe, not from the capability. `protocolMin` and `protocolMax` stay 3; new behavior is gated on a capability, never on a version.
 
 The client offers attachments, Settings devices, adding a device and replying only when the plugin lists `attachments`, `devices`, `invite` and `replies` (attachments and replies also before it has the plugin's `peer_info`), and sends `replyTo` only to a plugin listing `replies`. The plugin answers `device_list`, `device_patch` and `pair_invite` from any client and reads `foreground.active` whenever present; it gates three things on the client's capabilities: a reply's files, sent to a client without `attachments` as one text line each; `replyTo` on `reply` and history items, left out for a client without `replies`; and `reaction` events and history `reactions`, left out for a client without `reactions`. The client offers reacting only once the plugin's `peer_info` lists `reactions`, and asks ActivityKit for a Live Activity push token only from a plugin listing `liveActivityPush` (otherwise its activity has none, as before). The plugin stores the client's `name` (cut to 64) for `openclaw yorozu devices`.
 
@@ -318,7 +359,7 @@ A receiver treats an unknown code like `internal`.
 
 All paired devices are one channel peer (`owner`), so the plugin sends `delivered`, `run_started`, `typing`, `tool`, `reply`, `conv_update` and merged `read_cursor`s to every device with a session, each sealed under that device's session.
 
-- ✓ sent: the relay's `accepted` for the frame carrying the `message`. ✓✓ delivered: `delivered`, sent as soon as the box opens. Read: `run_started`.
+- ✓ sent: the relay's `accepted` for the frame carrying the `message`, or on the [direct path](#direct-path) the plugin's. ✓✓ delivered: `delivered`, sent as soon as the box opens. Read: `run_started`.
 - The client sends `message`s only in an established session and resends any without `delivered` in its next session. The plugin answers a repeated `messageId` (remembered 24 h, up to 10,000) with `delivered` again and does not run it twice.
 - Typing: `typing {active: true}` from run start, repeated at least every 10 s (every 8 s in practice), `typing {active: false}` when it ends. The client hides it after 30 s without a repeat.
 - Replies arrive whole, one `reply` per chunk of `channels.yorozu.textChunkLimit` (default 4000) characters, never edited. A cron job delivering into a conversation (`delivery: {channel: "yorozu", to: "owner", threadId: <convId>}`) arrives as `reply` too, with no `run_started` or `typing`. Nothing is queued for a device without a session: it catches up through `history`.
@@ -330,7 +371,7 @@ All paired devices are one channel peer (`owner`), so the plugin sends `delivere
 One push per finished agent reply, and per cron delivery with text, through the relay's `notify`, with a preview sealed per device.
 
 - **Token**: an iPhone or iPad sends `{"type":"push","deviceToken":<lowercase hex>}` after every `joined` and whenever iOS hands it a new token; it asks iOS for one on every launch. The relay keeps one token per device (a token claimed by another device key moves to it) and forgets it when the device is revoked. The Mac registers no token.
-- **Foreground**: the client sends `foreground {convId, active: true}` while a conversation is on screen with the app active, `foreground {active: …}` without `convId` otherwise, whenever either changes, including just before going to the background, and again on every new session while active (a new session starts with none). The plugin skips a device whose live session last reported that conversation or `active: true`, and a device whose push is off. When the relay reports `phones {count: 0}`, the plugin forgets every device's foreground.
+- **Foreground**: the client sends `foreground {convId, active: true}` while a conversation is on screen with the app active, `foreground {active: …}` without `convId` otherwise, whenever either changes, including just before going to the background, and again on every new session while active (a new session starts with none). The plugin skips a device whose live session last reported that conversation or `active: true`, and a device whose push is off. When the relay reports `phones {count: 0}`, the plugin forgets the foreground of every relay session; a direct session keeps its own.
 - **When**: after a turn that sent at least one `reply` (one push, named after its first chunk), or after a delivered payload with text (the outbound adapter's `afterDeliverPayload`). A failed turn does not push. With no device left to alert, no `notify` is sent.
 - **`notify`** (host → relay): `{"type":"notify","class":"reply","threadRef":<threadRef(convId)>,"eventRef":<threadRef(messageId)>,"previews"?:{<device Ed25519 key>:{n,c}},"devices":[<device Ed25519 key>,…]}`. `threadRef` is `YorozuCrypto.threadRef` / `threadRef`: the first 8 base64url characters of SHA-256. The relay alerts only the named devices (every registered device when `devices` is absent). It validates: `previews` and `devices` at most 16 entries of 43-character keys, `n` 16 characters, `c` 22 to 363 characters.
 - **Relay → APNs** (Worker only): an alert `{"aps":{"alert":{"title":"Yorozu","loc-key":"Yorozu replied."},"sound":"default","thread-id":<threadRef>,"mutable-content":1},"ref":<threadRef>,"cls":"reply","event":<eventRef>,"preview":{n,c}}` (`mutable-content` and `preview` only with a preview). After an alert, a device with no live socket also gets a background push (`content-available`), at most one a minute. The relay also accepts classes `approval`, `done` and `failed`, which this plugin never sends.
@@ -363,10 +404,11 @@ Capability `liveActivityPush` (iPhone, iPad). Counts-only ActivityKit pushes kee
 | Handshake | `ClientHandshake`, `.finish(_:) -> Session` | `acceptHandshake` |
 | Noise, both roles | `NoiseIKHandshake` | `NoiseIK` |
 | Relay link | `RelayConnection` | `runRelayHost` (`relay.ts`) |
+| Direct path | `RacingConnection`, `RelayConnection` (direct legs), `Direct.verifyProbe`, `Direct.candidates` | `serveDirect`, `directAddress`, `probeAnswer`, `verifyProbe` (`direct.ts`); `Hub` (`hub.ts`) |
 | Frames | `Frame(payload:)`, `.payload`, `.sid` | `decodeFrame`, `encodeFrame`, `frameSid` |
 | Boxes | `Session.seal`, `.open`, `.openEvent` | `Session.seal`, `.open` |
 | Envelope | `WireEvent`, `PeerInfo.negotiate`, `WireEvent.newId`, `isId` | `Event`, `parseEvent`, `encodeEvent`, `negotiate`, `isId` |
-| Capabilities | `Attachment.capability`, `Devices.capability`, `Invite.capability`, `ReplyTo.capability`, `Reaction.capability`, `ActivityReport.capability`, `Direct.capability` (reserved) | `ATTACHMENTS`, `DEVICES`, `INVITE`, `REPLIES`, `REACTIONS`, `LIVE_ACTIVITY_PUSH`, `DIRECT` (reserved) |
+| Capabilities | `Attachment.capability`, `Devices.capability`, `Invite.capability`, `ReplyTo.capability`, `Reaction.capability`, `ActivityReport.capability`, `Direct.capability`, `PushProxy.capability` | `ATTACHMENTS`, `DEVICES`, `INVITE`, `REPLIES`, `REACTIONS`, `LIVE_ACTIVITY_PUSH`, `DIRECT`, `PUSH_PROXY` |
 | Live Activity push | `ActivityReport` (the app's `ActivityReports.swift`, `YorozuActivities`) | `applyTurn`, `plan`, `contentState`, `holdFor` (`liveactivity.ts`) |
 | Attachments | `Attachment` (`chunkBytes`, `chunkCount`), `Upload`, `UploadAck`, `Download`, `Chunk` | `CHUNK_BYTES`, `attachments.ts` |
 | Push preview | `PushPreview.key`, `.open(userInfo:key:)`, `RelayConnection.registerPush` | `previewKey`, `previewPlaintext`, `sealPreview`, `threadRef` (`push.ts`) |

@@ -6,7 +6,8 @@ Yorozu is an OpenClaw chat channel. OpenClaw runs the agent, its sessions, memor
  iPhone / iPad / Mac client ──┐                                   ┌── OpenClaw Gateway (owner's computer)
  (apps/ios, SwiftUI)          │   wss, Ed25519-signed frames      │    plugins/openclaw-yorozu (TypeScript)
                               ├──────────► relay ◄────────────────┤    ↳ agent turns, sessions, transcripts, cron
- more paired devices ─────────┘   (apps/relay, Cloudflare Worker) └──  outbound connection only, no open port
+ more paired devices ─────────┘   (apps/relay, Cloudflare Worker) └──  outbound to the relay, plus a direct
+                              └──────── direct (ws, loopback/private addresses) ──────┘     listener on private addresses
             └──────────── Noise IK sessions, end to end; the relay sees sealed boxes only ────────────┘
 ```
 
@@ -14,10 +15,10 @@ Yorozu is an OpenClaw chat channel. OpenClaw runs the agent, its sessions, memor
 
 | Part | Where | Role |
 |---|---|---|
-| Channel plugin | `plugins/openclaw-yorozu` | Runs inside the Gateway. Holds the host keys, registers as host of its relay room, answers handshakes from allowlisted devices, runs one agent turn per incoming message and sends the results to every device; answers history, title, read-mark, cron, device and attachment requests; sends pushes. Adds `openclaw yorozu pair`, `devices` and `devices remove` through Gateway methods (`yorozu.*`). File-by-file reference: its [README](../plugins/openclaw-yorozu/README.md); SDK facts: [openclaw-channel.md](openclaw-channel.md). |
+| Channel plugin | `plugins/openclaw-yorozu` | Runs inside the Gateway. Holds the host keys, registers as host of its relay room and listens for direct connections on loopback and private addresses, answers handshakes from allowlisted devices on either path, runs one agent turn per incoming message and sends the results to every device; answers history, title, read-mark, cron, device and attachment requests; sends pushes. Adds `openclaw yorozu pair`, `devices` and `devices remove` through Gateway methods (`yorozu.*`). File-by-file reference: its [README](../plugins/openclaw-yorozu/README.md); SDK facts: [openclaw-channel.md](openclaw-channel.md). |
 | Relay | `apps/relay` | Rooms, joins, signed frames, offline buffer for device frames, APNs push, one-time mailboxes for pairing a Mac. Reads only its outer envelope. Deployed as a Cloudflare Worker; a Node variant exists ([README](../apps/relay/README.md)). |
 | Client app | `apps/ios`, one multiplatform target `YorozuIOS` (iPhone, iPad, native SwiftUI Mac) | Pairing, conversation list, chat, Automations (crons), Settings, attachments, notifications. Screens in `Sources/YorozuIOS`; state, cache and transfers in `Sources/Client` (`AppModel`, `ConversationCache` and `Pairing` in `Store.swift`, `Transfers`). |
-| Wire package | `packages/YorozuWire` | The client's side of the wire: Noise handshake, frames and boxes (`Wire.swift`), envelope (`WireEvent.swift`), relay link (`RelayConnection.swift`), pairing link (`Pairing.swift`), Mac pairing code (`DeviceCode.swift`), push previews, crypto primitives. |
+| Wire package | `packages/YorozuWire` | The client's side of the wire: Noise handshake, frames and boxes (`Wire.swift`), envelope (`WireEvent.swift`), relay or direct link (`RelayConnection.swift`), the probe and the race between paths (`Direct.swift`), pairing link (`Pairing.swift`), Mac pairing code (`DeviceCode.swift`), push previews, crypto primitives. |
 
 ### iPhone and iPad vs Mac
 
@@ -32,7 +33,7 @@ Yorozu is an OpenClaw chat channel. OpenClaw runs the agent, its sessions, memor
 
 ## Wire
 
-Client and plugin speak the wire through the relay; [ios-relay-contract.md](ios-relay-contract.md) is the contract. In outline:
+Client and plugin speak the wire through the relay, or directly (a Mac on the Gateway's machine, over loopback); [ios-relay-contract.md](ios-relay-contract.md) is the contract. In outline:
 
 - **Pairing**: `openclaw yorozu pair` prints a QR and a `yorozu://pair?v=3&relay=…&key=…&token=…&room=…&secret=…` link. The client shows the host fingerprint to compare, joins the relay room with the one-time token, and proves the secret inside its first handshake; the plugin then adds the device to its allowlist (16 at most, the oldest making way). A paired device can ask the plugin for another code (`pair_invite`).
 - **Sessions**: every connection runs a Noise IK handshake (the device knows the host's static key from the link), so every connection has fresh keys. Transport boxes are ChaCha20-Poly1305; relay frames are Ed25519-signed.

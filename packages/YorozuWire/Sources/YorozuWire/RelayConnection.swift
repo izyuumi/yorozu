@@ -20,6 +20,10 @@ public actor RelayConnection {
         case sessionOpen(PeerInfo)
     }
 
+    /// A relay, or the plugin's direct listener (#532): a probe instead of `join`, no relay buffer, flow control or push.
+    enum Path: Sendable { case relay, direct }
+
+    private let path: Path
     private var pairing: QrPayload
     private let identity: PhoneIdentity
     private let local: PeerInfo
@@ -27,6 +31,11 @@ public actor RelayConnection {
     private let dial: URL
     private var relayKnows: Bool
     private var triedAsKnown = false
+    private var probeNonce: String?
+    private var ready: (@Sendable () -> Void)?
+    private var awaitingGrant = false
+    private var granted = false
+    private var hostCapabilities: [String] = []
 
     private var continuation: AsyncStream<Update>.Continuation?
     private var running = false
@@ -55,18 +64,42 @@ public actor RelayConnection {
 
     public init(pairing: QrPayload, identity: PhoneIdentity, relayKnows: Bool, local: PeerInfo,
         urlSession: URLSession = .shared) throws {
-        guard pairing.v == 3, let room = pairing.roomId, QrPayload.isAcceptableRelayUrl(pairing.relayUrl),
-              var components = URLComponents(string: pairing.relayUrl) else {
-            throw Wire.Failure.malformed("not a pairing for this app")
-        }
-        components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "room", value: room)]
-        guard let dial = components.url else { throw Wire.Failure.malformed("relay URL") }
+        self.init(path: .relay, dial: try RelayConnection.relayURL(pairing), pairing: pairing, identity: identity, relayKnows: relayKnows,
+            local: local, urlSession: urlSession)
+    }
+
+    init(path: Path, dial: URL, pairing: QrPayload, identity: PhoneIdentity, relayKnows: Bool, local: PeerInfo,
+        urlSession: URLSession) {
+        self.path = path
         self.pairing = pairing
         self.identity = identity
         self.relayKnows = relayKnows
         self.local = local
         self.urlSession = urlSession
         self.dial = dial
+    }
+
+    static func relayURL(_ pairing: QrPayload) throws -> URL {
+        guard pairing.v == 3, let room = pairing.roomId, QrPayload.isAcceptableRelayUrl(pairing.relayUrl),
+              var components = URLComponents(string: pairing.relayUrl) else {
+            throw Wire.Failure.malformed("not a pairing for this app")
+        }
+        components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "room", value: room)]
+        guard let dial = components.url else { throw Wire.Failure.malformed("relay URL") }
+        return dial
+    }
+
+    /// Hands the decision to send the init to a race (`RacingConnection`): `ready` is called when the leg could.
+    func gate(_ ready: @escaping @Sendable () -> Void) {
+        self.ready = ready
+    }
+
+    func grant() -> Bool {
+        guard awaitingGrant, let socket, hostOnline, session == nil else { return false }
+        awaitingGrant = false
+        granted = true
+        beginHandshake(on: socket)
+        return true
     }
 
     public func updates() -> AsyncStream<Update> {
@@ -97,7 +130,13 @@ public actor RelayConnection {
 
     public func registerPush(deviceToken: String) {
         pushToken = deviceToken
+        if path == .direct { return sendPushToken() }
         if joined, let socket { send(["type": "push", "deviceToken": deviceToken], on: socket) }
+    }
+
+    private func sendPushToken() {
+        guard path == .direct, let pushToken, hostCapabilities.contains(PushProxy.capability) else { return }
+        send(.pushToken(PushToken(token: pushToken)))
     }
 
     @discardableResult
@@ -129,6 +168,11 @@ public actor RelayConnection {
         socket = task
         set(.connecting)
         task.resume()
+        if path == .direct {
+            let nonce = Direct.newNonce()
+            probeNonce = nonce
+            send(["type": "probe", "nonce": nonce], on: task)
+        }
         Task { await self.receive(task, gen) }
     }
 
@@ -152,6 +196,8 @@ public actor RelayConnection {
         generation += 1
         endSession()
         hostOnline = false
+        probeNonce = nil
+        granted = false
         sentSigs = [:]
         pinger?.cancel()
         pongDeadline?.cancel()
@@ -159,6 +205,7 @@ public actor RelayConnection {
     }
 
     private func endSession() {
+        awaitingGrant = false
         handshake = nil
         session = nil
         peerReady = false
@@ -169,6 +216,11 @@ public actor RelayConnection {
     private func closed(reason: String) {
         drop()
         guard running else { return }
+        // A direct leg does not redial: its race decides what comes next.
+        if path == .direct {
+            running = false
+            return set(.offline)
+        }
         switch reason {
         case "revoked":
             return terminal(.unpaired)
@@ -225,7 +277,21 @@ public actor RelayConnection {
         guard let socket,
               let message = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any],
               let type = message["type"] as? String else { return }
+        // A direct listener is nobody until its probe answer proves the room's key, and never a relay: it gets no join
+        // signature over a nonce of its choosing.
+        if path == .direct {
+            guard hostOnline || type == "probe" else { return }
+            guard !["nonce", "joined", "owner"].contains(type) else { return }
+        }
         switch type {
+        case "probe":
+            guard path == .direct, let nonce = probeNonce, let room = pairing.roomId else { return }
+            probeNonce = nil
+            guard let pubkey = message["pubkey"] as? String, let sig = message["sig"] as? String,
+                  Direct.verifyProbe(room: room, nonce: nonce, pubkey: pubkey, sig: sig) else { return closed(reason: "") }
+            hostOnline = true
+            startPings(on: socket)
+            handshakeWhenGranted(on: socket)
         case "nonce":
             guard let nonce = message["nonce"] as? String else { return }
             join(nonce: nonce, on: socket)
@@ -242,13 +308,13 @@ public actor RelayConnection {
             framesSinceAck = 0
             startPings(on: socket)
             hostOnline = message["ownerOnline"] as? Bool == true
-            if hostOnline { beginHandshake(on: socket) } else { set(.hostOffline) }
+            if hostOnline { handshakeWhenGranted(on: socket) } else { set(.hostOffline) }
             send(["type": "owner"], on: socket)
         case "owner":
             let online = message["online"] as? Bool == true
             if online && !hostOnline {
                 hostOnline = true
-                beginHandshake(on: socket)
+                handshakeWhenGranted(on: socket)
             } else if !online && hostOnline {
                 hostOnline = false
                 endSession()
@@ -315,6 +381,14 @@ public actor RelayConnection {
         send(["type": "ping"], on: socket)
     }
 
+    private func handshakeWhenGranted(on socket: URLSessionWebSocketTask) {
+        guard let ready, !granted else { return beginHandshake(on: socket) }
+        endSession()
+        awaitingGrant = true
+        set(.handshaking)
+        ready()
+    }
+
     private func beginHandshake(on socket: URLSessionWebSocketTask) {
         endSession()
         guard let hs = try? ClientHandshake(identity: identity, pairing: pairing) else { return }
@@ -324,6 +398,8 @@ public actor RelayConnection {
         handshakeDeadline = Task {
             try? await Task.sleep(for: Self.handshakeTimeout)
             guard !Task.isCancelled, socket === self.socket, self.hostOnline, !self.peerReady else { return }
+            // Nothing buffers on the direct path: a handshake that got no answer fails the leg.
+            if self.path == .direct { return self.closed(reason: "") }
             self.beginHandshake(on: socket)
         }
     }
@@ -357,9 +433,10 @@ public actor RelayConnection {
             handshakeDeadline?.cancel()
             handshakeDeadline = nil
             pairing.secret = nil
+            hostCapabilities = peer.capabilities
             set(.ready)
             continuation?.yield(.sessionOpen(peer))
-            return
+            return sendPushToken()
         }
         if case .error(let error) = event, error.code == "update_required" { return stopForUpdate() }
         continuation?.yield(.event(event))
