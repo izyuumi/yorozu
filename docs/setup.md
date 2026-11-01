@@ -103,6 +103,8 @@ The command prints a QR code, a `yorozu://pair?…` link, the host fingerprint a
 3. Pairing is done when the conversation list appears and `openclaw yorozu devices` lists the device by its model name. The app then asks to allow notifications.
 4. Once the first session opens, the app asks "Connect directly on Wi-Fi?" (iPhone, iPad, and Mac on macOS 15 or later). Continue lets it talk to the host directly on the same network; iOS then asks for Local Network access, and macOS may. Not Now keeps it on the relay, loopback and Tailscale; Settings › Host › Direct on Local Network changes it later.
 
+**A Mac that runs the Gateway itself:** no command needed. On the Mac's pairing screen, click "Pair with the Gateway on this Mac". The button looks only on default port 8738; with a custom `channels.yorozu.direct.port`, use `openclaw yorozu pair` instead. The plugin's loopback listener writes an offline-style pairing link (random token, one-time secret, 10-minute expiry, `directOnly`; no relay mint request) to `<OpenClaw state dir>/yorozu/local-pairing` (`0600`); the app reads it from there and asks "Pair with this host?" as above. Pairing uses loopback; the relay learns the device through allowlist sync. It needs the direct listener on (`channels.yorozu.direct.enabled`, the default) on the default port, and the app running as the same user as the Gateway. "No OpenClaw Gateway with Yorozu was found on this Mac" means nothing answered on loopback, or the plugin predates this; run `openclaw yorozu pair` instead.
+
 **From a paired device:** Settings › Add a Device… makes a fresh pairing code on the host and shows it as a QR code and a link.
 
 **A new Mac from a paired iPhone or iPad:** the Mac's pairing screen shows a code, which changes every 10 minutes.
