@@ -47,6 +47,14 @@ protocol ConnectionLeg: Actor {
     func registerPush(deviceToken: String)
     @discardableResult func send(_ message: Message) -> Bool
     @discardableResult func send(_ event: WireEvent) -> Bool
+    /// "<host[:port]>" and "<path> <host[:port]>" for the log.
+    nonisolated var host: String { get }
+    nonisolated var label: String { get }
+}
+
+extension ConnectionLeg {
+    nonisolated var host: String { "?" }
+    nonisolated var label: String { "leg" }
 }
 
 extension RelayConnection: ConnectionLeg {}
@@ -78,6 +86,7 @@ public actor RacingConnection {
     private var paths: Task<Void, Never>?
     private var again: Task<Void, Never>?
     private var pushToken: String?
+    private var raceBegan = ContinuousClock.now
 
     public init(pairing: QrPayload, identity: PhoneIdentity, relayKnows: Bool, local: PeerInfo, urlSession: URLSession = .shared) throws {
         let relayURL = try RelayConnection.relayURL(pairing)
@@ -167,6 +176,9 @@ public actor RacingConnection {
         await endRace()
         guard running else { return }
         let (relay, direct) = makeLegs(pairing, relayKnows)
+        raceBegan = .now
+        let directHosts = direct.isEmpty ? "no direct candidates" : "direct " + direct.map(\.host).joined(separator: ", ")
+        connectionLog.info("race \(self.round, privacy: .public): dialing relay \(relay.host, privacy: .public) and \(directHosts, privacy: .public)")
         add(relay, relay: true)
         for leg in direct { add(leg, relay: false) }
     }
@@ -221,6 +233,8 @@ public actor RacingConnection {
         switch update {
         case .sessionOpen(let peer):
             if winner != id {
+                let label = legs[id]?.label ?? "leg"
+                connectionLog.info("race \(round, privacy: .public) won by \(label, privacy: .public) after \((ContinuousClock.now - self.raceBegan).ms, privacy: .public) ms")
                 winner = id
                 holder = id
                 waiting = []
@@ -245,6 +259,7 @@ public actor RacingConnection {
             if id == winner {
                 guard id != relayID, new != .ready else { return set(new) }
                 // The direct session is gone: race again, after a pause so a socket that keeps closing cannot spin.
+                connectionLog.info("direct session lost (\(String(describing: new), privacy: .public)); racing again in \(String(describing: self.pause), privacy: .public)")
                 legs[id] = nil
                 winner = nil
                 holder = nil

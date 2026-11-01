@@ -1,4 +1,11 @@
 import Foundation
+import os
+
+let connectionLog = Logger(subsystem: "to.yumi.yorozu", category: "Connection")
+
+extension Duration {
+    var ms: Int64 { components.seconds * 1000 + components.attoseconds / 1_000_000_000_000_000 }
+}
 
 public actor RelayConnection {
     public enum State: Equatable, Sendable {
@@ -57,6 +64,11 @@ public actor RelayConnection {
     private var handshakeDeadline: Task<Void, Never>?
     private var pushToken: String?
     private var joined = false
+    /// "<path> <host[:port]>" for the log: never the query, which holds the room id.
+    nonisolated let host: String
+    nonisolated let label: String
+    private var dialed = ContinuousClock.now
+    private var socketOpen = false
 
     static let pingInterval: Duration = .seconds(25)
     static let pongTimeout: Duration = .seconds(10)
@@ -77,6 +89,14 @@ public actor RelayConnection {
         self.local = local
         self.urlSession = urlSession
         self.dial = dial
+        host = Self.hostPort(dial)
+        label = "\(path) \(host)"
+    }
+
+    static func hostPort(_ url: URL) -> String {
+        let host = url.host(percentEncoded: false) ?? "?"
+        let shown = host.contains(":") ? "[\(host)]" : host
+        return url.port.map { "\(shown):\($0)" } ?? shown
     }
 
     static func relayURL(_ pairing: QrPayload) throws -> URL {
@@ -166,6 +186,8 @@ public actor RelayConnection {
         let task = urlSession.webSocketTask(with: dial)
         task.maximumMessageSize = 4 << 20
         socket = task
+        dialed = .now
+        socketOpen = false
         set(.connecting)
         task.resume()
         if path == .direct {
@@ -181,10 +203,22 @@ public actor RelayConnection {
             do {
                 let message = try await task.receive()
                 guard gen == generation else { return }
+                if !socketOpen {
+                    // URLSession reports no open without a delegate; the first message proves it.
+                    socketOpen = true
+                    connectionLog.info("\(self.label, privacy: .public): socket open after \((ContinuousClock.now - self.dialed).ms, privacy: .public) ms")
+                }
                 if case .string(let text) = message { handle(text) }
             } catch {
                 guard gen == generation else { return }
                 let reason = task.closeReason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                let ms = (ContinuousClock.now - dialed).ms
+                if task.closeCode != .invalid {
+                    connectionLog.info("\(self.label, privacy: .public): closed \(task.closeCode.rawValue, privacy: .public) \(reason) after \(ms, privacy: .public) ms")
+                } else {
+                    let ns = error as NSError
+                    connectionLog.error("\(self.label, privacy: .public): failed \(ns.domain, privacy: .public) \(ns.code, privacy: .public) after \(ms, privacy: .public) ms")
+                }
                 return closed(reason: reason)
             }
         }
@@ -288,7 +322,11 @@ public actor RelayConnection {
             guard path == .direct, let nonce = probeNonce, let room = pairing.roomId else { return }
             probeNonce = nil
             guard let pubkey = message["pubkey"] as? String, let sig = message["sig"] as? String,
-                  Direct.verifyProbe(room: room, nonce: nonce, pubkey: pubkey, sig: sig) else { return closed(reason: "") }
+                  Direct.verifyProbe(room: room, nonce: nonce, pubkey: pubkey, sig: sig) else {
+                connectionLog.error("\(self.label, privacy: .public): probe rejected after \((ContinuousClock.now - self.dialed).ms, privacy: .public) ms")
+                return closed(reason: "")
+            }
+            connectionLog.info("\(self.label, privacy: .public): probe verified")
             hostOnline = true
             startPings(on: socket)
             handshakeWhenGranted(on: socket)
@@ -375,6 +413,7 @@ public actor RelayConnection {
         pongDeadline = Task {
             try? await Task.sleep(for: Self.pongTimeout)
             guard !Task.isCancelled, socket === self.socket else { return }
+            connectionLog.error("\(self.label, privacy: .public): failed, no pong")
             self.pongDeadline = nil
             self.closed(reason: "")
         }
@@ -395,9 +434,11 @@ public actor RelayConnection {
         handshake = hs
         set(.handshaking)
         _ = transmit(hs.frame, on: socket)
+        connectionLog.info("\(self.label, privacy: .public): handshake granted, init sent")
         handshakeDeadline = Task {
             try? await Task.sleep(for: Self.handshakeTimeout)
             guard !Task.isCancelled, socket === self.socket, self.hostOnline, !self.peerReady else { return }
+            connectionLog.error("\(self.label, privacy: .public): handshake timed out")
             // Nothing buffers on the direct path: a handshake that got no answer fails the leg.
             if self.path == .direct { return self.closed(reason: "") }
             self.beginHandshake(on: socket)
@@ -434,6 +475,7 @@ public actor RelayConnection {
             handshakeDeadline = nil
             pairing.secret = nil
             hostCapabilities = peer.capabilities
+            connectionLog.info("\(self.label, privacy: .public): session open after \((ContinuousClock.now - self.dialed).ms, privacy: .public) ms")
             set(.ready)
             continuation?.yield(.sessionOpen(peer))
             return sendPushToken()
