@@ -17,6 +17,8 @@ public actor RelayConnection {
         case updateRequired
         case pairingFailed(String)
         case unpaired
+        /// The relay deleted the room after 30 days without a connection (close 4010): pair again.
+        case pairingExpired
     }
 
     public enum Update: Sendable {
@@ -267,11 +269,8 @@ public actor RelayConnection {
             running = false
             return set(.offline)
         }
+        if let final = Self.ended(by: reason, relayKnows: relayKnows) { return terminal(final) }
         switch reason {
-        case "revoked":
-            return terminal(.unpaired)
-        case "unknown device" where relayKnows:
-            return terminal(.unpaired)
         case "unknown token", "expired token", "unknown device":
             // Paired over the direct path (#532 step 5): the token may be spent or expired, and the relay learns the
             // device from the plugin's allowlist, maybe later; until then this leg retries.
@@ -288,6 +287,16 @@ public actor RelayConnection {
         default:
             set(.offline)
             scheduleRetry()
+        }
+    }
+
+    /// The state a relay close reason leaves for good, when it ends the pairing; an older app retries on "pairing expired".
+    static func ended(by reason: String, relayKnows: Bool) -> State? {
+        switch reason {
+        case "revoked": .unpaired
+        case "unknown device" where relayKnows: .unpaired
+        case "pairing expired": .pairingExpired
+        default: nil
         }
     }
 

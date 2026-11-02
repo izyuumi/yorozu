@@ -15,7 +15,12 @@ import {
   SILENT_CLASS,
   BUFFER_TTL_MS,
   CLOSE_BAD_SIGNATURE,
+  CLOSE_EXPIRED,
   CLOSE_POLICY,
+  DEVICE_IDLE_TTL_MS,
+  EXPIRED_MARKER_TTL_MS,
+  EXPIRED_REASON,
+  ROOM_IDLE_TTL_MS,
   CLOSE_PROTOCOL,
   CLOSE_RATE_LIMIT,
   dropCount,
@@ -28,6 +33,7 @@ import {
   newBucket,
   NOTIFY_PER_MINUTE,
   parseDevices,
+  parseSeen,
   parseEnvelope,
   parseFrames,
   parseHostPush,
@@ -125,6 +131,14 @@ const activityPrefix = "activity:";
 
 type ActivityRecord = { token: string; sandbox?: boolean };
 
+/** The room's last connection from any member; with `p:` times it drives retention. */
+const seenKey = "seen";
+/** All that is left of an expired room: when it expired, and whether a host was told. */
+const goneKey = "gone";
+type Gone = { at: number; told?: boolean };
+/** Devices dropped for idling, kept until the host's next `devices` announce so it cannot re-add them. */
+const expiredKey = "expired";
+
 export class Room implements DurableObject {
   private tail: Promise<unknown> = Promise.resolve();
   /** Activity pushes in the order the host sent them, apart from the frame queue so APNs never delays a frame. */
@@ -159,13 +173,30 @@ export class Room implements DurableObject {
     return done;
   }
 
-  webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): void {
+  webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): Promise<void> {
     const conn = ws.deserializeAttachment() as Conn | null;
     log("close", { role: conn?.role ?? null, code, reason: safeReason(reason), wasClean });
     if (conn?.role === "mac" && !this.sockets("mac").some((other) => other !== ws)) {
       this.notifyOwner(false);
     }
     if (conn?.role === "phone") this.notifyPhones(ws);
+    if (!conn?.role) return Promise.resolve();
+    // A connection lasts until it closes: the alarm only sees sockets still open.
+    const done = this.tail
+      .then(() => this.touch(Date.now(), conn.role === "phone" ? conn.key : null))
+      .catch((error: unknown) => log("error", { role: conn.role, error: String(error) }));
+    this.tail = done;
+    return done;
+  }
+
+  /** A member connected: the room counts as seen now, and so does the device if the room still knows it. */
+  private async touch(now: number, device: string | null = null): Promise<void> {
+    const storage = this.state.storage;
+    await storage.put(seenKey, now);
+    if (device && (await storage.get(devicePrefix + device)) !== undefined) {
+      await storage.put(devicePrefix + device, now);
+    }
+    await this.alarmBy(now + ROOM_IDLE_TTL_MS);
   }
 
   webSocketError(ws: WebSocket, error: unknown): void {
@@ -189,10 +220,72 @@ export class Room implements DurableObject {
     return next;
   }
 
-  async alarm(): Promise<void> {
-    const now = Date.now();
+  alarm(): Promise<void> {
+    // Queued behind message handling, so a register or join in flight lands before anything is deleted.
+    const done = this.tail.then(() => this.sweep(Date.now()));
+    this.tail = done.catch(() => {});
+    return done;
+  }
+
+  /**
+   * Retention: an expired room is wiped down to its marker; otherwise idle devices are dropped.
+   * Returns the next retention deadline, or "expired" once the room is wiped.
+   */
+  private async retain(now: number): Promise<number | "expired"> {
+    const storage = this.state.storage;
+    const live = this.state.getWebSockets()
+      .filter((ws) => ws.readyState === WebSocket.OPEN)
+      .map((ws) => ws.deserializeAttachment() as Conn | null)
+      .filter((conn) => conn?.role);
+    let seen = await storage.get<number>(seenKey);
+    // An open socket is a connection still going; a room from before retention starts its clock now.
+    if (live.length > 0 || (seen === undefined && (await storage.get("owner")) !== undefined)) {
+      seen = now;
+      await storage.put(seenKey, now);
+    }
+    let next = Infinity;
+    const gone = await storage.get<Gone>(goneKey);
+    if (gone && now >= gone.at + EXPIRED_MARKER_TTL_MS) await storage.delete(goneKey);
+    else if (gone) next = gone.at + EXPIRED_MARKER_TTL_MS;
+    if (seen === undefined) return next;
+
+    if (now >= seen + ROOM_IDLE_TTL_MS) {
+      // These writes have no other I/O between them, so they commit together; were the marker lost,
+      // the room would only answer "unknown device" instead of "pairing expired".
+      await storage.deleteAll();
+      await storage.put(goneKey, { at: now } satisfies Gone);
+      log("room-expired");
+      return "expired";
+    }
+    next = Math.min(next, seen + ROOM_IDLE_TTL_MS);
+
+    const connected = new Set(live.map((conn) => conn!.key));
+    const expired: string[] = [];
+    for (const [key, at] of await storage.list<number>({ prefix: devicePrefix })) {
+      const pubkey = key.slice(devicePrefix.length);
+      if (connected.has(pubkey)) {
+        await storage.put(key, now);
+        next = Math.min(next, now + DEVICE_IDLE_TTL_MS);
+      } else if (now >= at + DEVICE_IDLE_TTL_MS) expired.push(pubkey);
+      else next = Math.min(next, at + DEVICE_IDLE_TTL_MS);
+    }
+    if (expired.length > 0) {
+      await this.forget(expired);
+      const pending = (await storage.get<string[]>(expiredKey)) ?? [];
+      await storage.put(expiredKey, [...new Set([...pending, ...expired])]);
+      const mac = this.mac();
+      if (mac) send(mac, JSON.stringify({ type: "expired", devices: expired }));
+      log("devices-expired", { count: expired.length });
+    }
+    return next;
+  }
+
+  private async sweep(now: number): Promise<void> {
     const storage = this.state.storage;
     const authDue = this.sweepUnauthenticated(now);
+    const retained = await this.retain(now);
+    // deleteAll() also clears the alarm (SQLite storage), so the marker's alarm is set again here.
+    if (retained === "expired") return storage.setAlarm(Math.min(authDue, now + EXPIRED_MARKER_TTL_MS));
     await this.trim(now);
     const tokens = await storage.transaction(async (storage) => {
       const tokens = await storage.list<number>({ prefix: tokenPrefix });
@@ -207,6 +300,7 @@ export class Room implements DurableObject {
     const remaining = await storage.list({ prefix: "b:", limit: 1 });
     const next = Math.min(
       authDue,
+      retained,
       remaining.size > 0 ? now + BUFFER_TTL_MS : Infinity,
       ...[...tokens.values()].filter((expiresAt) => expiresAt >= now).map((expiresAt) => expiresAt + 1),
     );
@@ -588,7 +682,15 @@ export class Room implements DurableObject {
         if (!(await this.verify(conn.nonce, nonceSig, pubkey))) {
           return this.drop(ws, CLOSE_BAD_SIGNATURE, "bad challenge");
         }
+        // The first host back after expiry is told once, so a plugin that reconnects forever is not locked out.
+        const gone = await storage.get<Gone>(goneKey);
+        if (gone && !gone.told) {
+          await storage.put(goneKey, { ...gone, told: true } satisfies Gone);
+          return this.drop(ws, CLOSE_EXPIRED, EXPIRED_REASON);
+        }
         if (owner === null) await storage.put("owner", pubkey);
+        await this.touch(now);
+        const expired = (await storage.get<string[]>(expiredKey)) ?? [];
         for (const stale of this.sockets("mac")) {
           if (stale !== ws) this.drop(stale, CLOSE_PROTOCOL, "replaced");
         }
@@ -599,6 +701,7 @@ export class Room implements DurableObject {
           phones: this.phoneCount(),
           pushProxy: true,
           ...(apns.configured(this.env) ? { liveActivity: true } : {}),
+          ...(expired.length > 0 ? { expired } : {}),
         }));
         log("registered", { phones: this.sockets("phone").length });
         this.notifyOwner(true);
@@ -647,11 +750,29 @@ export class Room implements DurableObject {
         return await this.forget([revoke.pubkey]);
       }
 
+      case "seen": {
+        if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
+        const seen = parseSeen(msg);
+        if (!seen) return this.drop(ws, CLOSE_PROTOCOL, "bad seen");
+        for (const pubkey of seen.devices) {
+          if ((await storage.get(devicePrefix + pubkey)) !== undefined) await storage.put(devicePrefix + pubkey, now);
+        }
+        // The rule for re-adding: only a plugin that knows `seen` sends it, so a key it reports leaves the expired
+        // list and its next announce may bring it back; an older plugin's announce still drops every expired key.
+        const expired = (await storage.get<string[]>(expiredKey))?.filter((key) => !seen.devices.includes(key));
+        if (expired?.length) await storage.put(expiredKey, expired);
+        else if (expired) await storage.delete(expiredKey);
+        return await this.touch(now);
+      }
+
       case "devices": {
         if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
         const announced = parseDevices(msg);
         if (!announced) return this.drop(ws, CLOSE_PROTOCOL, "bad devices");
-        const keep = new Set(announced.devices);
+        // An older plugin still lists devices that expired; this announce is the one that answers `expired`.
+        const expired = new Set((await storage.get<string[]>(expiredKey)) ?? []);
+        await storage.delete(expiredKey);
+        const keep = new Set(announced.devices.filter((pubkey) => !expired.has(pubkey)));
         for (const phone of this.sockets("phone")) {
           const key = (phone.deserializeAttachment() as Conn | null)?.key;
           if (key) keep.add(key);
@@ -674,12 +795,14 @@ export class Room implements DurableObject {
         if (id !== conn.room) return this.drop(ws, CLOSE_PROTOCOL, "wrong room");
         if (token === undefined) {
           if ((await storage.get<number>(devicePrefix + phonePubkey)) === undefined) {
+            if ((await storage.get(goneKey)) !== undefined) return this.drop(ws, CLOSE_EXPIRED, EXPIRED_REASON);
             return this.drop(ws, CLOSE_PROTOCOL, "unknown device");
           }
           if (!(await this.verify(conn.nonce, sig, phonePubkey))) {
             return this.drop(ws, CLOSE_BAD_SIGNATURE, "bad join signature");
           }
           await storage.put(devicePrefix + phonePubkey, now);
+          await this.touch(now);
         } else {
           const expiresAt = await storage.get<number>(tokenPrefix + token);
           if (expiresAt === undefined) return this.drop(ws, CLOSE_PROTOCOL, "unknown token");
@@ -692,6 +815,12 @@ export class Room implements DurableObject {
           }
           await storage.delete(tokenPrefix + token);
           await this.remember(phonePubkey, now);
+          // A new pairing: the room is in use again, and this key may be announced again.
+          await storage.delete(goneKey);
+          const expired = (await storage.get<string[]>(expiredKey))?.filter((key) => key !== phonePubkey);
+          if (expired?.length) await storage.put(expiredKey, expired);
+          else await storage.delete(expiredKey);
+          await this.touch(now);
         }
         ws.serializeAttachment({ ...conn, role: "phone", key: phonePubkey } satisfies Conn);
         ws.send(JSON.stringify({ type: "joined", roomId: id, ownerOnline: this.ownerOnline(), flowControl: true }));
