@@ -8,6 +8,13 @@ export const PHONE_BUFFER_CAP_BYTES = 2 * MAX_PAYLOAD_BYTES;
 export const MAX_TOKENS_PER_ROOM = 8;
 export const NOTIFY_PER_MINUTE = 60;
 export const ACTIVITY_PUSH_PER_MINUTE = 60;
+const DAY_MS = 24 * 60 * 60_000;
+/** A room no member connected to for this long is deleted with everything stored for it. */
+export const ROOM_IDLE_TTL_MS = 30 * DAY_MS;
+/** In a live room, a device that did not connect for this long is forgotten. */
+export const DEVICE_IDLE_TTL_MS = 180 * DAY_MS;
+/** How long a deleted room remembers, without any key or token, that it expired. */
+export const EXPIRED_MARKER_TTL_MS = 180 * DAY_MS;
 
 export function positiveLimit(value: string | undefined, fallback: number): number {
   const limit = Number(value);
@@ -31,6 +38,8 @@ export const PONG = JSON.stringify({ type: "pong" });
 
 export const CLOSE_PROTOCOL = 4001;
 export const CLOSE_BAD_SIGNATURE = 4003;
+export const CLOSE_EXPIRED = 4010;
+export const EXPIRED_REASON = "pairing expired";
 export const CLOSE_RATE_LIMIT = 4029;
 export const CLOSE_POLICY = 1008;
 
@@ -207,6 +216,12 @@ const parseDeviceList = (value: unknown): string[] | null | undefined => {
   if (value === undefined) return undefined;
   if (!Array.isArray(value) || value.length > MAX_DEVICES) return null;
   return value.every((key) => typeof key === "string" && key.length === 43 && base64url.test(key)) ? value : null;
+};
+
+/** `seen`: devices the host saw connect by another path (direct), so their idle clocks restart. */
+export const parseSeen = (msg: Record<string, unknown>): Devices | null => {
+  const devices = parseDeviceList(msg.devices);
+  return devices ? { devices } : null;
 };
 
 export const parsePush = (msg: Record<string, unknown>): Push | null =>

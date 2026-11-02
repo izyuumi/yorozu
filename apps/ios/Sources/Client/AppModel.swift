@@ -545,7 +545,7 @@ final class AppModel {
             switch new {
             case .pairingFailed:
                 if !paired { failPairing(String(localized: "The host refused this pairing code. It may have expired or been used. Run `openclaw yorozu pair` again.")) }
-            case .unpaired:
+            case .unpaired, .pairingExpired:
                 if !paired { failPairing(String(localized: "The host doesn’t know this device. Run `openclaw yorozu pair` again.")) }
             case .ready, .offline, .connecting, .hostOffline, .handshaking, .updateRequired:
                 break
@@ -1262,6 +1262,7 @@ extension RelayConnection.State {
         case .updateRequired: String(localized: "Update required")
         case .pairingFailed: String(localized: "Couldn’t pair")
         case .unpaired: String(localized: "Removed from the host")
+        case .pairingExpired: String(localized: "Pairing expired")
         }
     }
 }

@@ -858,6 +858,22 @@ struct RaceTests {
         #expect(await races.count == 1, "a failed pairing doesn't race again")
     }
 
+    @Test func anExpiredRoomEndsThePairingInsteadOfRetrying() async {
+        #expect(RelayConnection.ended(by: "pairing expired", relayKnows: true) == .pairingExpired)
+        #expect(RelayConnection.ended(by: "pairing expired", relayKnows: false) == .pairingExpired)
+        #expect(RelayConnection.ended(by: "revoked", relayKnows: false) == .unpaired)
+        #expect(RelayConnection.ended(by: "unknown device", relayKnows: false) == nil)
+        #expect(RelayConnection.ended(by: "rate limit", relayKnows: true) == nil)
+
+        let racer = await racer()
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        await relay.emit(.state(.pairingExpired))
+        await eventually("pairing expired") { await seen.states.last == .pairingExpired }
+        await racer.raceAgain()
+        #expect(await races.count == 1, "an expired pairing doesn't race again")
+    }
+
     @Test func raceAgainWhilePairingRacesAtOnce() async {
         let racer = await racer(secret: "sec")
         _ = await round(1)
