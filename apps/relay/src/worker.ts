@@ -62,19 +62,6 @@ export interface Env extends apns.ApnsEnv {
   RELAY_MAX_TOKENS_PER_ROOM?: string;
   RELAY_NOTIFY_PER_MINUTE?: string;
   RELAY_ACTIVITY_PER_MINUTE?: string;
-  /** Temporary: enables `POST /admin/arm` for the one-time pass over rooms from before retention. */
-  RELAY_ARM_SECRET?: string;
-}
-
-/** `Authorization: Bearer <RELAY_ARM_SECRET>`, compared in constant time; false when no secret is set. */
-async function armAuthorized(request: Request, env: Env): Promise<boolean> {
-  if (!env.RELAY_ARM_SECRET) return false;
-  const digest = (s: string) => crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-  const [given, wanted] = await Promise.all([
-    digest(request.headers.get("Authorization") ?? ""),
-    digest(`Bearer ${env.RELAY_ARM_SECRET}`),
-  ]);
-  return crypto.subtle.timingSafeEqual(given, wanted);
 }
 
 const ED25519 = { name: "Ed25519" } as const;
@@ -167,14 +154,7 @@ export class Room implements DurableObject {
   }
 
   async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    if (url.pathname === "/admin/arm") {
-      if (!(await armAuthorized(request, this.env))) return new Response("unauthorized", { status: 401 });
-      const done = this.tail.then(() => this.arm(Date.now()));
-      this.tail = done.catch(() => {});
-      return Response.json(await done);
-    }
-    const room = url.searchParams.get("room")!;
+    const room = new URL(request.url).searchParams.get("room")!;
     const { 0: client, 1: server } = new WebSocketPair();
     this.state.acceptWebSocket(server);
     const nonce = randomToken();
@@ -325,24 +305,6 @@ export class Room implements DurableObject {
       ...[...tokens.values()].filter((expiresAt) => expiresAt >= now).map((expiresAt) => expiresAt + 1),
     );
     if (next !== Infinity) await storage.setAlarm(next);
-  }
-
-  /**
-   * Temporary: gives a room from before retention the alarm it never got, by running what an alarm runs.
-   * A room with data always ends with an alarm; an empty object stays empty.
-   */
-  private async arm(now: number): Promise<{ state: "empty" | "already" | "armed"; alarm: boolean }> {
-    const storage = this.state.storage;
-    if ((await storage.getAlarm()) !== null) return { state: "already", alarm: true };
-    if ((await storage.list({ limit: 1 })).size === 0) return { state: "empty", alarm: false };
-    await this.sweep(now);
-    // Data retention does not account for (no `owner`, `seen` or devices) still gets a 30-day clock.
-    if ((await storage.getAlarm()) === null && (await storage.list({ limit: 1 })).size > 0) {
-      if ((await storage.get(seenKey)) === undefined) await storage.put(seenKey, now);
-      await this.alarmBy(now + ROOM_IDLE_TTL_MS);
-    }
-    const alarm = (await storage.getAlarm()) !== null;
-    return { state: alarm ? "armed" : "empty", alarm };
   }
 
   private async alarmBy(at: number): Promise<void> {
@@ -963,23 +925,6 @@ export { Mailbox } from "./mailbox.js";
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === "/admin/arm") {
-      if (!env.RELAY_ARM_SECRET) return new Response("not found", { status: 404 });
-      if (!(await armAuthorized(request, env))) return new Response("unauthorized", { status: 401 });
-      if (request.method !== "POST") return new Response("method not allowed", { status: 405, headers: { Allow: "POST" } });
-      const id = url.searchParams.get("id") ?? "";
-      if (!/^[0-9a-f]{64}$/.test(id)) return new Response("bad id", { status: 400 });
-      let target: DurableObjectId;
-      try {
-        target = env.ROOM.idFromString(id);
-      } catch {
-        return new Response("bad id", { status: 400 });
-      }
-      return env.ROOM.get(target).fetch("https://room/admin/arm", {
-        method: "POST",
-        headers: { authorization: request.headers.get("Authorization")! },
-      });
-    }
     const mailbox = /^\/mailbox\/([^/]+)$/.exec(url.pathname)?.[1];
     if (mailbox !== undefined) {
       if (!isMailboxId(mailbox)) return new Response("bad mailbox", { status: 400 });
