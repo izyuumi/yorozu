@@ -16,6 +16,8 @@ Two implementations of one protocol, sharing limits, envelope parsing and close 
 
 Both read `RELAY_MAX_TOKENS_PER_ROOM` (default 8) and `RELAY_NOTIFY_PER_MINUTE` (default 60). The Worker also reads `RELAY_ACTIVITY_PER_MINUTE` (default 60), the separate budget for Live Activity pushes. The Worker's APNs secrets are listed in [docs/setup.md](../../docs/setup.md).
 
+Temporary, to be removed after a one-time pass: rooms created before retention that never reconnect have no alarm, so the Worker has `POST /admin/arm?id=<Room object id>`, which runs a room's retention once and leaves every room with data holding an alarm (`empty` objects stay untouched). It needs the `RELAY_ARM_SECRET` Worker secret as `Authorization: Bearer <secret>` and answers 404 while that secret is unset.
+
 ## Develop
 
 The package is in the repository's pnpm workspace.

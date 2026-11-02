@@ -35,7 +35,7 @@ export default defineConfig({
         plugins: [
           cloudflareTest({
             wrangler: { configPath: "./wrangler.toml" },
-            miniflare: { bindings: apns },
+            miniflare: { bindings: { ...apns, RELAY_ARM_SECRET: "test-arm-secret" } },
           }),
         ],
         test: {
