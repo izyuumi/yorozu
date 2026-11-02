@@ -28,8 +28,8 @@ for PID in $(running); do
     while kill -0 "$PID" 2>/dev/null; do sleep 0.5; done
 done
 rm -rf "$APP"
-ditto .build/xcode-native/Build/Products/Release/YorozuIOS.app "$APP"
+ditto .build/xcode-native/Build/Products/Release/Yorozu.app "$APP"
 codesign --verify --strict "$APP"
-shasum -a 256 "$APP/Contents/MacOS/YorozuIOS" > build/native-sha256.txt
+shasum -a 256 "$APP/Contents/MacOS/Yorozu" > build/native-sha256.txt
 if [ "$RESTART" = 1 ] || [ "$WAS_RUNNING" = 1 ]; then open -n "$APP"; fi
 printf '\nNative app: %s\n' "$APP"
