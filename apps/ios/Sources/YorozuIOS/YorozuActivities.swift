@@ -216,7 +216,8 @@ final class YorozuActivities {
                     return await dropToken()
                 }
             } else if !YorozuJobs.shouldEnd(next), inFront || leavingNow, !inFront || YorozuJobs.keepsActivityInApp(next) {
-                let content = ActivityContent(state: YorozuActivityState(jobs: next), staleDate: YorozuJobs.staleDate(next, now: Date()))
+                let now = Date()
+                let content = ActivityContent(state: YorozuActivityState(jobs: next, updatedAt: now), staleDate: YorozuJobs.staleDate(next, now: now))
                 let pushType: PushType? = model.liveActivityPushAvailable ? .token : nil
                 activity = try? Activity.request(attributes: YorozuActivityAttributes(), content: content, pushType: pushType)
                 if let activity, pushType != nil {

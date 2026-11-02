@@ -3,7 +3,7 @@ import ActivityKit
 import Foundation
 
 /// The app's one Live Activity. Nothing static; the state is opaque job tokens, kinds, states, step counts
-/// and times (`YorozuActivityState`), labelled on the device from `ActivityLabels`.
+/// and times, plus when the app last updated it (`YorozuActivityState`), labelled on the device from `ActivityLabels`.
 struct YorozuActivityAttributes: ActivityAttributes {
     typealias ContentState = YorozuActivityState
 
@@ -22,7 +22,7 @@ struct YorozuActivityAttributes: ActivityAttributes {
     @discardableResult
     static func show(_ jobs: [YorozuJob], on activity: Activity<Self>, alert: AlertConfiguration? = nil,
                      endWhenIdle: Bool, now: Date = Date()) async -> Bool {
-        let content = ActivityContent(state: YorozuActivityState(jobs: jobs), staleDate: YorozuJobs.staleDate(jobs, now: now))
+        let content = ActivityContent(state: YorozuActivityState(jobs: jobs, updatedAt: now), staleDate: YorozuJobs.staleDate(jobs, now: now))
         if YorozuJobs.shouldEnd(jobs) {
             await activity.end(nil, dismissalPolicy: .immediate)
             return false

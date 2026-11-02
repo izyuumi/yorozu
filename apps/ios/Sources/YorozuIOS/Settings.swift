@@ -210,7 +210,7 @@ struct SettingsView: View {
         } header: {
             Text("Widgets & Live Activities")
         } footer: {
-            Text("Widgets show conversation titles and unread counts, hidden on the Lock Screen until you unlock. Previews add the first line of the latest reply. One Live Activity follows agent turns, voice recording and transcription, and approvals: what is running and how many tool steps a turn took, with conversation titles only while previews are on and never message text.")
+            Text("Widgets show conversation titles and unread counts, hidden on the Lock Screen until you unlock. Previews add the first line of the latest reply. One Live Activity follows agent turns, voice recording and transcription, and approvals: what is running, what needs you and when each finished, with conversation titles only while previews are on and never message text.")
         }
     }
     #endif
