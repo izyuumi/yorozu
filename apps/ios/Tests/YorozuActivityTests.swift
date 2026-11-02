@@ -39,23 +39,24 @@ private func job(_ token: String, _ kind: YorozuJob.Kind, _ state: YorozuJob.Sta
         #expect(YorozuJobs.merge(start, .remove(token: "a"), now: t0).isEmpty)
     }
 
-    @Test func sortsNeedsYouRecordingRunningThenFinished() {
+    @Test func sortsNeedsYouFailedWorkingThenDone() {
         let jobs = [
-            job("done-old", .turn, .done, finished: 5), job("turn-old", .turn, at: 1), job("rec", .recording, at: 2),
-            job("ask", .needsYou, at: 0), job("turn-new", .transcribing, at: 3), job("failed-new", .turn, .failed, finished: 9),
+            job("done-new", .turn, .done, finished: 20), job("turn-old", .turn, at: 1), job("rec", .recording, at: 2),
+            job("ask", .needsYou, at: 0), job("turn-new", .transcribing, at: 3), job("failed-old", .turn, .failed, finished: 4),
+            job("failed-new", .turn, .failed, finished: 9),
         ]
-        #expect(YorozuJobs.sorted(jobs).map(\.token) == ["ask", "rec", "turn-new", "turn-old", "failed-new", "done-old"])
+        #expect(YorozuJobs.sorted(jobs).map(\.token) == ["ask", "failed-new", "failed-old", "turn-new", "rec", "turn-old", "done-new"])
         let tied = [job("b", .turn), job("a", .turn)]
         #expect(YorozuJobs.sorted(tied).map(\.token) == ["a", "b"])
     }
 
-    @Test func capKeepsNeedsYouAndRecording() {
+    @Test func capKeepsNeedsYouLongest() {
         var jobs = (0..<6).map { job("done\($0)", .turn, .done, finished: TimeInterval($0)) }
         jobs += (0..<4).map { job("turn\($0)", .turn, at: TimeInterval($0)) }
         jobs += [job("ask", .needsYou, at: -100), job("rec", .recording, at: -100)]
         let capped = YorozuJobs.capped(jobs)
         #expect(capped.count == YorozuJobs.limit)
-        #expect(capped.map(\.token) == ["ask", "rec", "turn3", "turn2", "turn1", "turn0", "done5", "done4"])
+        #expect(capped.map(\.token) == ["ask", "turn3", "turn2", "turn1", "turn0", "rec", "done5", "done4"])
         let many = (0..<10).map { job("ask\($0)", .needsYou, at: TimeInterval($0)) } + [job("turn", .turn, at: 100)]
         #expect(!YorozuJobs.capped(many).contains { $0.token == "turn" })
     }
@@ -94,10 +95,25 @@ private func job(_ token: String, _ kind: YorozuJob.Kind, _ state: YorozuJob.Sta
         #expect(JobEvent.localFailure.alert == .localFailure)
     }
 
-    @Test func countsRunningJobs() {
-        let jobs = [job("a", .turn), job("b", .transcribing), job("c", .recording), job("d", .needsYou), job("e", .turn, .done, finished: 0)]
-        #expect(YorozuJobs.Counts(jobs) == YorozuJobs.Counts(running: 2, needsYou: 1, recording: 1))
-        #expect(YorozuJobs.Counts([]) == YorozuJobs.Counts())
+    @Test func compactShowsOneItem() {
+        let done = job("e", .turn, .done, finished: 0)
+        #expect(YorozuJobs.compact([job("a", .turn, at: 5), done]) == .timer(t0 + 5))
+        #expect(YorozuJobs.compact([job("a", .turn), job("d", .needsYou), done]) == .needsYou)
+        #expect(YorozuJobs.compact([job("a", .turn), job("b", .transcribing), job("c", .recording), done]) == .count(3))
+        #expect(YorozuJobs.compact([done, job("f", .turn, .failed, finished: 1)]) == .done)
+    }
+
+    @Test func updatedAtRoundTripsAndFallsBack() throws {
+        let jobs = [job("a", .turn, at: 5), job("b", .turn, .done, finished: 30), job("c", .turn, at: 10)]
+        let state = YorozuActivityState(jobs: jobs, updatedAt: t0 + 40)
+        #expect(try JSONDecoder().decode(YorozuActivityState.self, from: JSONEncoder().encode(state)) == state)
+        #expect(state.lastUpdate == t0 + 40)
+        #expect(YorozuActivityState(jobs: jobs).lastUpdate == t0 + 30)
+        #expect(YorozuActivityState(jobs: []).lastUpdate == nil)
+        let url = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "Fixtures/activity-content-state.json")
+        let pushed = try JSONDecoder().decode(YorozuActivityState.self, from: Data(contentsOf: url))
+        #expect(pushed.updatedAt == nil)
+        #expect(pushed.lastUpdate == t0 + 60.25)
     }
 
     @Test func labelsKeepTitlesOnlyWithPreviews() {

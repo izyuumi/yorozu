@@ -39,6 +39,11 @@ struct YorozuJob: Codable, Hashable, Sendable, Identifiable {
 /// The Live Activity's whole content state. A push would replace it outright.
 struct YorozuActivityState: Codable, Hashable, Sendable {
     var jobs: [YorozuJob]
+    /// When the app built this state; the relay's pushes carry none.
+    var updatedAt: Date? = nil
+
+    /// `updatedAt`, else the latest start or finish among the jobs.
+    var lastUpdate: Date? { updatedAt ?? jobs.map(YorozuJobs.recency).max() }
 }
 
 /// A change from any job source: the app, the notification service, later a push.
@@ -72,25 +77,17 @@ enum YorozuJobs {
     /// A running activity without an update for this long shows as stale.
     static let staleAfter: TimeInterval = 15 * 60
 
-    struct Counts: Codable, Hashable, Sendable {
-        var running = 0
-        var needsYou = 0
-        var recording = 0
+    /// The Dynamic Island's one compact trailing item.
+    enum Compact: Hashable, Sendable { case needsYou, timer(Date), count(Int), done }
 
-        init(running: Int = 0, needsYou: Int = 0, recording: Int = 0) {
-            self.running = running
-            self.needsYou = needsYou
-            self.recording = recording
-        }
-
-        init(_ jobs: [YorozuJob]) {
-            for job in jobs where !job.finished {
-                switch job.kind {
-                case .turn, .transcribing: running += 1
-                case .recording: recording += 1
-                case .needsYou: needsYou += 1
-                }
-            }
+    /// "!" when anything needs you, else the timer of the one running job, else how many run, else done.
+    static func compact(_ jobs: [YorozuJob]) -> Compact {
+        let running = jobs.filter { !$0.finished }
+        if running.contains(where: { $0.kind == .needsYou }) { return .needsYou }
+        return switch running.count {
+        case 0: .done
+        case 1: .timer(running[0].startedAt)
+        default: .count(running.count)
         }
     }
 
@@ -113,17 +110,17 @@ enum YorozuJobs {
     }
 
     private static func rank(_ job: YorozuJob) -> Int {
-        guard !job.finished else { return 3 }
-        return switch job.kind {
-        case .needsYou: 0
-        case .recording: 1
-        case .turn, .transcribing: 2
+        switch (job.state, job.kind) {
+        case (.running, .needsYou): 0
+        case (.failed, _): 1
+        case (.running, _): 2
+        case (.done, _): 3
         }
     }
 
-    private static func recency(_ job: YorozuJob) -> Date { job.finishedAt ?? job.startedAt }
+    static func recency(_ job: YorozuJob) -> Date { job.finishedAt ?? job.startedAt }
 
-    /// Needs you, recording, running, then finished; newest first within each.
+    /// Needs you, failed, working, then done; newest first within each.
     static func sorted(_ jobs: [YorozuJob]) -> [YorozuJob] {
         jobs.sorted { a, b in
             if rank(a) != rank(b) { return rank(a) < rank(b) }
@@ -132,7 +129,7 @@ enum YorozuJobs {
         }
     }
 
-    /// At most `max`, dropping the oldest finished first, then the oldest running; needs-you and recording last.
+    /// At most `max`, dropping from the end of `sorted`: the oldest done first, needs-you last.
     static func capped(_ jobs: [YorozuJob], max: Int = limit) -> [YorozuJob] {
         Array(sorted(jobs).prefix(max))
     }

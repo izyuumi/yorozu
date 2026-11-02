@@ -21285,148 +21285,6 @@
         }
       }
     },
-    "%lld tool steps" : {
-      "localizations" : {
-        "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld tool step"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld tool steps"
-                }
-              }
-            }
-          }
-        },
-        "ja" : {
-          "variations" : {
-            "plural" : {
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "ツール %lld ステップ"
-                }
-              }
-            }
-          }
-        },
-        "zh-Hans" : {
-          "variations" : {
-            "plural" : {
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld 个工具步骤"
-                }
-              }
-            }
-          }
-        },
-        "zh-Hant" : {
-          "variations" : {
-            "plural" : {
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld 個工具步驟"
-                }
-              }
-            }
-          }
-        },
-        "ko" : {
-          "variations" : {
-            "plural" : {
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "도구 %lld단계"
-                }
-              }
-            }
-          }
-        },
-        "es" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld paso de herramienta"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld pasos de herramientas"
-                }
-              }
-            }
-          }
-        },
-        "fr" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld étape d’outil"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld étapes d’outils"
-                }
-              }
-            }
-          }
-        },
-        "de" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld Werkzeugschritt"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld Werkzeugschritte"
-                }
-              }
-            }
-          }
-        },
-        "pt-BR" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld etapa de ferramenta"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld etapas de ferramentas"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "%lld GB memory" : {
       "localizations" : {
         "ja" : {
@@ -23597,6 +23455,110 @@
         }
       }
     },
+    "Not updated since %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@から更新なし"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自 %@ 起未更新"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自 %@ 起未更新"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 이후 업데이트 없음"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sin actualizar desde %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pas mis à jour depuis %@"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seit %@ nicht aktualisiert"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sem atualização desde %@"
+          }
+        }
+      }
+    },
+    "Review" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "確認"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "검토"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Revisar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vérifier"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prüfen"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Revisar"
+          }
+        }
+      }
+    },
     "Needs you" : {
       "localizations" : {
         "ja" : {
@@ -24065,54 +24027,54 @@
         }
       }
     },
-    "Widgets show conversation titles and unread counts, hidden on the Lock Screen until you unlock. Previews add the first line of the latest reply. One Live Activity follows agent turns, voice recording and transcription, and approvals: what is running and how many tool steps a turn took, with conversation titles only while previews are on and never message text." : {
+    "Widgets show conversation titles and unread counts, hidden on the Lock Screen until you unlock. Previews add the first line of the latest reply. One Live Activity follows agent turns, voice recording and transcription, and approvals: what is running, what needs you and when each finished, with conversation titles only while previews are on and never message text." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ウィジェットには会話のタイトルと未読数が表示されます。ロック画面ではロックを解除するまで隠れます。プレビューをオンにすると最新の返信の1行目も表示されます。ライブアクティビティはひとつにまとまり、エージェントの作業、音声の録音と文字起こし、承認の状況を表示します。表示されるのは実行中の項目とツールのステップ数です。会話のタイトルはプレビューがオンのときだけ表示され、メッセージの本文は表示されません。"
+            "value" : "ウィジェットには会話のタイトルと未読数が表示されます。ロック画面ではロックを解除するまで隠れます。プレビューをオンにすると最新の返信の1行目も表示されます。ライブアクティビティはひとつにまとまり、エージェントの作業、音声の録音と文字起こし、承認の状況を表示します。表示されるのは実行中の項目、対応が必要な項目、それぞれの終了時刻です。会話のタイトルはプレビューがオンのときだけ表示され、メッセージの本文は表示されません。"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "小组件显示对话标题和未读数，在锁定屏幕上解锁前会隐藏。开启预览后还会显示最新回复的第一行。一个实时活动汇总代理的工作、语音录制与转写以及审批：显示正在进行的事项和工具步骤数，仅在开启预览时显示对话标题，从不显示消息内容。"
+            "value" : "小组件显示对话标题和未读数，在锁定屏幕上解锁前会隐藏。开启预览后还会显示最新回复的第一行。一个实时活动汇总代理的工作、语音录制与转写以及审批：显示正在进行的事项、需要你处理的事项以及各项的完成时间，仅在开启预览时显示对话标题，从不显示消息内容。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "小工具會顯示對話標題和未讀數量，在鎖定畫面上解鎖前會隱藏。開啟預覽後還會顯示最新回覆的第一行。一個即時動態彙整代理的工作、語音錄製與轉寫以及核准：顯示正在進行的項目和工具步驟數，僅在開啟預覽時顯示對話標題，絕不顯示訊息內容。"
+            "value" : "小工具會顯示對話標題和未讀數量，在鎖定畫面上解鎖前會隱藏。開啟預覽後還會顯示最新回覆的第一行。一個即時動態彙整代理的工作、語音錄製與轉寫以及核准：顯示正在進行的項目、需要你處理的項目以及各項的完成時間，僅在開啟預覽時顯示對話標題，絕不顯示訊息內容。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "위젯에는 대화 제목과 읽지 않은 수가 표시되며, 잠금 화면에서는 잠금을 해제할 때까지 숨겨집니다. 미리보기를 켜면 최신 답장의 첫 줄도 표시됩니다. 하나의 실시간 현황이 에이전트 작업, 음성 녹음과 받아쓰기, 승인을 함께 보여 줍니다. 진행 중인 항목과 도구 단계 수가 표시되며, 대화 제목은 미리보기가 켜져 있을 때만 표시되고 메시지 내용은 표시되지 않습니다."
+            "value" : "위젯에는 대화 제목과 읽지 않은 수가 표시되며, 잠금 화면에서는 잠금을 해제할 때까지 숨겨집니다. 미리보기를 켜면 최신 답장의 첫 줄도 표시됩니다. 하나의 실시간 현황이 에이전트 작업, 음성 녹음과 받아쓰기, 승인을 함께 보여 줍니다. 진행 중인 항목, 확인이 필요한 항목, 각 항목의 완료 시각이 표시되며, 대화 제목은 미리보기가 켜져 있을 때만 표시되고 메시지 내용은 표시되지 않습니다."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Los widgets muestran los títulos de las conversaciones y los mensajes sin leer, ocultos en la pantalla bloqueada hasta que desbloquees. La vista previa añade la primera línea de la última respuesta. Una sola actividad en vivo sigue el trabajo del agente, la grabación y transcripción de voz y las aprobaciones: lo que está en curso y cuántos pasos de herramientas lleva, con los títulos de las conversaciones solo si la vista previa está activada y nunca el texto de los mensajes."
+            "value" : "Los widgets muestran los títulos de las conversaciones y los mensajes sin leer, ocultos en la pantalla bloqueada hasta que desbloquees. La vista previa añade la primera línea de la última respuesta. Una sola actividad en vivo sigue el trabajo del agente, la grabación y transcripción de voz y las aprobaciones: lo que está en curso, lo que necesita tu atención y cuándo terminó cada cosa, con los títulos de las conversaciones solo si la vista previa está activada y nunca el texto de los mensajes."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Les widgets affichent les titres des conversations et le nombre de messages non lus, masqués sur l’écran verrouillé jusqu’au déverrouillage. L’aperçu ajoute la première ligne de la dernière réponse. Une seule activité en direct suit le travail de l’agent, l’enregistrement et la transcription vocale, et les approbations : ce qui est en cours et combien d’étapes d’outils il a effectuées, avec les titres des conversations seulement si l’aperçu est activé, et jamais le texte des messages."
+            "value" : "Les widgets affichent les titres des conversations et le nombre de messages non lus, masqués sur l’écran verrouillé jusqu’au déverrouillage. L’aperçu ajoute la première ligne de la dernière réponse. Une seule activité en direct suit le travail de l’agent, l’enregistrement et la transcription vocale, et les approbations : ce qui est en cours, ce qui attend votre action et quand chaque tâche s’est terminée, avec les titres des conversations seulement si l’aperçu est activé, et jamais le texte des messages."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Widgets zeigen Titel und ungelesene Antworten deiner Unterhaltungen, auf dem Sperrbildschirm verborgen, bis du entsperrst. Die Vorschau ergänzt die erste Zeile der neuesten Antwort. Eine einzige Live-Aktivität begleitet die Arbeit des Agenten, Sprachaufnahme und Transkription sowie Freigaben: was gerade läuft und wie viele Werkzeugschritte es gebraucht hat, mit Titeln der Unterhaltungen nur bei eingeschalteter Vorschau und nie mit Nachrichtentext."
+            "value" : "Widgets zeigen Titel und ungelesene Antworten deiner Unterhaltungen, auf dem Sperrbildschirm verborgen, bis du entsperrst. Die Vorschau ergänzt die erste Zeile der neuesten Antwort. Eine einzige Live-Aktivität begleitet die Arbeit des Agenten, Sprachaufnahme und Transkription sowie Freigaben: was gerade läuft, was dich braucht und wann jeweils etwas fertig wurde, mit Titeln der Unterhaltungen nur bei eingeschalteter Vorschau und nie mit Nachrichtentext."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Os widgets mostram os títulos das conversas e as contagens de não lidas, ocultos na Tela Bloqueada até você desbloquear. As prévias adicionam a primeira linha da resposta mais recente. Uma única Atividade ao Vivo acompanha o trabalho do agente, a gravação e transcrição de voz e as aprovações: o que está em andamento e quantas etapas de ferramentas executou, com títulos das conversas só quando as prévias estão ativadas e nunca o texto das mensagens."
+            "value" : "Os widgets mostram os títulos das conversas e as contagens de não lidas, ocultos na Tela Bloqueada até você desbloquear. As prévias adicionam a primeira linha da resposta mais recente. Uma única Atividade ao Vivo acompanha o trabalho do agente, a gravação e transcrição de voz e as aprovações: o que está em andamento, o que precisa de você e quando cada item terminou, com títulos das conversas só quando as prévias estão ativadas e nunca o texto das mensagens."
           }
         }
       }

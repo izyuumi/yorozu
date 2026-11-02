@@ -77,7 +77,7 @@
       "title": "Show Live Activity",
       "platforms": ["ios"],
       "location": "Settings › General › Widgets & Live Activities",
-      "description": "On by default. One Live Activity on the Lock Screen and in the Dynamic Island follows the agent's turns, approvals waiting for you, and voice recording and transcription: up to three rows, each opening its conversation, with the tool step count and elapsed time. It shows conversation titles only while message previews are on, and never message text or tool details. It starts when you leave Yorozu with something running, ends when you return (unless a recording or transcription is running), keeps finished rows for about two minutes, and runs on the device only (no push)."
+      "description": "On by default. One Live Activity on the Lock Screen and in the Dynamic Island follows the agent's turns, approvals waiting for you, and voice recording and transcription: up to three rows, each opening its conversation and showing one line: a running timer, Review for something that needs you, the finish time, or Failed. It shows conversation titles only while message previews are on, and never message text or tool details. It starts when you leave Yorozu with something running, ends when you return (unless a recording or transcription is running), keeps finished rows for about two minutes, and runs on the device only (no push)."
     }
   }
 }
