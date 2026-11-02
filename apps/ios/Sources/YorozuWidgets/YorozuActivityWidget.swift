@@ -47,6 +47,8 @@ enum ActivityStyle {
     /// Wide enough for "1:02:14", so a timer never stretches its row.
     static let timer: CGFloat = 64
     static let compactTimer: CGFloat = 48
+    /// The compact island's "needs you" glyph, large enough to read at a glance.
+    static let compactIcon: CGFloat = 17
     /// Hours and minutes without AM/PM: "9:41".
     static let time = Date.FormatStyle().hour(.defaultDigits(amPM: .omitted)).minute(.twoDigits)
 
@@ -84,7 +86,9 @@ struct CompactValue: View {
         Group {
             switch compact {
             case .needsYou:
-                Text(verbatim: "!").foregroundStyle(ActivityStyle.tint)
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: ActivityStyle.compactIcon, weight: .semibold))
+                    .foregroundStyle(ActivityStyle.tint)
                     .accessibilityLabel(Text("Needs you"))
             case .timer(let start) where !stale:
                 Text(timerInterval: start...Date.distantFuture, countsDown: false)
