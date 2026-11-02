@@ -41,6 +41,7 @@ let project = Project(
             name: "YorozuIOS",
             destinations: [.iPhone, .iPad, .mac],
             product: .app,
+            productName: "Yorozu",
             bundleId: "to.yumi.yorozu.ios",
             deploymentTargets: .multiplatform(iOS: "18.0", macOS: "15.0"),
             infoPlist: .extendingDefault(with: [
@@ -130,6 +131,8 @@ let project = Project(
                 .target(name: "YorozuWidgets", condition: .when([.ios])),
             ] + (voiceInput ? [.package(product: "llama")] : []),
             settings: signing([
+                // Keep module-qualified references stable while the app product and executable use Yorozu.
+                "PRODUCT_MODULE_NAME": "YorozuIOS",
                 "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
                 "PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]": "to.yumi.yorozu",
                 "ENABLE_USER_SCRIPT_SANDBOXING": "NO",
