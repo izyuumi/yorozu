@@ -121,7 +121,7 @@ On the pairing screen, enter `YOROZU-DEMO` in **Pairing link** and tap **Pair**,
 For development, launch with `--demo` to start in demo mode directly. On the Mac, use a dev build with its own bundle id ([release.md](release.md#compile-checks)):
 
 ```sh
-open -n .build/xcode-mac/Build/Products/Debug/YorozuIOS.app --args --demo
+open -n .build/xcode-mac/Build/Products/Debug/Yorozu.app --args --demo
 ```
 
 On an iOS Simulator with the app installed, run `xcrun simctl launch <udid> to.yumi.yorozu.ios --demo`.

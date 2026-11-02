@@ -134,7 +134,7 @@ pnpm --filter @yorozu/web test                   # the website (deploy-web.yml r
 The plugin typechecks per [its README](../plugins/openclaw-yorozu/README.md#typecheck).
 
 - **Simulator**: generate with `TUIST_VOICE_INPUT=0 tuist generate --no-open --path apps/ios` (llama.cpp's xcframework has no simulator slice, so this leaves LFM3-Audio-2B out of voice input), then build for `platform=iOS Simulator,id=<udid>` with `CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=` instead of `CODE_SIGNING_ALLOWED=NO`; an unsigned simulator build has no Keychain entitlement, so saving a pairing fails. Install and launch with `xcrun simctl install <udid> <app>` and `xcrun simctl launch <udid> <iOS bundle id>`.
-- **Mac dev build**: the Mac compile check builds Debug at `.build/xcode-mac/Build/Products/Debug/YorozuIOS.app` under the installed app's bundle id. To run one, add `PRODUCT_BUNDLE_IDENTIFIER=<an id of its own>` so it never passes for `/Applications/Yorozu.app`. It is ad hoc signed (runs only on the Mac that built it; Keychain prompts after each rebuild), and its Keychain items still use the iOS bundle id as service, so pairing or unpairing in it can replace or delete the installed app's pairing.
+- **Mac dev build**: the Mac compile check builds Debug at `.build/xcode-mac/Build/Products/Debug/Yorozu.app` under the installed app's bundle id. To run one, add `PRODUCT_BUNDLE_IDENTIFIER=<an id of its own>` so it never passes for `/Applications/Yorozu.app`. It is ad hoc signed (runs only on the Mac that built it; Keychain prompts after each rebuild), and its Keychain items still use the iOS bundle id as service, so pairing or unpairing in it can replace or delete the installed app's pairing.
 
 ## Website and relay
 
