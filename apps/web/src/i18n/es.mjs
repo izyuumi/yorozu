@@ -89,8 +89,8 @@ export default {
     title: 'Política de privacidad — Yorozu',
     description: 'Qué recopila Yorozu, qué puede ver su relé y qué no.',
     heading: 'Política de privacidad',
-    effective: 'Vigente desde el 31 de octubre de 2026',
-    body: `<p>Yorozu es una app para iPhone, iPad y Mac y un plugin para OpenClaw, creados por Yumi Izumi («nosotros»). Esta política explica qué datos maneja Yorozu 0.9 y versiones posteriores. En resumen: <strong>no gestionamos cuentas, analíticas ni publicidad, y no podemos leer tus conversaciones.</strong></p>
+    effective: 'Vigente desde el 2 de noviembre de 2026',
+    body: `<p>Yorozu es una app para iPhone, iPad y Mac y un plugin para OpenClaw, creados por Yumi Izumi («nosotros»). El responsable (operador) del relé alojado y de este sitio web es Yumi Izumi, una persona física en Japón, con quien puedes contactar en <a href="mailto:contact@yumi.to">contact@yumi.to</a>. Esta política explica qué datos maneja Yorozu 0.9 y versiones posteriores. En resumen: <strong>no gestionamos cuentas, analíticas ni publicidad, y no podemos leer tus conversaciones.</strong></p>
 
   <h2>Dónde están tus datos</h2>
   <p>Tus conversaciones están en tu propio Gateway de OpenClaw, en un ordenador que tú controlas. El plugin de Yorozu se ejecuta dentro de él. Nunca recibimos tus conversaciones, tus archivos ni tus credenciales de Claude, OpenAI u otros proveedores; todo eso se queda en OpenClaw.</p>
@@ -102,19 +102,32 @@ export default {
   <p>Desemparejar un dispositivo borra su caché y sus claves.</p>
 
   <h2>El relé</h2>
-  <p>Tus dispositivos llegan a tu Gateway a través de un relé que operamos en Cloudflare, en <code>relay.yumi.to</code>. También puedes ejecutar el tuyo. Todo se cifra de extremo a extremo (un handshake Noise IK con X25519 en cada conexión y, después, ChaCha20-Poly1305) antes de llegar al relé, y el relé no tiene ninguna clave para descifrarlo. El relé sí maneja:</p>
+  <p>Tus dispositivos llegan a tu Gateway a través de un relé que operamos en Cloudflare, en <code>relay.yumi.to</code>. También puedes ejecutar el tuyo. Tus mensajes, archivos adjuntos y vistas previas de notificaciones se cifran de extremo a extremo (un handshake Noise IK con X25519 en cada conexión y, después, ChaCha20-Poly1305) antes de llegar al relé, y el relé no tiene ninguna clave para descifrarlos. El relé procesa:</p>
   <ul>
-    <li><strong>Mensajes cifrados</strong> de tus dispositivos, guardados hasta 24 horas (5 MiB como máximo) mientras tu Gateway está desconectado y luego eliminados. No se guarda nada de lo que envía tu Gateway.</li>
-    <li><strong>Archivos adjuntos cifrados</strong>, en fragmentos cifrados de extremo a extremo. El relé ve su tamaño y su momento.</li>
-    <li><strong>Claves públicas</strong> de los dispositivos emparejados y un identificador de sala, conservados hasta que desemparejes el dispositivo.</li>
-    <li><strong>Tokens de emparejamiento de un solo uso</strong>, que caducan a los 10 minutos.</li>
-    <li><strong>El token de notificaciones push de Apple de tu iPhone o iPad</strong>, para que el relé pueda enviar notificaciones, conservado hasta que desemparejes el dispositivo.</li>
-    <li><strong>Metadatos</strong>: cuándo se conectan los dispositivos, y el tamaño y el momento de los mensajes. Los registros de conexión nunca contienen el contenido de los mensajes ni claves.</li>
-    <li><strong>Direcciones IP</strong>, que Cloudflare procesa para entregar el tráfico, según la <a href="https://www.cloudflare.com/privacypolicy/">política de privacidad de Cloudflare</a>.</li>
+    <li><strong>Claves públicas</strong> de tu Gateway y de los dispositivos emparejados, y un identificador de sala derivado de la clave de tu Gateway, para comprobar que un dispositivo puede unirse y que cada mensaje viene de él.</li>
+    <li><strong>Cuándo se conectó cada dispositivo por última vez</strong>, para eliminar los registros de los dispositivos que dejan de conectarse.</li>
+    <li><strong>Tokens push</strong>: los tokens push de Apple de tus dispositivos, para despertarlos con notificaciones, y el token push de una actividad en vivo, para actualizarla.</li>
+    <li><strong>Mensajes cifrados</strong> de tus dispositivos, guardados mientras tu Gateway está desconectado para que le lleguen después: hasta 24 horas y 5 MiB como máximo, y luego eliminados. No se guarda nada de lo que envía tu Gateway.</li>
+    <li><strong>Archivos adjuntos cifrados</strong>, que pasan en fragmentos cifrados de extremo a extremo. El relé ve su tamaño y su momento.</li>
+    <li><strong>Tokens de emparejamiento de un solo uso</strong>, para que un dispositivo nuevo pueda unirse una vez. Caducan a los 10 minutos.</li>
+    <li><strong>El buzón de emparejamiento del Mac</strong>: cuando añades un Mac, tu iPhone o iPad le deja una carta cifrada de 4 KB como máximo. El buzón se elimina 10 minutos después de abrirse.</li>
+    <li><strong>Contadores</strong>: cuántas notificaciones y actualizaciones de actividades en vivo se enviaron en el minuto en curso, y cuándo se despertó por última vez cada dispositivo en segundo plano, para respetar los límites.</li>
+    <li><strong>Direcciones IP</strong>, que Cloudflare procesa para entregar el tráfico y que el relé usa como clave de un límite de conexiones (30 conexiones nuevas por minuto y dirección). No las guardamos. Consulta la <a href="https://www.cloudflare.com/privacypolicy/">política de privacidad de Cloudflare</a>.</li>
+    <li><strong>Metadatos</strong>: cuándo se conectan los dispositivos, y el tamaño y el momento de los mensajes. Los registros de conexión solo contienen eventos y recuentos, nunca el contenido de los mensajes, claves ni direcciones IP.</li>
   </ul>
 
+  <h2>Cuánto tiempo guarda datos el relé</h2>
+  <p>Los datos de emparejamiento en el relé se conservan hasta que desemparejes, o se eliminan tras 30 días sin ninguna conexión a la sala desde tus dispositivos ni desde tu Gateway. Los registros de un dispositivo se eliminan tras 180 días sin que ese dispositivo se conecte. Los mensajes en espera se guardan 24 horas como máximo, los tokens de emparejamiento 10 minutos y el buzón de emparejamiento del Mac 10 minutos.</p>
+
   <h2>Notificaciones</h2>
-  <p>Apple entrega las notificaciones push. Cada una lleva una vista previa de la respuesta (el título de la conversación y su primera línea, 256 bytes como máximo), cifrada solo para tu dispositivo; tu dispositivo la abre. El relé y Apple solo ven la caja cifrada.</p>
+  <p>Apple entrega las notificaciones push. Cada notificación de mensaje lleva una vista previa de la respuesta (el título de la conversación y su primera línea, 256 bytes como máximo), cifrada solo para tu dispositivo; tu dispositivo la abre. En los mensajes y las vistas previas de notificaciones, el relé y Apple solo ven la caja cifrada.</p>
+  <p><strong>Actualizaciones de la actividad en vivo</strong>: si usas la actividad en vivo, sus actualizaciones no pueden cifrarse de extremo a extremo, porque iOS tiene que leerlas para mostrar la actividad. Solo contienen identificadores de tarea aleatorios, el tipo y el estado de cada tarea (por ejemplo, «en curso» o «terminada»), el número de pasos de herramientas y horas. Nunca contienen el texto ni los títulos de las conversaciones, y el relé no las guarda. El relé conserva el token push de la actividad en vivo mientras está en curso, y lo elimina cuando la actividad termina, cuando Apple informa de que el token ya no funciona o cuando desemparejas el dispositivo. Si el relé no se entera del final, por ejemplo porque tu dispositivo estaba desconectado, el token se queda hasta que la app lo vuelva a comunicar o los plazos anteriores lo eliminen.</p>
+
+  <h2>Proveedores de servicios</h2>
+  <p>Cloudflare aloja el relé y este sitio web, y Apple entrega las notificaciones push. Estos proveedores pueden tratar datos en países distintos del tuyo, incluido Estados Unidos, con sus propias garantías.</p>
+
+  <h2>Servidor de ayuda y correo de soporte</h2>
+  <p>El servidor de ayuda en <code>yorozu.yumi.to/mcp</code> responde a partir de la documentación de Yorozu. Cuenta las solicitudes por dirección IP en memoria para limitarlas y no guarda nada. Si nos escribes, recibimos lo que envías, como tu dirección, tu mensaje y los diagnósticos que pegues. Lo conservamos el tiempo necesario para responderte y luego lo eliminamos.</p>
 
   <h2>OpenClaw y los proveedores de modelos</h2>
   <p>Yorozu entrega tus mensajes a tu agente de OpenClaw. OpenClaw y las herramientas que ejecuta envían datos a sus proveedores de modelos (por ejemplo, Anthropic u OpenAI) según sus propias políticas de privacidad y tus acuerdos con esos proveedores. No somos parte de ello y no recibimos esos datos.</p>
@@ -129,10 +142,11 @@ export default {
   <p>Las versiones anteriores de la app para Mac ejecutaban su propio asistente. Sus datos se quedan en tu Mac, en <code>~/Yorozu</code> y en la carpeta de Yorozu dentro de <code>~/Library/Application Support/</code>, hasta que los elimines.</p>
 
   <h2>Menores</h2>
-  <p>Yorozu no está dirigido a menores de 13 años, y no recopilamos sus datos a sabiendas.</p>
+  <p>Yorozu no está pensado para menores de 17 años, y no recopilamos sus datos a sabiendas.</p>
 
-  <h2>Tus opciones</h2>
-  <p>Desemparejar un dispositivo, desde la app o con <code>openclaw yorozu devices remove</code>, elimina sus claves y su token push del relé. Eliminar la app borra sus datos de ese dispositivo. Tus conversaciones permanecen en OpenClaw hasta que las elimines allí o en Yorozu. Como no tenemos ninguna cuenta ni contenido legible, no hay nada más que exportar o eliminar. Si tienes preguntas, escribe a <a href="mailto:contact@yumi.to">contact@yumi.to</a>.</p>
+  <h2>Tus opciones y derechos</h2>
+  <p>Desemparejar un dispositivo, desde la app o con <code>openclaw yorozu devices remove</code>, elimina de inmediato sus claves y tokens push del relé, o cuando tu Gateway vuelva a conectarse si está desconectado. Los plazos anteriores eliminan el resto. Eliminar la app borra sus datos de ese dispositivo. Tus conversaciones permanecen en OpenClaw hasta que las elimines allí o en Yorozu.</p>
+  <p>Puedes solicitar el acceso a tus datos, su rectificación o su eliminación, u oponerte a su uso, escribiendo a <a href="mailto:contact@yumi.to">contact@yumi.to</a>. No tenemos ninguna cuenta ni contenido legible, y los registros del relé llevan claves de dispositivo, no nombres, así que puede que necesitemos información tuya para encontrarlos, y puede que no lo consigamos. También puedes presentar una reclamación ante la autoridad de protección de datos de tu lugar de residencia.</p>
 
   <h2>Cambios</h2>
   <p>Publicaremos los cambios aquí y actualizaremos la fecha de arriba.</p>`,
@@ -141,8 +155,8 @@ export default {
     title: 'Términos de uso — Yorozu',
     description: 'Los términos para usar Yorozu, incluido el riesgo para las cuentas de Claude y Codex que usan los agentes que maneja.',
     heading: 'Términos de uso',
-    effective: 'Vigentes desde el 23 de octubre de 2026',
-    body: `<p>Estos términos se aplican a la app Yorozu para iPhone, iPad y Mac, al plugin de Yorozu para OpenClaw, al relé en <code>relay.yumi.to</code> y a este sitio web (en conjunto, «Yorozu»), proporcionados por Yumi Izumi («nosotros»). Al instalar o usar Yorozu, aceptas estos términos. Si no los aceptas, no uses Yorozu. Si obtienes la app para iPhone en el App Store, también se aplica el <a href="https://www.apple.com/legal/internet-services/itunes/dev/stdeula/">Contrato de licencia de usuario final estándar</a> de Apple. Cuando entre en conflicto con estos términos, prevalecerá en lo que respecta a la app para iPhone.</p>
+    effective: 'Vigentes desde el 2 de noviembre de 2026',
+    body: `<p>Estos términos se aplican a la app Yorozu para iPhone, iPad y Mac, al plugin de Yorozu para OpenClaw, al relé en <code>relay.yumi.to</code> y a este sitio web (en conjunto, «Yorozu»), proporcionados por Yumi Izumi («nosotros»). Al instalar o usar Yorozu, aceptas estos términos. Si no los aceptas, no uses Yorozu. Yorozu no está pensado para menores de 17 años. Si obtienes la app para iPhone en el App Store, también se aplica el <a href="https://www.apple.com/legal/internet-services/itunes/dev/stdeula/">Contrato de licencia de usuario final estándar</a> de Apple. Cuando entre en conflicto con estos términos, prevalecerá en lo que respecta a la app para iPhone.</p>
 
   <h2>1. Qué es Yorozu</h2>
   <p>Yorozu es una app de chat para tu propio agente de OpenClaw: su plugin convierte Yorozu en un canal de tu Gateway de OpenClaw, y la app le lleva tus mensajes y te trae sus respuestas. El agente, y cualquier herramienta de programación que ejecute, como Claude Code u OpenAI Codex, es software que tú instalas y configuras. Yorozu no proporciona modelos de IA, no vende uso de IA ni recopila tus credenciales. Tú mismo instalas esas herramientas, inicias sesión en ellas y las pagas.</p>
@@ -169,16 +183,16 @@ export default {
   <p>En la máxima medida permitida por la ley, Yorozu se proporciona «tal cual» y «según disponibilidad», sin garantías de ningún tipo, expresas o implícitas, incluidas las de comerciabilidad, idoneidad para un fin concreto, no infracción, exactitud, seguridad y funcionamiento ininterrumpido o libre de errores.</p>
 
   <h2>8. Limitación de responsabilidad</h2>
-  <p>En la máxima medida permitida por la ley, no somos responsables de ningún daño indirecto, incidental, especial, consecuente o punitivo, ni de ninguna pérdida de datos, beneficios, cuentas, acceso a servicios o suscripciones de terceros, o negocio, derivados de Yorozu, de software o proveedores de terceros, o de acciones realizadas por agentes de IA, aunque se nos haya advertido de que tal pérdida era posible. Nuestra responsabilidad total por cualquier reclamación relacionada con Yorozu se limita al importe que nos pagaste por Yorozu en los 12 meses anteriores a la reclamación, o a 10 USD si no pagaste nada. Algunas jurisdicciones no permiten ciertas exclusiones o límites. En esas jurisdicciones, se aplican solo en la medida en que la ley lo permita. Nada en estos términos limita la responsabilidad que la ley no permite limitar, como la responsabilidad por dolo o negligencia grave.</p>
+  <p>En la máxima medida permitida por la ley, no somos responsables de ningún daño indirecto, incidental, especial, consecuente o punitivo, ni de ninguna pérdida de datos, beneficios, cuentas, acceso a servicios o suscripciones de terceros, o negocio, derivados de Yorozu, de software o proveedores de terceros, o de acciones realizadas por agentes de IA, aunque se nos haya advertido de que tal pérdida era posible. Nuestra responsabilidad total por cualquier reclamación relacionada con Yorozu se limita al importe que nos pagaste por Yorozu en los 12 meses anteriores a la reclamación, o a 10 USD si no pagaste nada. Algunas jurisdicciones no permiten ciertas exclusiones o límites. En esas jurisdicciones, se aplican solo en la medida en que la ley lo permita. Nada en estos términos excluye ni limita nuestra responsabilidad por muerte o lesiones personales causadas por nuestra negligencia, por dolo o negligencia grave, ni ninguna otra responsabilidad que la ley no permita excluir o limitar.</p>
 
   <h2>9. Indemnización</h2>
-  <p>En la medida permitida por la ley, aceptas indemnizarnos frente a las reclamaciones derivadas de tu uso de Yorozu, de las acciones de tus agentes o de tu incumplimiento de estos términos o de los términos de un tercero.</p>
+  <p>En la medida en que lo permita la ley de tu lugar de residencia, aceptas indemnizarnos frente a las reclamaciones causadas por tu incumplimiento de estos términos o por tu uso indebido de Yorozu.</p>
 
   <h2>10. Cambios y terminación</h2>
-  <p>Podemos actualizar estos términos publicando una nueva versión aquí. Seguir usando Yorozu después de una actualización significa que la aceptas. Puedes dejar de usar Yorozu en cualquier momento eliminando las apps.</p>
+  <p>Podemos actualizar estos términos publicando una nueva versión aquí. Avisaremos de los cambios importantes en esta página y en las notas de la versión de las apps al menos 30 días antes de que entren en vigor. Si no estás de acuerdo, puedes dejar de usar Yorozu en cualquier momento eliminando las apps.</p>
 
   <h2>11. Ley aplicable</h2>
-  <p>Estos términos se rigen por las leyes de Japón, y el Tribunal de Distrito de Tokio tiene jurisdicción exclusiva como tribunal de primera instancia, salvo cuando las leyes de protección del consumidor de tu país de residencia exijan otra cosa.</p>
+  <p>Estos términos se rigen por las leyes de Japón, y el Tribunal de Distrito de Tokio tiene jurisdicción exclusiva como tribunal de primera instancia, sin perjuicio de las protecciones imperativas para los consumidores de tu lugar de residencia.</p>
 
   <h2>12. Contacto</h2>
   <p><a href="mailto:contact@yumi.to">contact@yumi.to</a></p>`,

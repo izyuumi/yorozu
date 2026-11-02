@@ -89,8 +89,8 @@ export default {
     title: 'Politique de confidentialité — Yorozu',
     description: 'Ce que Yorozu collecte, ce que son relais peut voir et ce qu’il ne peut pas voir.',
     heading: 'Politique de confidentialité',
-    effective: 'En vigueur à compter du 31 octobre 2026',
-    body: `<p>Yorozu est une app pour iPhone, iPad et Mac et un plug-in pour OpenClaw, créés par Yumi Izumi (« nous »). Cette politique explique quelles données Yorozu 0.9 et versions ultérieures traitent. En bref : <strong>nous ne gérons ni comptes, ni statistiques, ni publicité, et nous ne pouvons pas lire vos conversations.</strong></p>
+    effective: 'En vigueur à compter du 2 novembre 2026',
+    body: `<p>Yorozu est une app pour iPhone, iPad et Mac et un plug-in pour OpenClaw, créés par Yumi Izumi (« nous »). Le responsable du traitement (exploitant) du relais hébergé et de ce site est Yumi Izumi, une personne physique au Japon, joignable à <a href="mailto:contact@yumi.to">contact@yumi.to</a>. Cette politique explique quelles données Yorozu 0.9 et versions ultérieures traitent. En bref : <strong>nous ne gérons ni comptes, ni statistiques, ni publicité, et nous ne pouvons pas lire vos conversations.</strong></p>
 
   <h2>Où se trouvent vos données</h2>
   <p>Vos conversations résident dans votre propre Gateway OpenClaw, sur un ordinateur que vous contrôlez. Le plug-in Yorozu s’exécute à l’intérieur. Nous ne recevons jamais vos conversations, vos fichiers, ni vos identifiants Claude, OpenAI ou d’autres fournisseurs ; ils restent dans OpenClaw.</p>
@@ -102,19 +102,32 @@ export default {
   <p>Dissocier un appareil efface son cache et ses clés.</p>
 
   <h2>Le relais</h2>
-  <p>Vos appareils joignent votre Gateway via un relais que nous exploitons sur Cloudflare à l’adresse <code>relay.yumi.to</code>. Vous pouvez aussi exploiter le vôtre. Tout est chiffré de bout en bout (une négociation Noise IK avec X25519 à chaque connexion, puis ChaCha20-Poly1305) avant d’atteindre le relais, et le relais ne dispose d’aucune clé pour le déchiffrer. Le relais traite toutefois :</p>
+  <p>Vos appareils joignent votre Gateway via un relais que nous exploitons sur Cloudflare à l’adresse <code>relay.yumi.to</code>. Vous pouvez aussi exploiter le vôtre. Vos messages, pièces jointes et aperçus de notification sont chiffrés de bout en bout (une négociation Noise IK avec X25519 à chaque connexion, puis ChaCha20-Poly1305) avant d’atteindre le relais, et le relais ne dispose d’aucune clé pour les déchiffrer. Le relais traite :</p>
   <ul>
-    <li><strong>Les messages chiffrés</strong> de vos appareils, conservés jusqu’à 24 heures (5 Mio au maximum) pendant que votre Gateway est hors ligne, puis supprimés. Rien de ce qu’envoie votre Gateway n’est conservé.</li>
-    <li><strong>Les pièces jointes chiffrées</strong>, en fragments chiffrés de bout en bout. Le relais voit leur taille et leur horodatage.</li>
-    <li><strong>Les clés publiques</strong> des appareils jumelés et un identifiant de salon, conservés jusqu’à ce que vous dissociiez l’appareil.</li>
-    <li><strong>Les jetons de jumelage à usage unique</strong>, qui expirent au bout de 10 minutes.</li>
-    <li><strong>Le jeton de notification push Apple de votre iPhone ou iPad</strong>, pour que le relais puisse envoyer des notifications, conservé jusqu’à ce que vous dissociiez l’appareil.</li>
-    <li><strong>Les métadonnées</strong> : quand les appareils se connectent, ainsi que la taille et l’horodatage des messages. Les journaux de connexion ne contiennent jamais le contenu des messages ni de clés.</li>
-    <li><strong>Les adresses IP</strong>, que Cloudflare traite pour acheminer le trafic, conformément à la <a href="https://www.cloudflare.com/privacypolicy/">politique de confidentialité de Cloudflare</a>.</li>
+    <li><strong>Les clés publiques</strong> de votre Gateway et de vos appareils jumelés, et un identifiant de salon tiré de la clé de votre Gateway, pour vérifier qu’un appareil peut rejoindre le salon et que chaque message vient bien de lui.</li>
+    <li><strong>La dernière connexion de chaque appareil</strong>, pour supprimer les données des appareils qui ne se connectent plus.</li>
+    <li><strong>Les jetons push</strong> : les jetons push Apple de vos appareils, pour les réveiller par des notifications, et le jeton push d’une activité en direct, pour la mettre à jour.</li>
+    <li><strong>Les messages chiffrés</strong> de vos appareils, conservés pendant que votre Gateway est hors ligne pour lui parvenir plus tard : jusqu’à 24 heures et 5 Mio au maximum, puis supprimés. Rien de ce qu’envoie votre Gateway n’est conservé.</li>
+    <li><strong>Les pièces jointes chiffrées</strong>, transmises en fragments chiffrés de bout en bout. Le relais voit leur taille et leur horodatage.</li>
+    <li><strong>Les jetons de jumelage à usage unique</strong>, pour qu’un nouvel appareil puisse rejoindre le salon une fois. Ils expirent au bout de 10 minutes.</li>
+    <li><strong>La boîte aux lettres de jumelage du Mac</strong> : quand vous ajoutez un Mac, votre iPhone ou iPad y dépose une lettre chiffrée de 4 Ko au maximum. La boîte est supprimée 10 minutes après son ouverture.</li>
+    <li><strong>Des compteurs</strong> : combien de notifications et de mises à jour d’activités en direct sont parties dans la minute en cours, et quand chaque appareil a été réveillé en arrière-plan pour la dernière fois, afin de respecter les limites.</li>
+    <li><strong>Les adresses IP</strong>, que Cloudflare traite pour acheminer le trafic, et que le relais utilise comme clé d’une limite de connexions (30 nouvelles connexions par minute et par adresse). Nous ne les enregistrons pas. Voir la <a href="https://www.cloudflare.com/privacypolicy/">politique de confidentialité de Cloudflare</a>.</li>
+    <li><strong>Les métadonnées</strong> : quand les appareils se connectent, ainsi que la taille et l’horodatage des messages. Les journaux de connexion ne contiennent que des événements et des nombres, jamais le contenu des messages, de clés ni d’adresses IP.</li>
   </ul>
 
+  <h2>Durée de conservation sur le relais</h2>
+  <p>Les données de jumelage sur le relais sont conservées jusqu’à ce que vous dissociiez, ou supprimées après 30 jours sans aucune connexion au salon depuis vos appareils ou votre Gateway. Les données d’un appareil sont supprimées après 180 jours sans connexion de cet appareil. Les messages en attente sont conservés 24 heures au maximum, les jetons de jumelage 10 minutes et la boîte aux lettres de jumelage du Mac 10 minutes.</p>
+
   <h2>Notifications</h2>
-  <p>Les notifications push sont distribuées par Apple. Chacune contient un aperçu de la réponse (le titre de la conversation et sa première ligne, 256 octets au maximum), chiffré pour votre seul appareil ; c’est votre appareil qui l’ouvre. Le relais et Apple ne voient que la boîte chiffrée.</p>
+  <p>Les notifications push sont distribuées par Apple. Chaque notification de message contient un aperçu de la réponse (le titre de la conversation et sa première ligne, 256 octets au maximum), chiffré pour votre seul appareil ; c’est votre appareil qui l’ouvre. Pour les messages et les aperçus de notification, le relais et Apple ne voient que la boîte chiffrée.</p>
+  <p><strong>Mises à jour de l’activité en direct</strong> : si vous utilisez l’activité en direct, ses mises à jour ne peuvent pas être chiffrées de bout en bout, car iOS doit les lire pour afficher l’activité. Elles ne contiennent que des identifiants de tâche aléatoires, le type et l’état de chaque tâche (par exemple « en cours » ou « terminée »), le nombre d’étapes d’outils et des heures. Elles ne contiennent jamais le texte ni le titre des conversations, et le relais ne les enregistre pas. Le relais conserve le jeton push de l’activité en direct pendant qu’elle est en cours, et le supprime quand l’activité se termine, quand Apple signale que le jeton ne fonctionne plus, ou quand vous dissociez l’appareil. Si le relais n’apprend pas la fin, par exemple parce que votre appareil était hors ligne, le jeton reste jusqu’à ce que l’app la signale de nouveau ou que les délais ci-dessus le suppriment.</p>
+
+  <h2>Prestataires</h2>
+  <p>Cloudflare héberge le relais et ce site, et Apple distribue les notifications push. Ces prestataires peuvent traiter des données dans d’autres pays que le vôtre, y compris aux États-Unis, selon leurs propres garanties.</p>
+
+  <h2>Serveur d’aide et e-mails d’assistance</h2>
+  <p>Le serveur d’aide à l’adresse <code>yorozu.yumi.to/mcp</code> répond à partir de la documentation de Yorozu. Il compte les requêtes par adresse IP en mémoire pour les limiter, et n’enregistre rien. Si vous nous écrivez, nous recevons ce que vous envoyez, comme votre adresse, votre message et les diagnostics que vous collez. Nous le gardons le temps de vous répondre, puis le supprimons.</p>
 
   <h2>OpenClaw et les fournisseurs de modèles</h2>
   <p>Yorozu transmet vos messages à votre agent OpenClaw. OpenClaw et les outils qu’il exécute envoient des données à leurs fournisseurs de modèles (par exemple Anthropic ou OpenAI) conformément à leurs propres politiques de confidentialité et à vos accords avec ces fournisseurs. Nous n’y sommes pas partie et ne recevons pas ces données.</p>
@@ -129,10 +142,11 @@ export default {
   <p>Les versions antérieures de l’app pour Mac exécutaient leur propre assistant. Leurs données restent sur votre Mac, dans <code>~/Yorozu</code> et dans le dossier de Yorozu dans <code>~/Library/Application Support/</code>, jusqu’à ce que vous les supprimiez.</p>
 
   <h2>Enfants</h2>
-  <p>Yorozu ne s’adresse pas aux enfants de moins de 13 ans, et nous ne collectons pas sciemment leurs données.</p>
+  <p>Yorozu n’est pas destiné aux enfants de moins de 17 ans, et nous ne collectons pas sciemment leurs données.</p>
 
-  <h2>Vos choix</h2>
-  <p>Dissocier un appareil, depuis l’app ou avec <code>openclaw yorozu devices remove</code>, supprime ses clés et son jeton push du relais. Supprimer l’app efface ses données de cet appareil. Vos conversations restent dans OpenClaw jusqu’à ce que vous les y supprimiez ou les supprimiez dans Yorozu. Comme nous ne détenons aucun compte ni contenu lisible, il n’y a rien d’autre à exporter ou à supprimer. Pour toute question, écrivez à <a href="mailto:contact@yumi.to">contact@yumi.to</a>.</p>
+  <h2>Vos choix et vos droits</h2>
+  <p>Dissocier un appareil, depuis l’app ou avec <code>openclaw yorozu devices remove</code>, supprime aussitôt ses clés et ses jetons push du relais, ou dès que votre Gateway se reconnecte s’il est hors ligne. Les délais ci-dessus suppriment le reste. Supprimer l’app efface ses données de cet appareil. Vos conversations restent dans OpenClaw jusqu’à ce que vous les y supprimiez ou les supprimiez dans Yorozu.</p>
+  <p>Vous pouvez demander l’accès à vos données, leur rectification ou leur suppression, ou vous opposer à leur utilisation, en écrivant à <a href="mailto:contact@yumi.to">contact@yumi.to</a>. Nous ne détenons aucun compte ni contenu lisible, et les données du relais portent des clés d’appareil, pas des noms ; nous pourrons donc avoir besoin d’informations de votre part pour les retrouver, sans garantie d’y parvenir. Vous pouvez aussi adresser une réclamation à l’autorité de protection des données de votre lieu de résidence.</p>
 
   <h2>Modifications</h2>
   <p>Nous publierons les modifications ici et mettrons à jour la date ci-dessus.</p>`,
@@ -141,8 +155,8 @@ export default {
     title: 'Conditions d’utilisation — Yorozu',
     description: 'Les conditions d’utilisation de Yorozu, y compris le risque pour les comptes Claude et Codex utilisés par les agents qu’il pilote.',
     heading: 'Conditions d’utilisation',
-    effective: 'En vigueur à compter du 23 octobre 2026',
-    body: `<p>Les présentes conditions s’appliquent à l’app Yorozu pour iPhone, iPad et Mac, au plug-in Yorozu pour OpenClaw, au relais à l’adresse <code>relay.yumi.to</code> et à ce site (ensemble, « Yorozu »), fournis par Yumi Izumi (« nous »). En installant ou en utilisant Yorozu, vous les acceptez. Si vous ne les acceptez pas, n’utilisez pas Yorozu. Si vous obtenez l’app pour iPhone sur l’App Store, le <a href="https://www.apple.com/legal/internet-services/itunes/dev/stdeula/">Contrat de licence utilisateur final standard</a> d’Apple s’applique également. En cas de conflit avec les présentes conditions, il prévaut pour l’app pour iPhone.</p>
+    effective: 'En vigueur à compter du 2 novembre 2026',
+    body: `<p>Les présentes conditions s’appliquent à l’app Yorozu pour iPhone, iPad et Mac, au plug-in Yorozu pour OpenClaw, au relais à l’adresse <code>relay.yumi.to</code> et à ce site (ensemble, « Yorozu »), fournis par Yumi Izumi (« nous »). En installant ou en utilisant Yorozu, vous les acceptez. Si vous ne les acceptez pas, n’utilisez pas Yorozu. Yorozu n’est pas destiné aux enfants de moins de 17 ans. Si vous obtenez l’app pour iPhone sur l’App Store, le <a href="https://www.apple.com/legal/internet-services/itunes/dev/stdeula/">Contrat de licence utilisateur final standard</a> d’Apple s’applique également. En cas de conflit avec les présentes conditions, il prévaut pour l’app pour iPhone.</p>
 
   <h2>1. Ce qu’est Yorozu</h2>
   <p>Yorozu est une app de discussion pour votre propre agent OpenClaw : son plug-in fait de Yorozu un canal de votre Gateway OpenClaw, et l’app lui transmet vos messages et vous rapporte ses réponses. L’agent, ainsi que tout outil de programmation qu’il exécute, comme Claude Code ou OpenAI Codex, est un logiciel que vous installez et configurez. Yorozu ne fournit pas de modèles d’IA, ne vend pas d’utilisation d’IA et ne collecte pas vos identifiants. Vous installez ces outils, vous y connectez et les payez vous-même.</p>
@@ -169,16 +183,16 @@ export default {
   <p>Dans toute la mesure permise par la loi, Yorozu est fourni « en l’état » et « selon disponibilité », sans garantie d’aucune sorte, expresse ou implicite, y compris de qualité marchande, d’adéquation à un usage particulier, d’absence de contrefaçon, d’exactitude, de sécurité et de fonctionnement ininterrompu ou exempt d’erreurs.</p>
 
   <h2>8. Limitation de responsabilité</h2>
-  <p>Dans toute la mesure permise par la loi, nous ne sommes pas responsables des dommages indirects, accessoires, spéciaux, consécutifs ou punitifs, ni de toute perte de données, de bénéfices, de comptes, d’accès à des services ou abonnements tiers, ou d’activité, découlant de Yorozu, de logiciels ou de fournisseurs tiers, ou d’actions effectuées par des agents d’IA, même si nous avons été informés de la possibilité d’une telle perte. Notre responsabilité totale pour toute réclamation relative à Yorozu est limitée au montant que vous nous avez payé pour Yorozu au cours des 12 mois précédant la réclamation, ou à 10 USD si vous n’avez rien payé. Certaines juridictions n’autorisent pas certaines exclusions ou limitations. Dans ces juridictions, elles ne s’appliquent que dans la mesure permise par la loi. Rien dans les présentes conditions ne limite une responsabilité qui ne peut être limitée par la loi, comme la responsabilité pour faute intentionnelle ou faute lourde.</p>
+  <p>Dans toute la mesure permise par la loi, nous ne sommes pas responsables des dommages indirects, accessoires, spéciaux, consécutifs ou punitifs, ni de toute perte de données, de bénéfices, de comptes, d’accès à des services ou abonnements tiers, ou d’activité, découlant de Yorozu, de logiciels ou de fournisseurs tiers, ou d’actions effectuées par des agents d’IA, même si nous avons été informés de la possibilité d’une telle perte. Notre responsabilité totale pour toute réclamation relative à Yorozu est limitée au montant que vous nous avez payé pour Yorozu au cours des 12 mois précédant la réclamation, ou à 10 USD si vous n’avez rien payé. Certaines juridictions n’autorisent pas certaines exclusions ou limitations. Dans ces juridictions, elles ne s’appliquent que dans la mesure permise par la loi. Rien dans les présentes conditions n’exclut ni ne limite notre responsabilité en cas de décès ou de dommage corporel causé par notre négligence, de faute intentionnelle ou de faute lourde, ni toute autre responsabilité que la loi ne permet pas d’exclure ou de limiter.</p>
 
   <h2>9. Indemnisation</h2>
-  <p>Dans la mesure permise par la loi, vous acceptez de nous indemniser contre les réclamations découlant de votre utilisation de Yorozu, des actions de vos agents, ou de votre violation des présentes conditions ou des conditions d’un tiers.</p>
+  <p>Dans la mesure où la loi de votre lieu de résidence le permet, vous acceptez de nous indemniser contre les réclamations causées par votre violation des présentes conditions ou par votre usage abusif de Yorozu.</p>
 
   <h2>10. Modifications et résiliation</h2>
-  <p>Nous pouvons mettre à jour les présentes conditions en publiant une nouvelle version ici. Continuer à utiliser Yorozu après une mise à jour signifie que vous l’acceptez. Vous pouvez cesser d’utiliser Yorozu à tout moment en supprimant les apps.</p>
+  <p>Nous pouvons mettre à jour les présentes conditions en publiant une nouvelle version ici. Nous annoncerons toute modification importante sur cette page et dans les notes de version des apps au moins 30 jours avant son entrée en vigueur. Si vous n’êtes pas d’accord, vous pouvez cesser d’utiliser Yorozu à tout moment en supprimant les apps.</p>
 
   <h2>11. Droit applicable</h2>
-  <p>Les présentes conditions sont régies par le droit japonais, et le tribunal de district de Tokyo a compétence exclusive en tant que juridiction de première instance, sauf lorsque les lois de protection des consommateurs de votre pays de résidence en disposent autrement.</p>
+  <p>Les présentes conditions sont régies par le droit japonais, et le tribunal de district de Tokyo a compétence exclusive en tant que juridiction de première instance, sans préjudice des protections impératives des consommateurs de votre lieu de résidence.</p>
 
   <h2>12. Contact</h2>
   <p><a href="mailto:contact@yumi.to">contact@yumi.to</a></p>`,

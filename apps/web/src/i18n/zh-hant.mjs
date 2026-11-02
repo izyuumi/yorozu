@@ -89,8 +89,8 @@ export default {
     title: '隱私權政策 — Yorozu',
     description: 'Yorozu 收集什麼，它的中繼看得到什麼、看不到什麼。',
     heading: '隱私權政策',
-    effective: '自 2026 年 10 月 31 日起生效',
-    body: `<p>Yorozu 是由 Yumi Izumi（「我們」）製作的一款適用於 iPhone、iPad 和 Mac 的 App，以及一個 OpenClaw 外掛。本政策說明 Yorozu 0.9 及以上版本處理哪些資料。簡單來說：<strong>我們不經營帳號、分析或廣告，也無法讀取你的對話。</strong></p>
+    effective: '自 2026 年 11 月 2 日起生效',
+    body: `<p>Yorozu 是由 Yumi Izumi（「我們」）製作的一款適用於 iPhone、iPad 和 Mac 的 App，以及一個 OpenClaw 外掛。託管中繼和本網站的控管者（營運者）是居住在日本的個人 Yumi Izumi，聯絡方式為 <a href="mailto:contact@yumi.to">contact@yumi.to</a>。本政策說明 Yorozu 0.9 及以上版本處理哪些資料。簡單來說：<strong>我們不經營帳號、分析或廣告，也無法讀取你的對話。</strong></p>
 
   <h2>你的資料存放在哪裡</h2>
   <p>你的對話保存在你自己的 OpenClaw Gateway 中，位於你控制的電腦上。Yorozu 外掛在其中執行。我們從不接收你的對話、檔案，或你的 Claude、OpenAI 及其他供應商的憑證；這些都留在 OpenClaw 中。</p>
@@ -102,19 +102,32 @@ export default {
   <p>取消裝置的配對會清除該裝置的快取和金鑰。</p>
 
   <h2>中繼</h2>
-  <p>你的裝置透過我們在 Cloudflare 上營運的中繼 <code>relay.yumi.to</code> 連線到你的 Gateway。你也可以自行執行中繼。所有內容在到達中繼之前都經過端對端加密（每次連線都使用以 X25519 進行的 Noise IK 交握，接著使用 ChaCha20-Poly1305），中繼沒有任何可用來解密的金鑰。中繼確實會處理以下內容：</p>
+  <p>你的裝置透過我們在 Cloudflare 上營運的中繼 <code>relay.yumi.to</code> 連線到你的 Gateway。你也可以自行執行中繼。你的訊息、附件和通知預覽在到達中繼之前都經過端對端加密（每次連線都使用以 X25519 進行的 Noise IK 交握，接著使用 ChaCha20-Poly1305），中繼沒有任何可用來解密它們的金鑰。中繼會處理以下內容：</p>
   <ul>
-    <li><strong>加密的訊息</strong>：來自你的裝置，在你的 Gateway 離線期間最多保存 24 小時（最多 5 MiB），之後刪除。你的 Gateway 傳送的內容不會被保存。</li>
-    <li><strong>加密的附件</strong>：以端對端加密的區塊傳送。中繼看得到它們的大小和時間。</li>
-    <li><strong>公開金鑰</strong>：已配對裝置的公開金鑰和一個房間識別碼，保存到你取消該裝置的配對為止。</li>
-    <li><strong>一次性配對權杖</strong>：10 分鐘後失效。</li>
-    <li><strong>你的 iPhone 或 iPad 的 Apple 推播權杖</strong>：用來讓中繼傳送通知，保存到你取消該裝置的配對為止。</li>
-    <li><strong>中繼資料</strong>：裝置何時連線，以及訊息的大小和時間。連線記錄從不包含訊息內容或金鑰。</li>
-    <li><strong>IP 位址</strong>：由 Cloudflare 依據 <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare 的隱私權政策</a>處理，用於傳送流量。</li>
+    <li><strong>公開金鑰</strong>：你的 Gateway 和已配對裝置的公開金鑰，以及由 Gateway 金鑰產生的房間識別碼，用來確認裝置可以加入、每則訊息確實來自該裝置。</li>
+    <li><strong>每部裝置最後一次連線的時間</strong>：用來刪除不再連線的裝置的記錄。</li>
+    <li><strong>推播權杖</strong>：你的裝置的 Apple 推播權杖，用來以通知喚醒裝置；以及即時動態的推播權杖，用來更新該動態。</li>
+    <li><strong>加密的訊息</strong>：來自你的裝置，在你的 Gateway 離線期間保存，以便稍後送達：最多 24 小時、最多 5 MiB，之後刪除。你的 Gateway 傳送的內容不會被保存。</li>
+    <li><strong>加密的附件</strong>：以端對端加密的區塊轉送。中繼看得到它們的大小和時間。</li>
+    <li><strong>一次性配對權杖</strong>：讓新裝置可以加入一次，10 分鐘後失效。</li>
+    <li><strong>Mac 配對信箱</strong>：新增 Mac 時，你的 iPhone 或 iPad 會在其中留下一封最多 4 KB 的加密信件。信箱在開啟 10 分鐘後刪除。</li>
+    <li><strong>次數計數</strong>：目前這一分鐘內送出的通知和即時動態更新的數量，以及每部裝置最後一次在背景被喚醒的時間，用來遵守上限。</li>
+    <li><strong>IP 位址</strong>：由 Cloudflare 處理以傳送流量，中繼也將其用作連線限制的鍵（每個位址每分鐘最多 30 個新連線）。我們不會儲存它們。請參閱 <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare 的隱私權政策</a>。</li>
+    <li><strong>中繼資料</strong>：裝置何時連線，以及訊息的大小和時間。連線記錄只記錄事件和次數，從不包含訊息內容、金鑰或 IP 位址。</li>
   </ul>
 
+  <h2>中繼保存資料的期限</h2>
+  <p>中繼上的配對資料會保存到你取消配對為止；如果你的任何裝置和 Gateway 都連續 30 天沒有連線到該房間，則會被刪除。單一裝置的記錄在該裝置連續 180 天沒有連線後刪除。暫存的訊息最多保存 24 小時，配對權杖保存 10 分鐘，Mac 配對信箱保存 10 分鐘。</p>
+
   <h2>通知</h2>
-  <p>推播通知由 Apple 傳送。每則通知都帶有回覆的預覽（對話標題及其第一行，最多 256 位元組），並且只為你的裝置加密；由你的裝置開啟。中繼和 Apple 只看得到加密的封包。</p>
+  <p>推播通知由 Apple 傳送。每則訊息通知都帶有回覆的預覽（對話標題及其第一行，最多 256 位元組），並且只為你的裝置加密；由你的裝置開啟。對於訊息和通知預覽，中繼和 Apple 只看得到加密的封包。</p>
+  <p><strong>即時動態更新</strong>：如果你使用即時動態，它的更新無法端對端加密，因為 iOS 必須讀取內容才能繪製動態。更新只包含隨機的工作 ID、工作的類型和狀態（例如「執行中」或「完成」）、工具步驟數和時間，從不包含對話文字或標題，中繼也不會儲存它們。中繼在動態執行期間保存即時動態的推播權杖，並在動態結束、Apple 回報該權杖已失效，或你取消裝置配對時刪除。如果中繼沒有得知動態已結束（例如你的裝置當時離線），權杖會保留到 App 再次回報，或依上述期限刪除。</p>
+
+  <h2>服務供應商</h2>
+  <p>Cloudflare 託管中繼和本網站，Apple 傳送推播通知。這些供應商可能會在你所在國家以外的國家（包括美國），依其自身的保護措施處理資料。</p>
+
+  <h2>說明伺服器和支援電子郵件</h2>
+  <p><code>yorozu.yumi.to/mcp</code> 上的說明伺服器根據 Yorozu 的文件作答。它只在記憶體中依 IP 位址計算請求數以進行限制，不儲存任何內容。如果你寄電子郵件給我們，我們會收到你傳送的內容，例如你的電子郵件地址、郵件內容，以及你貼上的診斷資訊。我們只在回覆所需的期間內保存，之後刪除。</p>
 
   <h2>OpenClaw 與模型供應商</h2>
   <p>Yorozu 會把你的訊息交給你的 OpenClaw 智慧代理。OpenClaw 及其執行的工具會依據各供應商自己的隱私權政策，以及你與這些供應商之間的協議，將資料傳送給它們的模型供應商（例如 Anthropic 或 OpenAI）。我們不是其中的一方，也不會收到這些資料。</p>
@@ -129,10 +142,11 @@ export default {
   <p>Mac App 的舊版本會執行自己的助理。它們的資料會留在你的 Mac 上的 <code>~/Yorozu</code> 以及 <code>~/Library/Application Support/</code> 中 Yorozu 的檔案夾裡，直到你刪除為止。</p>
 
   <h2>兒童</h2>
-  <p>Yorozu 並非以 13 歲以下兒童為對象，我們不會在知情的情況下收集他們的資料。</p>
+  <p>Yorozu 並非為 17 歲以下兒童設計，我們不會在知情的情況下收集他們的資料。</p>
 
-  <h2>你的選擇</h2>
-  <p>透過 App 或使用 <code>openclaw yorozu devices remove</code> 取消裝置的配對，會從中繼刪除該裝置的金鑰和推播權杖。刪除 App 會從該裝置移除其資料。你的對話會保留在 OpenClaw 中，直到你在 OpenClaw 或 Yorozu 中刪除。由於我們不持有任何帳號或可讀取的內容，因此沒有其他可匯出或刪除的內容。如有疑問，請寄電子郵件至 <a href="mailto:contact@yumi.to">contact@yumi.to</a>。</p>
+  <h2>你的選擇和權利</h2>
+  <p>透過 App 或使用 <code>openclaw yorozu devices remove</code> 取消裝置的配對，會立即從中繼刪除該裝置的金鑰和推播權杖；如果 Gateway 離線，則在它下次連線時刪除。其餘資料依上述期限刪除。刪除 App 會從該裝置移除其資料。你的對話會保留在 OpenClaw 中，直到你在 OpenClaw 或 Yorozu 中刪除。</p>
+  <p>如需查閱、更正或刪除你的資料，或反對其使用，請寄電子郵件至 <a href="mailto:contact@yumi.to">contact@yumi.to</a>。我們不持有任何帳號或可讀取的內容，中繼記錄中只有裝置金鑰而沒有姓名，因此我們可能需要你提供資訊才能找到你的記錄，也可能無法找到。你也可以向當地的資料保護機關提出申訴。</p>
 
   <h2>變更</h2>
   <p>如有變更，我們會在此公布並更新上方的日期。</p>`,
@@ -141,8 +155,8 @@ export default {
     title: '使用條款 — Yorozu',
     description: '使用 Yorozu 的條款，包括它所驅動的智慧代理使用的 Claude 和 Codex 帳號所面臨的風險。',
     heading: '使用條款',
-    effective: '自 2026 年 10 月 23 日起生效',
-    body: `<p>本條款適用於由 Yumi Izumi（「我們」）提供的適用於 iPhone、iPad 和 Mac 的 Yorozu App、OpenClaw 的 Yorozu 外掛、位於 <code>relay.yumi.to</code> 的中繼，以及本網站（合稱「Yorozu」）。安裝或使用 Yorozu，即表示你同意本條款。如果你不同意，請不要使用 Yorozu。如果你從 App Store 取得 iPhone App，Apple 的<a href="https://www.apple.com/legal/internet-services/itunes/dev/stdeula/">標準終端使用者授權合約</a>也同樣適用。若其與本條款衝突，就 iPhone App 而言以其為準。</p>
+    effective: '自 2026 年 11 月 2 日起生效',
+    body: `<p>本條款適用於由 Yumi Izumi（「我們」）提供的適用於 iPhone、iPad 和 Mac 的 Yorozu App、OpenClaw 的 Yorozu 外掛、位於 <code>relay.yumi.to</code> 的中繼，以及本網站（合稱「Yorozu」）。安裝或使用 Yorozu，即表示你同意本條款。如果你不同意，請不要使用 Yorozu。Yorozu 並非為 17 歲以下兒童設計。如果你從 App Store 取得 iPhone App，Apple 的<a href="https://www.apple.com/legal/internet-services/itunes/dev/stdeula/">標準終端使用者授權合約</a>也同樣適用。若其與本條款衝突，就 iPhone App 而言以其為準。</p>
 
   <h2>1. Yorozu 是什麼</h2>
   <p>Yorozu 是一款為你自己的 OpenClaw 智慧代理打造的聊天 App：它的外掛讓 Yorozu 成為你的 OpenClaw Gateway 的一個頻道，App 會把你的訊息傳給智慧代理，並帶回它的回覆。智慧代理以及它執行的任何程式設計工具（例如 Claude Code 或 OpenAI Codex），都是由你安裝和設定的軟體。Yorozu 不提供 AI 模型，不販售 AI 使用額度，也不收集你的憑證。這些工具由你自行安裝、登入和付費。</p>
@@ -169,16 +183,16 @@ export default {
   <p>在法律允許的最大範圍內，Yorozu 依「現狀」及「現有」狀態提供，不附帶任何形式的明示或默示保證，包括適售性、特定用途適用性、不侵權、正確性、安全性，以及不中斷或無錯誤運作。</p>
 
   <h2>8. 責任限制</h2>
-  <p>在法律允許的最大範圍內，對於因 Yorozu、第三方軟體或供應商，或 AI 智慧代理所採取的操作而產生的任何間接、附帶、特殊、衍生性或懲罰性損害，或任何資料、利潤、帳號、對第三方服務或訂閱的存取權或業務的損失，即使我們已被告知可能發生此類損失，我們也不承擔責任。對於與 Yorozu 相關的任何求償，我們的總責任以你在求償前 12 個月內為 Yorozu 支付給我們的金額為限；如果你未支付任何費用，則以 10 美元為限。某些司法管轄區不允許某些排除或限制。在這些司法管轄區，它們僅在法律允許的範圍內適用。本條款中的任何內容均不限制法律上無法限制的責任，例如因故意不當行為或重大過失而產生的責任。</p>
+  <p>在法律允許的最大範圍內，對於因 Yorozu、第三方軟體或供應商，或 AI 智慧代理所採取的操作而產生的任何間接、附帶、特殊、衍生性或懲罰性損害，或任何資料、利潤、帳號、對第三方服務或訂閱的存取權或業務的損失，即使我們已被告知可能發生此類損失，我們也不承擔責任。對於與 Yorozu 相關的任何求償，我們的總責任以你在求償前 12 個月內為 Yorozu 支付給我們的金額為限；如果你未支付任何費用，則以 10 美元為限。某些司法管轄區不允許某些排除或限制。在這些司法管轄區，它們僅在法律允許的範圍內適用。本條款中的任何內容均不排除或限制我們因過失造成死亡或身體傷害的責任、因故意不當行為或重大過失而產生的責任，或任何其他依法無法排除或限制的責任。</p>
 
   <h2>9. 賠償</h2>
-  <p>在法律允許的範圍內，你同意就因你使用 Yorozu、你的智慧代理的行為，或你違反本條款或第三方條款而引起的求償，向我們提供賠償。</p>
+  <p>在你居住地法律允許的範圍內，你同意就因你違反本條款或濫用 Yorozu 而引起的求償，向我們提供賠償。</p>
 
   <h2>10. 變更與終止</h2>
-  <p>我們可能透過在此公布新版本來更新本條款。更新後繼續使用 Yorozu，即表示你接受更新。你可以隨時刪除 App 來停止使用 Yorozu。</p>
+  <p>我們可能透過在此公布新版本來更新本條款。對於重大變更，我們會在生效前至少 30 天，於本頁面和 App 的版本說明中通知。如果你不同意，可以隨時刪除 App 來停止使用 Yorozu。</p>
 
   <h2>11. 準據法</h2>
-  <p>本條款受日本法律管轄，並以東京地方法院為第一審專屬管轄法院，但你居住國家的消費者保護法律另有要求者除外。</p>
+  <p>本條款受日本法律管轄，並以東京地方法院為第一審專屬管轄法院，但不影響你居住地強制適用的消費者保護規定。</p>
 
   <h2>12. 聯絡方式</h2>
   <p><a href="mailto:contact@yumi.to">contact@yumi.to</a></p>`,
