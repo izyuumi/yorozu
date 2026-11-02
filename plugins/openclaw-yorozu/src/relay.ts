@@ -7,6 +7,7 @@ import { WebSocket, WebSocketServer } from "openclaw/plugin-sdk/websocket-runtim
 import { receiveUpload, receiveUploadStatus, serveDownload } from "./attachments.js";
 import { getDevice, listDevices, putDevice, removeDevice } from "./devices.js";
 import { serveBonjour } from "./bonjour.js";
+import { announceDevices, CLOSE_EXPIRED, DirectSeen, expirePairing, reportSeen, ROOM_EXPIRED } from "./expiry.js";
 import { watchDirect } from "./hints.js";
 import { bindAddresses, serveDirect, type DirectListener } from "./direct.js";
 import {
@@ -78,7 +79,7 @@ let host: {
   mint: (() => Promise<{ token: string; expiresAt: number }>) | null;
   /** The direct listener's hints while it is listening. */
   hints: () => DirectHints | undefined;
-  forget: (deviceKeys: string[]) => void;
+  forget: (deviceKeys: string[], tellRelay?: boolean) => void;
   broadcast: (events: Event[]) => number;
   notify: ((convId: string, messageId: string, text: string) => Promise<void>) | null;
   activityTurn: (convId: string, change: TurnChange) => void;
@@ -331,11 +332,11 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     hints: () => direct?.listening ? hints : undefined,
     broadcast: (events) => hub.broadcast(events),
     notify: null,
-    forget: (deviceKeys) => {
+    forget: (deviceKeys, tellRelay = true) => {
       for (const key of deviceKeys) {
         hub.end(key, { code: CLOSE.unauthorized, reason: "revoked" });
         forgetActivity(key, false);
-        relaySend?.(JSON.stringify({ type: "revoke", pubkey: key }));
+        if (tellRelay) relaySend?.(JSON.stringify({ type: "revoke", pubkey: key }));
       }
     },
     activityTurn: (convId, change) => {
@@ -347,6 +348,14 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
       }
     },
   });
+
+  const directSeen = new DirectSeen();
+  const expiry = {
+    store: { list: listDevices, remove: removeDevice },
+    forget: (deviceKeys: string[]) => me.forget(deviceKeys, false),
+    seen: directSeen,
+    log,
+  };
 
   if (opts.directPort !== undefined) {
     // `local-pair` (#532): one file at a time; whatever an earlier process left is stale, its secret gone with it.
@@ -374,6 +383,12 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           .initiate(() => socket.send(raw))
           .catch((error: unknown) => log?.warn(`yorozu: direct send failed: ${String(error)}`)),
       localPair: () => local.ensure(),
+      // The relay sees only its own path; reported here, a direct-only device does not idle out there.
+      seen: (deviceKey) => {
+        const now = Date.now();
+        directSeen.mark(deviceKey, now);
+        if (relaySend) reportSeen(directSeen, relaySend, now);
+      },
       log,
     });
     stopWatching = await watchDirect({ listener: direct, port: opts.directPort, log, changed: async (next) => {
@@ -493,9 +508,11 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
               });
             log?.info(`yorozu: registered at relay, room ${keys.room}`);
             opts.onStatus({ connected: true });
-            const devices = (await listDevices()).map((d) => d.signingPub);
-            return send(JSON.stringify({ type: "devices", devices }));
+            return announceDevices(msg.expired, send, expiry);
           }
+          case "expired":
+            // Announcing again answers the relay, which then stops holding the list for the next register.
+            return announceDevices(msg.devices, send, expiry);
           case "pong":
             pongDue = false;
             return;
@@ -559,6 +576,16 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           me.mint = null;
           me.notify = null;
           for (const waiter of minting.splice(0)) waiter.reject(new Error("the relay connection closed"));
+        }
+        if (code === CLOSE_EXPIRED) {
+          // Cleared before the reconnect, whose register the relay then accepts and whose announce re-adds the rest.
+          return void expirePairing(expiry)
+            .then((removed) => {
+              if (removed.length) opts.onStatus({ connected: false, error: ROOM_EXPIRED.replace(/^yorozu: /, "") });
+              else log?.warn("yorozu: relay room expired; the devices seen over direct stay paired");
+            })
+            .catch((error: unknown) => log?.warn(`yorozu: clearing expired pairings failed: ${String(error)}`))
+            .then(() => resolve(registered));
         }
         if (!signal.aborted) {
           const why = `relay closed (${code}${reason.length ? ` ${reason.toString().slice(0, 64)}` : ""})`;

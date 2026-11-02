@@ -96,7 +96,7 @@ enum ShareSender {
             case .update(.state(let new)):
                 state = new
                 switch new {
-                case .unpaired, .pairingFailed: throw Failure.needsPairing
+                case .unpaired, .pairingExpired, .pairingFailed: throw Failure.needsPairing
                 case .updateRequired: throw Failure.needsUpdate
                 default: break
                 }

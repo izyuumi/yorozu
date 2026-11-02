@@ -8,6 +8,7 @@ Two implementations of one protocol, sharing limits, envelope parsing and close 
 |---|---|---|
 | Rooms | One Durable Object `Room` per room, routed on `?room=` | In memory, room taken from the key; `?room=` ignored |
 | State | Durable Object storage: known devices, tokens, buffer, push tokens | Memory only: lost on restart |
+| Retention | One alarm per room: a room with no connection for 30 days is deleted down to an expired marker (kept 180 days, closes `4010 pairing expired`); a device idle 180 days is forgotten ([contract](../../docs/ios-relay-contract.md#relay)) | None |
 | Flow control | `flowBytes` on each frame, devices answer `flowAck` | The socket's send buffer |
 | APNs | Sends alerts and background pushes (`src/apns.ts`) when its secrets are set | None: `notify` is checked and dropped |
 | Mailboxes (Mac pairing) | `Mailbox` Durable Object, `/mailbox/<id>` (`src/mailbox.ts`) | None |
