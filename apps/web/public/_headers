@@ -7,3 +7,9 @@
 
 /.well-known/apple-app-site-association
   Content-Type: application/json
+
+/llms.txt
+  Content-Type: text/plain; charset=utf-8
+
+/llm.txt
+  Content-Type: text/plain; charset=utf-8

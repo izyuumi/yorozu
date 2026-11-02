@@ -1,0 +1,28 @@
+# Yorozu
+
+> Yorozu is an end-to-end-encrypted chat channel for OpenClaw: a native app for iPhone, iPad and Mac that talks to your own OpenClaw agent.
+
+OpenClaw runs the agent, sessions, memory and cron; Yorozu only carries messages.
+Mac: macOS 15 or later. iPhone and iPad: on the App Store, iOS 18 or later. Needs your own OpenClaw Gateway. Open source, MIT.
+
+## Website
+
+- [Home](https://yorozu.yumi.to/): what Yorozu is, how to set it up and get the apps
+- [Support](https://yorozu.yumi.to/support/): how to get help and what to include in a report
+- [Privacy](https://yorozu.yumi.to/privacy/): what data Yorozu handles and where it goes
+- [Terms](https://yorozu.yumi.to/terms/): terms of use
+
+## Apps
+
+- [iPhone and iPad](https://apps.apple.com/app/id6811274963): App Store listing
+- [Mac](https://yorozu.yumi.to/mac): download the latest Mac app
+
+## Docs
+
+- [GitHub repository](https://github.com/izyuumi/yorozu): source code
+- [README](https://github.com/izyuumi/yorozu/blob/main/README.md): overview, components, install and build
+- [Setup](https://github.com/izyuumi/yorozu/blob/main/docs/setup.md): plugin install, config keys, pairing and troubleshooting
+- [Architecture](https://github.com/izyuumi/yorozu/blob/main/docs/architecture.md): plugin, relay and client, and the message flow
+- [Plugin](https://github.com/izyuumi/yorozu/blob/main/plugins/openclaw-yorozu/README.md): the OpenClaw channel plugin
+- [Help MCP server](https://github.com/izyuumi/yorozu/blob/main/docs/help-mcp.md): read-only MCP server for AI agents
+- [Help MCP endpoint](https://yorozu.yumi.to/mcp): the help MCP server, hosted
