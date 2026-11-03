@@ -4,10 +4,8 @@ import { env, runDurableObjectAlarm, runInDurableObject, SELF } from "cloudflare
 import { afterEach, expect, test, vi } from "vitest";
 import {
   AUTH_TIMEOUT_MS,
-  CLOSE_EXPIRED,
+  CLOSE_HOST_OFFLINE,
   CLOSE_POLICY,
-  DEVICE_IDLE_TTL_MS,
-  EXPIRED_MARKER_TTL_MS,
   MAX_DEVICES,
   NOTIFY_BODY,
   ROOM_IDLE_TTL_MS,
@@ -1190,19 +1188,20 @@ const quiet = (name: string, open = 0) =>
     await (instance as unknown as { tail: Promise<unknown> }).tail;
   }));
 
-/** As if `ms` passed with nobody connecting: every retention time moves back. */
+/** As if `ms` passed with nobody connecting: every stored time moves back. */
 const age = (name: string, ms: number) =>
   runInDurableObject(room(name), async (_instance, state) => {
     const storage = state.storage;
     const seen = await storage.get<number>("seen");
     if (seen !== undefined) await storage.put("seen", seen - ms);
     for (const [key, at] of await storage.list<number>({ prefix: "p:" })) await storage.put(key, at - ms);
-    const gone = await storage.get<{ at: number }>("gone");
-    if (gone) await storage.put("gone", { ...gone, at: gone.at - ms });
   });
 
 const stored = (name: string) =>
   runInDurableObject(room(name), async (_instance, state) => [...(await state.storage.list()).keys()]);
+
+const contents = (name: string) =>
+  runInDurableObject(room(name), async (_instance, state) => Object.fromEntries(await state.storage.list()));
 
 const alarmAt = (name: string) =>
   runInDurableObject(room(name), (_instance, state) => state.storage.getAlarm());
@@ -1218,11 +1217,11 @@ async function abandoned() {
   return setup;
 }
 
-async function expired() {
+async function wiped() {
   const setup = await abandoned();
   await age(setup.room, ROOM_IDLE_TTL_MS);
   expect(await runDurableObjectAlarm(room(setup.room))).toBe(true);
-  expect(await stored(setup.room)).toEqual(["gone"]);
+  expect(await stored(setup.room)).toEqual([]);
   return setup;
 }
 
@@ -1245,8 +1244,8 @@ test("a room nobody connects to is deleted with everything stored for it at 30 d
 
   await age(name, DAY_MS);
   expect(await runDurableObjectAlarm(room(name))).toBe(true);
-  expect(await stored(name)).toEqual(["gone"]);
-  expect(await alarmAt(name)).toBeGreaterThan(Date.now() + EXPIRED_MARKER_TTL_MS - DAY_MS);
+  expect(await stored(name)).toEqual([]);
+  expect(await alarmAt(name)).toBeNull();
 });
 
 test.each(["register", "join"])("a %s on day 20 moves the deletion to day 50", async (kind) => {
@@ -1262,18 +1261,79 @@ test.each(["register", "join"])("a %s on day 20 moves the deletion to day 50", a
   expect(await stored(name)).toContain(`p:${keys.pub}`);
   await age(name, DAY_MS);
   expect(await runDurableObjectAlarm(room(name))).toBe(true);
-  expect(await stored(name)).toEqual(["gone"]);
+  expect(await stored(name)).toEqual([]);
 });
 
-test("a second alarm after deletion changes nothing, and the marker goes after its own time with no alarm left", async () => {
-  const { room: name } = await expired();
+test("a wiped room rebuilds itself: its host registers and announces, and the device rejoins with no token", async () => {
+  const { macKeys, keys, room: name } = await wiped();
   await runInDurableObject(room(name), (instance) => (instance as Room).alarm());
-  expect(await stored(name)).toEqual(["gone"]);
+  expect(await stored(name)).toEqual([]);
 
-  await age(name, EXPIRED_MARKER_TTL_MS);
+  const mac = await connectMac(macKeys);
+  expect(await stored(name)).toEqual(expect.arrayContaining(["owner", "seen"]));
+  mac.send({ type: "devices", devices: [keys.pub] });
+  const phone = await rejoin(name, keys);
+  expect(await phone.next()).toMatchObject({ type: "joined", ownerOnline: true });
+  await frame(phone, "YWZ0ZXItd2lwZQ", keys);
+  expect(await mac.next()).toMatchObject({ type: "frame", payload: "YWZ0ZXItd2lwZQ" });
+});
+
+test("a device that comes back to a wiped room first is told the host is offline, and gets in once it announced", async () => {
+  const { macKeys, keys, room: name } = await wiped();
+  const early = await rejoin(name, keys);
+  expect(await early.closed()).toBe(CLOSE_HOST_OFFLINE);
+  expect(await early.closedReason()).toBe("host offline");
+
+  const mac = await connectMac(macKeys);
+  expect(await (await rejoin(name, keys)).closedReason()).toBe("host offline");
+  mac.send({ type: "devices", devices: [keys.pub] });
+  expect(await (await rejoin(name, keys)).next()).toMatchObject({ type: "joined" });
+});
+
+test("a wiped room stays unsure if its host disconnects before announcing, then rebuilds on announce", async () => {
+  const { macKeys, keys, room: name } = await wiped();
+  const first = await connectMac(macKeys);
+  first.close();
+  await quiet(name);
+
+  const early = await rejoin(name, keys);
+  expect(await early.closed()).toBe(CLOSE_HOST_OFFLINE);
+  expect(await early.closedReason()).toBe("host offline");
+
+  const mac = await connectMac(macKeys);
+  mac.send({ type: "devices", devices: [keys.pub] });
+  expect(await (await rejoin(name, keys)).next()).toMatchObject({ type: "joined", ownerOnline: true });
+});
+
+test("another key cannot register a wiped room", async () => {
+  const { room: name } = await wiped();
+  const squatter = await keypair();
+  const socket = await connect(name);
+  const { nonce } = await socket.next();
+  socket.send({ type: "register", pubkey: squatter.pub, nonceSig: await sign(nonce, squatter) });
+  expect(await socket.closed()).toBe(4001);
+  expect(await socket.closedReason()).toBe("wrong room");
+  expect(await stored(name)).not.toContain("owner");
+});
+
+test("an older relay's `gone` marker is deleted when its alarm runs, and nothing is armed for it again", async () => {
+  const name = fakeRoom("legacy-gone");
+  await runInDurableObject(room(name), async (_instance, state) => {
+    await state.storage.put("gone", { at: Date.now() - DAY_MS, told: true });
+    await state.storage.setAlarm(Date.now() + DAY_MS);
+  });
   expect(await runDurableObjectAlarm(room(name))).toBe(true);
   expect(await stored(name)).toEqual([]);
   expect(await alarmAt(name)).toBeNull();
+});
+
+test("an alarm that runs early in a live room deletes nothing but a leftover marker", async () => {
+  const { room: name } = await abandoned();
+  const before = await contents(name);
+  await runInDurableObject(room(name), (_instance, state) => state.storage.put("gone", { at: Date.now() }));
+  expect(await runDurableObjectAlarm(room(name))).toBe(true);
+  expect(await contents(name)).toEqual(before);
+  expect(await alarmAt(name)).toBeLessThanOrEqual((before.seen as number) + ROOM_IDLE_TTL_MS);
 });
 
 test("a register already in flight when the deadline alarm runs keeps the room", async () => {
@@ -1293,7 +1353,7 @@ test("a register already in flight when the deadline alarm runs keeps the room",
 
 test("an open hibernated socket keeps the room and its device, however long since it joined", async () => {
   const { mac, phone, keys, room: name } = await paired();
-  await age(name, DEVICE_IDLE_TTL_MS);
+  await age(name, ROOM_IDLE_TTL_MS + DAY_MS);
   expect(await runDurableObjectAlarm(room(name))).toBe(true);
   expect(await stored(name)).toEqual(expect.arrayContaining([`p:${keys.pub}`, `push:${keys.pub}`]));
   mac.send({ type: "ping" });
@@ -1301,92 +1361,15 @@ test("an open hibernated socket keeps the room and its device, however long sinc
   await settled(phone);
 });
 
-test("a device idle for 180 days is dropped while the room lives on, and the host cannot announce it back", async () => {
-  const { mac, macKeys, phone: idle, keys: idleKeys, room: name } = await withActivity();
-  const { phone: active, keys: activeKeys } = await connectPhone(name, await mintToken(mac));
-  expect(await active.next()).toMatchObject({ type: "joined" });
-  idle.close();
-  await quiet(name, 2);
-
-  await age(name, DEVICE_IDLE_TTL_MS);
-  expect(await runDurableObjectAlarm(room(name))).toBe(true);
-  expect(await mac.next()).toEqual({ type: "expired", devices: [idleKeys.pub] });
-  const kept = await stored(name);
-  expect(kept).toContain(`p:${activeKeys.pub}`);
-  expect(kept).toContain("owner");
-  for (const prefix of ["p:", "push:", "activity:"]) expect(kept).not.toContain(prefix + idleKeys.pub);
-
-  const again = await connect(name);
-  const { nonce } = await again.next();
-  again.send({ type: "register", pubkey: macKeys.pub, nonceSig: await sign(nonce, macKeys) });
-  expect(await again.next()).toMatchObject({ type: "registered", expired: [idleKeys.pub] });
-  again.send({ type: "devices", devices: [idleKeys.pub, activeKeys.pub] });
-  await macSettled(again);
-  expect(await stored(name)).not.toContain(`p:${idleKeys.pub}`);
-  expect(await stored(name)).not.toContain("expired");
-  expect(await (await rejoin(name, idleKeys)).closedReason()).toBe("unknown device");
-});
-
-test("a host's `seen` restarts a device's 180-day clock", async () => {
-  const { mac, phone, keys, room: name } = await paired();
-  phone.close();
-  await quiet(name, 1);
-
-  await age(name, DEVICE_IDLE_TTL_MS - DAY_MS);
+test("an older plugin's `seen` is ignored: no reply, no close, nothing stored", async () => {
+  const { mac, keys, room: name } = await paired();
+  await age(name, DAY_MS);
+  // The mint that settles the socket stores a token; everything else must stay as it was.
+  const untokened = async () =>
+    Object.entries(await contents(name)).filter(([key]) => !key.startsWith("t:") && key !== "token-order");
+  const before = await untokened();
   mac.send({ type: "seen", devices: [keys.pub] });
-  await macSettled(mac);
-  await age(name, 2 * DAY_MS);
-  expect(await runDurableObjectAlarm(room(name))).toBe(true);
-  expect(await stored(name)).toContain(`p:${keys.pub}`);
-
-  await age(name, DEVICE_IDLE_TTL_MS - 2 * DAY_MS);
-  expect(await runDurableObjectAlarm(room(name))).toBe(true);
-  expect(await mac.next()).toEqual({ type: "expired", devices: [keys.pub] });
-  expect(await stored(name)).not.toContain(`p:${keys.pub}`);
-});
-
-test("`seen` for a key the room does not know creates nothing, and a malformed one is refused", async () => {
-  const { mac, room: name } = await paired();
-  const stranger = await keypair();
-  mac.send({ type: "seen", devices: [stranger.pub] });
-  await macSettled(mac);
-  expect(await stored(name)).not.toContain(`p:${stranger.pub}`);
-
   mac.send({ type: "seen", devices: ["short"] });
-  expect(await mac.closedReason()).toBe("bad seen");
-});
-
-test("a host that reports an expired device as `seen` can announce it back", async () => {
-  const { mac, phone: idle, keys: idleKeys, room: name } = await paired();
-  idle.close();
-  await quiet(name, 1);
-
-  await age(name, DEVICE_IDLE_TTL_MS);
-  expect(await runDurableObjectAlarm(room(name))).toBe(true);
-  expect(await mac.next()).toEqual({ type: "expired", devices: [idleKeys.pub] });
-  mac.send({ type: "seen", devices: [idleKeys.pub] });
-  mac.send({ type: "devices", devices: [idleKeys.pub] });
-  await macSettled(mac);
-  expect(await stored(name)).toContain(`p:${idleKeys.pub}`);
-  expect(await stored(name)).not.toContain("expired");
-  expect(await (await rejoin(name, idleKeys)).next()).toMatchObject({ type: "joined" });
-});
-
-test("after expiry a device is told its pairing expired, and so is the first host, once", async () => {
-  const { macKeys, keys, room: name } = await expired();
-  const device = await rejoin(name, keys);
-  expect(await device.closed()).toBe(CLOSE_EXPIRED);
-  expect(await device.closedReason()).toBe("pairing expired");
-
-  const told = await connect(name);
-  const { nonce } = await told.next();
-  told.send({ type: "register", pubkey: macKeys.pub, nonceSig: await sign(nonce, macKeys) });
-  expect(await told.closed()).toBe(CLOSE_EXPIRED);
-  expect(await told.closedReason()).toBe("pairing expired");
-
-  const mac = await connectMac(macKeys);
-  expect(await (await rejoin(name, keys)).closed()).toBe(CLOSE_EXPIRED);
-  const { phone } = await connectPhone(name, await mintToken(mac));
-  expect(await phone.next()).toMatchObject({ type: "joined" });
-  expect(await stored(name)).not.toContain("gone");
+  expect(await mintToken(mac)).toEqual(expect.any(String));
+  expect(await untokened()).toEqual(before);
 });

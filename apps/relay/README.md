@@ -8,7 +8,8 @@ Two implementations of one protocol, sharing limits, envelope parsing and close 
 |---|---|---|
 | Rooms | One Durable Object `Room` per room, routed on `?room=` | In memory, room taken from the key; `?room=` ignored |
 | State | Durable Object storage: known devices, tokens, buffer, push tokens | Memory only: lost on restart |
-| Retention | One alarm per room: a room with no connection for 30 days is deleted down to an expired marker (kept 180 days, closes `4010 pairing expired`); a device idle 180 days is forgotten ([contract](../../docs/ios-relay-contract.md#relay)) | None |
+| Retention | One alarm per room: a room with no connection for 30 days is deleted outright, and its host rebuilds it on its next `register` and `devices` announce; no device is dropped for idling ([contract](../../docs/ios-relay-contract.md#relay)) | None |
+| Nonce join of an unknown device | `4011 host offline` while no announce is stored since creation or wipe (even if the host registered then disconnected), or a connected host hasn't announced on its current socket, else `4001 unknown device`. Older rooms retry until the host's next announce. | `4011 host offline` until the host announces after a relay start or a new registration, else `4001 unknown device` |
 | Flow control | `flowBytes` on each frame, devices answer `flowAck` | The socket's send buffer |
 | APNs | Sends alerts and background pushes (`src/apns.ts`) when its secrets are set | None: `notify` is checked and dropped |
 | Mailboxes (Mac pairing) | `Mailbox` Durable Object, `/mailbox/<id>` (`src/mailbox.ts`) | None |

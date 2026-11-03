@@ -147,30 +147,31 @@ test('every translation has the English text\'s shape, links, tags and code, and
   assert.equal(strings.ja.name, 'よろず Yorozu');
 });
 
-// Per language: the age rule (17, the App Store rating) in privacy and terms, the controller statement, the relay's 30-day room and 180-day device expiry, and the old
-// "continuing to use means you accept" sentence, which the terms replaced with 30 days' notice.
+// Per language: the age rule (17, the App Store rating) in privacy and terms, the controller statement, the relay's 30-day room deletion, that pairing
+// survives it (no 180-day device expiry any more), and the old "continuing to use means you accept" sentence, which the terms replaced with 30 days' notice.
 const legal = {
-  en: { age: 'under 17', controller: 'Yumi Izumi, an individual in Japan, is the controller (operator)', room: 'deleted after 30 days', device: 'deleted after 180 days', accept: 'Continuing to use Yorozu after an update' },
-  ja: { age: '17 歳未満', controller: '日本在住の個人である Yumi Izumi', room: '30 日間ない場合は削除', device: '180 日間ない場合に削除', accept: '使い続けることは、その更新に同意' },
-  'zh-Hans': { age: '17 岁以下', controller: '居住在日本的个人 Yumi Izumi', room: '连续 30 天没有连接', device: '连续 180 天没有连接后删除', accept: '更新后继续使用 Yorozu 即表示' },
-  'zh-Hant': { age: '17 歲以下', controller: '居住在日本的個人 Yumi Izumi', room: '連續 30 天沒有連線', device: '連續 180 天沒有連線後刪除', accept: '更新後繼續使用 Yorozu' },
-  ko: { age: '17세 미만', controller: '일본에 거주하는 개인인 Yumi Izumi', room: '30일 동안 연결하지 않으면 삭제', device: '180일 동안 연결하지 않으면 삭제', accept: '계속 사용하면 업데이트에 동의' },
-  es: { age: 'menores de 17 años', controller: 'Yumi Izumi, una persona física en Japón', room: 'tras 30 días sin ninguna conexión', device: 'tras 180 días sin que ese dispositivo', accept: 'Seguir usando Yorozu después' },
-  fr: { age: 'moins de 17 ans', controller: 'Yumi Izumi, une personne physique au Japon', room: 'après 30 jours sans aucune connexion', device: 'après 180 jours sans connexion', accept: 'Continuer à utiliser Yorozu après' },
-  de: { age: 'unter 17 Jahren', controller: 'Yumi Izumi, eine Privatperson in Japan', room: 'nach 30 Tagen gelöscht', device: 'nach 180 Tagen ohne Verbindung', accept: 'nach einer Aktualisierung weiter nutzt' },
-  'pt-BR': { age: 'menores de 17 anos', controller: 'Yumi Izumi, uma pessoa física no Japão', room: 'após 30 dias sem nenhuma conexão', device: 'após 180 dias sem que esse dispositivo', accept: 'Continuar usando o Yorozu depois' },
+  en: { age: 'under 17', controller: 'Yumi Izumi, an individual in Japan, is the controller (operator)', room: 'deleted after 30 days', rejoin: 'with no need to pair again', accept: 'Continuing to use Yorozu after an update' },
+  ja: { age: '17 歳未満', controller: '日本在住の個人である Yumi Izumi', room: '30 日間ない場合は削除', rejoin: 'ペアリングし直す必要はありません', accept: '使い続けることは、その更新に同意' },
+  'zh-Hans': { age: '17 岁以下', controller: '居住在日本的个人 Yumi Izumi', room: '连续 30 天没有连接', rejoin: '无需重新配对', accept: '更新后继续使用 Yorozu 即表示' },
+  'zh-Hant': { age: '17 歲以下', controller: '居住在日本的個人 Yumi Izumi', room: '連續 30 天沒有連線', rejoin: '不需要重新配對', accept: '更新後繼續使用 Yorozu' },
+  ko: { age: '17세 미만', controller: '일본에 거주하는 개인인 Yumi Izumi', room: '30일 동안 연결하지 않으면 삭제', rejoin: '다시 페어링할 필요가 없습니다', accept: '계속 사용하면 업데이트에 동의' },
+  es: { age: 'menores de 17 años', controller: 'Yumi Izumi, una persona física en Japón', room: 'tras 30 días sin ninguna conexión', rejoin: 'sin tener que emparejarlos de nuevo', accept: 'Seguir usando Yorozu después' },
+  fr: { age: 'moins de 17 ans', controller: 'Yumi Izumi, une personne physique au Japon', room: 'après 30 jours sans aucune connexion', rejoin: 'sans qu’il faille les jumeler à nouveau', accept: 'Continuer à utiliser Yorozu après' },
+  de: { age: 'unter 17 Jahren', controller: 'Yumi Izumi, eine Privatperson in Japan', room: 'nach 30 Tagen gelöscht', rejoin: 'ohne dass du sie neu koppeln musst', accept: 'nach einer Aktualisierung weiter nutzt' },
+  'pt-BR': { age: 'menores de 17 anos', controller: 'Yumi Izumi, uma pessoa física no Japão', room: 'após 30 dias sem nenhuma conexão', rejoin: 'sem precisar emparelhar de novo', accept: 'Continuar usando o Yorozu depois' },
 };
 
 test('every language states the age rule, names the controller and the relay expiry, names no company, and drops the acceptance-by-use sentence', async () => {
   assert.deepEqual(Object.keys(legal).sort(), locales.map(({ code }) => code).sort());
   for (const { code } of locales) {
     const t = strings[code];
-    const { age, controller, room, device, accept } = legal[code];
+    const { age, controller, room, rejoin, accept } = legal[code];
     for (const body of [t.privacy.body, t.terms.body]) assert.ok(body.includes(age), `${code}: ${age}`);
-    for (const text of [controller, room, device]) assert.ok(t.privacy.body.includes(text), `${code} privacy: ${text}`);
+    for (const text of [controller, room, rejoin]) assert.ok(t.privacy.body.includes(text), `${code} privacy: ${text}`);
+    assert.ok(!t.privacy.body.includes('180'), `${code} privacy still names a 180-day limit`);
     assert.ok(!t.terms.body.includes(accept), `${code} terms still says: ${accept}`);
     const html = await readFile(distFile(localePath(code, '/privacy/')), 'utf8');
-    for (const text of [controller, room, device]) assert.ok(html.includes(text), `${code} built privacy page: ${text}`);
+    for (const text of [controller, room, rejoin]) assert.ok(html.includes(text), `${code} built privacy page: ${text}`);
     for (const page of ['/privacy/', '/terms/', '/support/', '/']) {
       const built = await readFile(distFile(localePath(code, page)), 'utf8');
       assert.doesNotMatch(built, /株式会社|\bELM\b/, `${code}${page}`);

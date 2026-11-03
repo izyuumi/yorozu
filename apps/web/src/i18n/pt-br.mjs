@@ -105,7 +105,7 @@ export default {
   <p>Seus dispositivos chegam ao seu Gateway por um relay que operamos na Cloudflare, em <code>relay.yumi.to</code>. Você também pode rodar o seu. Suas mensagens, anexos e prévias de notificação são criptografados de ponta a ponta (um handshake Noise IK com X25519 a cada conexão e, depois, ChaCha20-Poly1305) antes de chegar ao relay, e o relay não tem nenhuma chave para descriptografá-los. O relay trata:</p>
   <ul>
     <li><strong>Chaves públicas</strong> do seu Gateway e dos dispositivos emparelhados, e um identificador de sala derivado da chave do seu Gateway, para verificar se um dispositivo pode entrar e se cada mensagem vem dele.</li>
-    <li><strong>Quando cada dispositivo se conectou pela última vez</strong>, para apagar os registros de dispositivos que deixam de se conectar.</li>
+    <li><strong>Quando a sala e cada dispositivo se conectaram pela última vez</strong>, para apagar salas que ninguém usa e, quando já há 16 dispositivos emparelhados, os registros do que está há mais tempo sem se conectar.</li>
     <li><strong>Tokens push</strong>: os tokens push da Apple dos seus dispositivos, para acordá-los com notificações, e o token push de uma Atividade ao Vivo, para atualizá-la.</li>
     <li><strong>Mensagens criptografadas</strong> dos seus dispositivos, guardadas enquanto o seu Gateway está offline para chegarem a ele depois: por até 24 horas e no máximo 5 MiB, e depois apagadas. Nada do que o seu Gateway envia é guardado.</li>
     <li><strong>Anexos criptografados</strong>, repassados em partes criptografadas de ponta a ponta. O relay vê o tamanho e o horário deles.</li>
@@ -117,7 +117,7 @@ export default {
   </ul>
 
   <h2>Por quanto tempo o relay guarda dados</h2>
-  <p>Os dados de emparelhamento no relay são mantidos até você desemparelhar, ou apagados após 30 dias sem nenhuma conexão à sala a partir dos seus dispositivos ou do seu Gateway. Os registros de um dispositivo são apagados após 180 dias sem que esse dispositivo se conecte. Mensagens em espera são guardadas por no máximo 24 horas, tokens de emparelhamento por 10 minutos e a caixa postal de emparelhamento do Mac por 10 minutos.</p>
+  <p>Os dados de emparelhamento no relay são mantidos até você desemparelhar, ou apagados após 30 dias sem nenhuma conexão à sala a partir dos seus dispositivos ou do seu Gateway. O emparelhamento em si fica guardado nos seus próprios dispositivos e no seu Gateway, então, quando o relay apaga uma sala, eles se reconectam sozinhos, sem precisar emparelhar de novo. Mensagens em espera são guardadas por no máximo 24 horas, tokens de emparelhamento por 10 minutos e a caixa postal de emparelhamento do Mac por 10 minutos.</p>
 
   <h2>Notificações</h2>
   <p>As notificações push são entregues pela Apple. Cada notificação de mensagem traz uma prévia da resposta (o título da conversa e a primeira linha, no máximo 256 bytes), criptografada só para o seu dispositivo; o seu dispositivo a abre. Nas mensagens e prévias de notificação, o relay e a Apple veem apenas a caixa criptografada.</p>

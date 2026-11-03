@@ -60,6 +60,7 @@ test("host push refresh keeps the oldest device when a new token join evicts the
   const macKeys = keypair();
   const mac = await connectMac(relay.port, macKeys);
   peers.push(mac);
+  mac.send({ type: "devices", devices: [] });
   const room = roomId(macKeys.pub);
   const devices = [];
   for (let i = 0; i < MAX_DEVICES; i++) {
@@ -89,6 +90,7 @@ test("host push for an unknown device does not allow it to rejoin", async () => 
   const mac = await connectMac(relay.port, macKeys);
   peers.push(mac);
   const unknown = keypair();
+  mac.send({ type: "devices", devices: [] });
   mac.send({ type: "push", device: unknown.pub, token: "a".repeat(64) });
   mac.send({ type: "ping" });
   expect(await mac.next()).toEqual({ type: "pong" });

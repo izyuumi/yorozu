@@ -228,7 +228,6 @@ struct ConversationsView: View {
     private var problem: String? {
         switch model.state {
         case .unpaired: String(localized: "The host removed this device. Pair again to keep chatting.")
-        case .pairingExpired: String(localized: "Pairing expired. Pair again.")
         case .updateRequired: String(localized: "The host speaks a newer version. Update Yorozu.")
         default: nil
         }

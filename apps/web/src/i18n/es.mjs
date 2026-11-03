@@ -105,7 +105,7 @@ export default {
   <p>Tus dispositivos llegan a tu Gateway a través de un relé que operamos en Cloudflare, en <code>relay.yumi.to</code>. También puedes ejecutar el tuyo. Tus mensajes, archivos adjuntos y vistas previas de notificaciones se cifran de extremo a extremo (un handshake Noise IK con X25519 en cada conexión y, después, ChaCha20-Poly1305) antes de llegar al relé, y el relé no tiene ninguna clave para descifrarlos. El relé procesa:</p>
   <ul>
     <li><strong>Claves públicas</strong> de tu Gateway y de los dispositivos emparejados, y un identificador de sala derivado de la clave de tu Gateway, para comprobar que un dispositivo puede unirse y que cada mensaje viene de él.</li>
-    <li><strong>Cuándo se conectó cada dispositivo por última vez</strong>, para eliminar los registros de los dispositivos que dejan de conectarse.</li>
+    <li><strong>Cuándo se conectaron por última vez la sala y cada dispositivo</strong>, para eliminar las salas que nadie usa y, cuando ya hay 16 dispositivos emparejados, los registros del que lleva más tiempo sin conectarse.</li>
     <li><strong>Tokens push</strong>: los tokens push de Apple de tus dispositivos, para despertarlos con notificaciones, y el token push de una actividad en vivo, para actualizarla.</li>
     <li><strong>Mensajes cifrados</strong> de tus dispositivos, guardados mientras tu Gateway está desconectado para que le lleguen después: hasta 24 horas y 5 MiB como máximo, y luego eliminados. No se guarda nada de lo que envía tu Gateway.</li>
     <li><strong>Archivos adjuntos cifrados</strong>, que pasan en fragmentos cifrados de extremo a extremo. El relé ve su tamaño y su momento.</li>
@@ -117,7 +117,7 @@ export default {
   </ul>
 
   <h2>Cuánto tiempo guarda datos el relé</h2>
-  <p>Los datos de emparejamiento en el relé se conservan hasta que desemparejes, o se eliminan tras 30 días sin ninguna conexión a la sala desde tus dispositivos ni desde tu Gateway. Los registros de un dispositivo se eliminan tras 180 días sin que ese dispositivo se conecte. Los mensajes en espera se guardan 24 horas como máximo, los tokens de emparejamiento 10 minutos y el buzón de emparejamiento del Mac 10 minutos.</p>
+  <p>Los datos de emparejamiento en el relé se conservan hasta que desemparejes, o se eliminan tras 30 días sin ninguna conexión a la sala desde tus dispositivos ni desde tu Gateway. El emparejamiento en sí se guarda en tus propios dispositivos y en tu Gateway, así que, cuando el relé elimina una sala, se vuelven a conectar solos, sin tener que emparejarlos de nuevo. Los mensajes en espera se guardan 24 horas como máximo, los tokens de emparejamiento 10 minutos y el buzón de emparejamiento del Mac 10 minutos.</p>
 
   <h2>Notificaciones</h2>
   <p>Apple entrega las notificaciones push. Cada notificación de mensaje lleva una vista previa de la respuesta (el título de la conversación y su primera línea, 256 bytes como máximo), cifrada solo para tu dispositivo; tu dispositivo la abre. En los mensajes y las vistas previas de notificaciones, el relé y Apple solo ven la caja cifrada.</p>
