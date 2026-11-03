@@ -1,6 +1,7 @@
 // The direct path (capability `direct`, #532 step 3): the plugin's own WebSocket listener on private addresses, and the
 // probe that proves the host key before a device sends its Noise init. Imports only node built-ins and the pure wire and
 // hub files; the WebSocket server is injected, so `node --test` and the relay's end-to-end test run it without OpenClaw.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { isIP } from "node:net";
 import type { NetworkInterfaceInfo } from "node:os";
 import { CLOSE, type Hub, type Link, type Log } from "./hub.js";
@@ -116,6 +117,8 @@ export async function serveDirect(opts: DirectOptions): Promise<DirectListener> 
   let pending = 0;
 
   const accept = (ws: DirectSocket, origin: unknown, host: string): void => {
+    // Accepted socket events lose the plugin instance's async scope, which OpenClaw's runtime store needs.
+    const inScope = AsyncLocalStorage.snapshot();
     sockets.set(ws, host);
     let counted = true;
     pending++;
@@ -141,13 +144,13 @@ export async function serveDirect(opts: DirectOptions): Promise<DirectListener> 
     const idle = setTimeout(() => ws.terminate(), IDLE_MS);
     deadline.unref();
     idle.unref();
-    ws.on("close", () => {
+    ws.on("close", () => inScope(() => {
       clearTimeout(deadline);
       clearTimeout(idle);
       settle();
       sockets.delete(ws);
       hub.detach(link);
-    });
+    }));
     ws.on("error", (error: Error) => log?.info(`yorozu: direct socket error: ${error.message}`));
     // A browser page could reach loopback; the app sends no Origin.
     if (origin !== undefined) return refuse("browser origin");
@@ -208,9 +211,9 @@ export async function serveDirect(opts: DirectOptions): Promise<DirectListener> 
       await hub.handle(opened);
     };
     let queue = Promise.resolve();
-    ws.on("message", (data: unknown, binary: boolean) => {
+    ws.on("message", (data: unknown, binary: boolean) => inScope(() => {
       queue = queue.then(() => receive(data, binary)).catch((error: unknown) => log?.warn(`yorozu: direct message failed: ${String(error)}`));
-    });
+    }));
   };
 
   // `ws` closes a message over `maxPayload` with 1009 before the plugin sees it; up to that, oversized ones get 4103.
