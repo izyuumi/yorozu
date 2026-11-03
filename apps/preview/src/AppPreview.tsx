@@ -81,7 +81,7 @@ export const AppPreview = ({ locale }: Props) => {
             left: MARGIN,
             right: MARGIN,
             borderRadius: 40,
-            padding: "28px 32px",
+            padding: "28px 24px",
             minHeight: 204,
             boxSizing: "border-box",
             display: "flex",
@@ -93,8 +93,18 @@ export const AppPreview = ({ locale }: Props) => {
             opacity: presence(frame, run.from, run.to),
           }}
         >
+          {/* A "\n" in a caption is a line break: Japanese has no spaces to wrap at. */}
           {caption && (
-            <div style={{ fontSize: 64, fontWeight: 700, lineHeight: 1.15, textWrap: "balance", opacity: presence(frame, caption.from, caption.to) }}>
+            <div
+              style={{
+                fontSize: locale === "ja" ? 60 : 64,
+                fontWeight: 700,
+                lineHeight: 1.15,
+                textWrap: "balance",
+                whiteSpace: "pre-line",
+                opacity: presence(frame, caption.from, caption.to),
+              }}
+            >
               {caption.text}
             </div>
           )}

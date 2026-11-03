@@ -38,7 +38,7 @@ for (const locale of locales) {
     ...audio, "-ar", "48000", "-ac", "2",
     "-movflags", "+faststart", final,
   ]);
-  run("ffmpeg", ["-y", "-hide_banner", "-loglevel", "warning", "-i", final, "-vf", "select=eq(n\\,150)", "-frames:v", "1", join(out, "poster-5s.png")]);
+  run("ffmpeg", ["-y", "-hide_banner", "-loglevel", "warning", "-i", final, "-vf", "select=eq(n\\,150)", "-frames:v", "1", "-update", "1", join(out, "poster-5s.png")]);
   rmSync(master);
   console.log(`${locale}: ${final}`);
 }

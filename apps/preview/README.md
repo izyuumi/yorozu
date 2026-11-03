@@ -18,8 +18,10 @@ scripts/app_preview_check.sh artifacts/app-preview/ja/yorozu-preview-886x1920.mp
 - **Capture** creates a throwaway iPhone 17 Pro Max simulator on the newest installed iOS runtime, sets the status
   bar to 9:41 with full bars and battery and light appearance, builds the Debug app for it (generated with
   `TUIST_VOICE_INPUT=0`, as simulator builds need), and per locale and scene launches the app with
-  `--preview-scene NAME` and records `simctl io recordVideo --codec=h264`. Each locale starts on a fresh boot, with
-  `lockscreen` last because it leaves the device locked. `KEEP_SIM=1` keeps the simulator; arguments pick locales
+  `--preview-scene NAME` and records `simctl io recordVideo --codec=h264`, normalized to 30 fps constant frame rate.
+  Each locale boots in its own system language (the Lock Screen and the widget follow it), and the two Lock Screen
+  takes go last: AXe presses Home and Lock, allows Live Activities once per boot before the first take, and swipes
+  up to unlock between them. `KEEP_SIM=1` keeps the simulator; arguments pick locales
   and scenes: `scripts/app_preview_capture.sh ja -- talk`. Footage, renders and clips are gitignored.
 - **Render** renders the `AppPreview` composition per locale (`{ locale: 'en-US' | 'ja' }`) and finishes it: H.264
   High 4.0, CBR 11 Mbps, yuv420p, 30 fps, a silent stereo AAC 256 kbps 48 kHz track (`aac_at` when ffmpeg has it),
@@ -40,14 +42,20 @@ presses its send and mic buttons. Only under the flag does demo mode stretch its
 "Tidy up Downloads" conversation, answer "backup", "go ahead" and "remind" (ja: バックアップ, お願い, リマインド)
 with the website demo's copy, allow the Live Activity, and hide TipKit tips. All of it is fictional demo content.
 
-Take times count from the recording's start, 2.0 s after launch (`PreviewScene.lead`); expect ±0.3 s.
+Take times count from the recording's start, 2.5 s after the app marks itself ready (`PreviewScene.lead`; the Lock
+Screen takes 6 s more); expect ±0.3 s.
+
+A locked Simulator suspends the app, so the app can't change the activity on the Lock Screen. The "needs you" beat is
+two takes instead: `lockscreen` (Tidy up Downloads working) dissolves into `needs-you` (the same rows, Tidy up
+Downloads needing you, re-sorted to the top) 4 s in. `--preview-epoch` gives both takes the same row times.
 
 | Scene | Take | Events (take seconds) | In-point | In the preview |
 | --- | --- | --- | --- | --- |
-| `hook` | 7 s | New chat with the backup question in the composer; sent 0.4, delivered ~1.0, tool row spins 2.0–3.6, answer 3.9 | 0.0 | 0.0–5.8 |
-| `lockscreen` | 9 s | Locked 1 s before recording, Live Activity: Tidy up Downloads and A weekend in Kyoto working, A calmer start to the day done; Tidy up Downloads needs you at ~4.2 | 0.0 | 5.4–12.6 (flip ~9.6) |
-| `approve` | 6 s | Tidy up Downloads open on the agent's question, "Go ahead" in the composer; sent 0.5, tool row 1.1–2.3, reply 2.5 | 0.0 | 12.2–16.8 |
-| `talk` | 10 s | New chat; mic pressed 0.8, recording to 4.6, "Transcribing…" bubble, message 5.2, tool row 5.8–7.0, reply 7.2 | 0.0 | 16.4–24.8 |
+| `hook` | 7 s | New chat with the backup question in the composer; sent 1.2, tool row, answer ~4.9 | 0.6 | 0.0–5.8 (answered by 4.4, the 5.0 s poster) |
+| `lockscreen` | 9 s | Locked; Live Activity: A weekend in Kyoto and Tidy up Downloads working, A calmer start to the day done | 0.0 | 5.4–9.8 |
+| `needs-you` | 9 s | The same Lock Screen with Tidy up Downloads needing you (Review / 確認) | 4.0 | 9.4–12.6 |
+| `approve` | 6 s | Tidy up Downloads open on the agent's question, "Go ahead" in the composer; sent 1.0, tool row, reply ~3 | 0.0 | 12.2–16.8 |
+| `talk` | 10 s | New chat; mic pressed 0.6, recording to 4.0, "Transcribing…", message, tool row, reply ~7 | 0.0 | 16.4–24.8 |
 | `list` | 6 s | The conversation list (demo conversations), still | 0.5 | 24.4–29.0 |
 
 ### Talk: the mic-button path, with a supplied transcript
