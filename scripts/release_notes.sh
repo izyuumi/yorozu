@@ -3,7 +3,9 @@
 # -beta tag), grouped by their Conventional Commits titles: feat, fix and perf, each with its PR number; other
 # types and dependency bumps are left out. A PR is a merge "Merge pull request #N from …" on main's first-parent
 # line, titled by the merge's body, or a squashed commit ending "(#N)"; a commit pushed straight to main counts by
-# its own subject.
+# its own subject. scripts/release_notes.overrides can retitle a PR or leave it out, for a PR a later one changed:
+# a line "#<n> <title>" shows <title> (a Conventional Commits title, which may end in its own "(#a, #b)") in place
+# of PR #<n>'s, and "#<n> -" drops PR #<n>.
 #
 #   scripts/release_notes.sh [<commit>]       Markdown: the beta and stable releases, the release PR, CHANGELOG.md
 #   scripts/release_notes.sh --what-to-test <locale> <version> <build> [<commit>]
@@ -26,10 +28,19 @@ if [ "${1:-}" = --what-to-test ]; then
     shift 4
 fi
 TO=${1:-HEAD}
+OVERRIDES=scripts/release_notes.overrides
 FROM=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-beta*' "$TO^" 2>/dev/null || true)
-git log --first-parent --format='%s%x1f%b%x1e' "${FROM:+$FROM..}$TO" | LC_ALL=C awk -v plain="$PLAIN" -v intro="$intro" -v note="$note" \
+git log --first-parent --format='%s%x1f%b%x1e' "${FROM:+$FROM..}$TO" | LC_ALL=C awk -v overrides="$OVERRIDES" -v plain="$PLAIN" -v intro="$intro" -v note="$note" \
     -v lfeat="$feat" -v lfix="$fix" -v lperf="$perf" -v lmore="$more" '
-    BEGIN { RS = "\036"; FS = "\037" }
+    BEGIN {
+        # Read before RS changes: one override per line, "#<n> <title>" or "#<n> -"; other lines are comments.
+        while ((getline o < overrides) > 0) {
+            if (!match(o, /^#[0-9]+ +[^ ]/)) continue
+            n = o; sub(/ .*/, "", n); t = o; sub(/^#[0-9]+ +/, "", t); sub(/ +$/, "", t); override[n] = t
+        }
+        close(overrides)
+        RS = "\036"; FS = "\037"
+    }
     {
         subject = $1; sub(/^\n+/, "", subject); body = $2; number = ""
         if (subject ~ /^Merge pull request #[0-9]+ from /) {
@@ -41,6 +52,11 @@ git log --first-parent --format='%s%x1f%b%x1e' "${FROM:+$FROM..}$TO" | LC_ALL=C 
             next
         } else {
             title = subject
+        }
+        if (number != "" && (number in override)) {
+            if (override[number] == "-") next
+            title = override[number]
+            if (match(title, / \(#[0-9]+(, #[0-9]+)*\)$/)) { number = substr(title, RSTART + 2, RLENGTH - 3); title = substr(title, 1, RSTART - 1) }
         }
         if (!match(title, /^[a-z]+(\([^)]*\))?!?: /)) next
         head = substr(title, 1, RLENGTH - 2); text = substr(title, RLENGTH + 1)
