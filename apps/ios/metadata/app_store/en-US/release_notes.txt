@@ -1,2 +1,6 @@
-• Voice input on iPhone and iPad now tells you plainly when the voice model isn’t available yet, instead of showing a system error.
-• A refreshed App Store page with a new look.
+• A Live Activity on the Lock Screen and in the Dynamic Island follows replies in progress, voice recordings and approvals that need you.
+• New widgets and Control Center controls, plus a Lock Screen button that starts a question right away.
+• Choose the voice input model, and keep a dictionary of your own words for voice input.
+• Yorozu now connects straight to your Gateway over Wi-Fi or Tailscale when it can, and uses the relay otherwise. Settings shows which connection is in use.
+• Yorozu for Mac can pair with the Gateway on the same Mac, with no code to type.
+• Even after a long break, your devices reconnect on their own, with no need to pair again.

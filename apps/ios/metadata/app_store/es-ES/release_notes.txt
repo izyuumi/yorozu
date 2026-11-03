@@ -1,2 +1,6 @@
-• La entrada de voz en el iPhone y el iPad ahora indica claramente cuándo el modelo de voz aún no está disponible, en lugar de mostrar un error del sistema.
-• Una página del App Store renovada, con un aspecto nuevo.
+• Una actividad en vivo en la pantalla de bloqueo y en la Dynamic Island muestra las respuestas en curso, las grabaciones de voz y las aprobaciones pendientes.
+• Nuevos widgets y controles para el centro de control, además de un botón en la pantalla de bloqueo para empezar a preguntar al instante.
+• Ahora puedes elegir el modelo de entrada de voz y guardar tus propias palabras en un diccionario para la entrada de voz.
+• Yorozu se conecta directamente al Gateway por Wi-Fi o Tailscale cuando es posible y, si no, usa el relay. En Ajustes puedes ver qué conexión está en uso.
+• Yorozu para Mac puede emparejarse con el Gateway del mismo Mac sin introducir ningún código.
+• Incluso tras una larga pausa, tus dispositivos se vuelven a conectar solos, sin tener que emparejarlos de nuevo.
