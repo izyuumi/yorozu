@@ -2,13 +2,14 @@
 // on a real `ws` server, a device built on the plugin's own Noise code, and the Node relay as the fallback path. What
 // OpenClaw adds around them (device storage, agent turns, the relay redial loop in `relay.ts`) is replaced by the
 // in-memory allowlist and the small relay host link below.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeAll, afterAll, expect, test } from "vitest";
 import { WebSocketServer } from "ws";
 import { serveDirect, verifyProbe, MAX_FRAME_BYTES, MAX_PENDING, type DirectListener } from "../../../plugins/openclaw-yorozu/src/direct.ts";
 import { encodeEvent, parseEvent, type Event, type Message, type PeerInfo } from "../../../plugins/openclaw-yorozu/src/envelope.ts";
-import { CLOSE, Hub, type Link } from "../../../plugins/openclaw-yorozu/src/hub.ts";
+import { CLOSE, Hub, type Link, type Log } from "../../../plugins/openclaw-yorozu/src/hub.ts";
 import {
   b64u,
   decodeFrame,
@@ -44,7 +45,7 @@ function newDevice() {
   return { signing: ed25519Keypair(), static: x25519Keypair() };
 }
 
-async function host(opts: { direct?: boolean; pendingMs?: number } = {}) {
+async function host(opts: { direct?: boolean; pendingMs?: number; getRuntime?: () => unknown; log?: Log } = {}) {
   const signing = ed25519Keypair();
   const keys = { static: x25519Keypair(), signing, room: roomId(signing.publicKey) };
   const allowlist = new Map<string, string>();
@@ -56,9 +57,16 @@ async function host(opts: { direct?: boolean; pendingMs?: number } = {}) {
   const hub = new Hub({
     keys,
     peerInfo: () => ({ ...local, capabilities: direct?.listening ? ["direct"] : [] }),
-    staticKeyOf: async (key) => allowlist.get(key),
-    onMessage: (message) => messages.push(message),
+    staticKeyOf: async (key) => {
+      opts.getRuntime?.();
+      return allowlist.get(key);
+    },
+    onMessage: (message) => {
+      opts.getRuntime?.();
+      messages.push(message);
+    },
     dispatch: async () => false,
+    log: opts.log,
   });
   if (opts.direct !== false) {
     direct = await serveDirect({
@@ -66,6 +74,7 @@ async function host(opts: { direct?: boolean; pendingMs?: number } = {}) {
       port: 0,
       keys,
       hub,
+      log: opts.log,
       ...(opts.pendingMs !== undefined && { pendingMs: opts.pendingMs }),
       server: (options) => {
         const server = new WebSocketServer(options);
@@ -213,6 +222,50 @@ test("a paired device probes, opens a session directly, sends a message and gets
   expect([...h.hub.direct()]).toEqual([b64u(device.signing.publicKey)]);
   socket.send({ type: "ping" });
   expect(await socket.next()).toEqual({ type: "pong" });
+});
+
+test("direct handshakes and messages retain the registered plugin instance runtime", async () => {
+  // Mirrors openclaw/plugin-sdk/runtime-store's instance-scoped slot; the global fallback stays unset.
+  type Slot = { runtime?: object };
+  const scope = new AsyncLocalStorage<Slot>();
+  const instance: Slot = {};
+  const global: Slot = {};
+  const setRuntime = (runtime: object) => { (scope.getStore() ?? global).runtime = runtime; };
+  const getRuntime = () => {
+    const runtime = (scope.getStore() ?? global).runtime;
+    if (!runtime) throw new Error("Yorozu runtime not initialised");
+    return runtime;
+  };
+  const warnings: string[] = [];
+  let fail: (error: Error) => void;
+  const failed = new Promise<never>((_, reject) => { fail = reject; });
+  const log: Log = {
+    info: () => {},
+    warn: (warning) => {
+      warnings.push(warning);
+      fail(new Error(warning));
+    },
+  };
+  const h = await scope.run(instance, async () => {
+    setRuntime({}); // Plugin registration precedes startAccount in the same instance scope.
+    return host({ getRuntime, log });
+  });
+  expect(() => getRuntime()).toThrow("Yorozu runtime not initialised");
+  const device = newDevice();
+  h.allow(device);
+  const link = await Promise.race([dialDirect(device, h), failed]);
+  expect(link).not.toBeNull();
+  const { socket, session, peer } = link!;
+  expect(peer.capabilities).toContain("direct");
+  expect([...h.hub.direct()]).toEqual([b64u(device.signing.publicKey)]);
+  const sent = message("instance runtime over direct");
+  const frame = framed(device, session.seal(encodeEvent({ kind: "message", data: sent })));
+  socket.send(frame);
+  expect(await Promise.race([socket.next(), failed])).toEqual({ type: "accepted", sig: frame.sig });
+  expect(open(session, await nextFrame(socket, h))).toEqual({ kind: "delivered", data: { convId: CONV, messageId: sent.messageId } });
+  await Promise.race([until(() => h.messages.length === 1), failed]);
+  expect(h.messages).toEqual([sent]);
+  expect(warnings).toEqual([]);
 });
 
 test("without the listener the device falls back to the relay and completes its session there", async () => {
