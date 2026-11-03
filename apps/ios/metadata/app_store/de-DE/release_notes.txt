@@ -1,2 +1,6 @@
-• Die Spracheingabe auf iPhone und iPad sagt jetzt klar, wenn das Sprachmodell noch nicht verfügbar ist, statt einen Systemfehler anzuzeigen.
-• Eine aufgefrischte App-Store-Seite in neuem Look.
+• Eine Live-Aktivität auf dem Sperrbildschirm und in der Dynamic Island zeigt laufende Antworten, Sprachaufnahmen und Freigaben, die noch eine Bestätigung brauchen.
+• Neue Widgets und Steuerelemente für das Kontrollzentrum, dazu eine Taste auf dem Sperrbildschirm, um sofort eine Frage zu stellen.
+• Das Modell für die Spracheingabe ist jetzt wählbar, und eigene Begriffe lassen sich in einem Wörterbuch für die Spracheingabe sichern.
+• Yorozu verbindet sich jetzt nach Möglichkeit direkt per WLAN oder Tailscale mit dem Gateway, sonst über das Relay. Die Einstellungen zeigen, welche Verbindung gerade genutzt wird.
+• Yorozu für Mac lässt sich ohne Code mit dem Gateway auf demselben Mac koppeln.
+• Auch nach einer längeren Pause verbinden sich die Geräte von selbst wieder, ohne erneutes Koppeln.

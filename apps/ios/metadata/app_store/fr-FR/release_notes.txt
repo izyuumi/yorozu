@@ -1,2 +1,6 @@
-• Sur iPhone et iPad, la saisie vocale indique désormais clairement quand le modèle vocal n’est pas encore disponible, au lieu d’afficher une erreur système.
-• Une page App Store repensée, avec une nouvelle apparence.
+• Une activité en direct sur l’écran verrouillé et dans la Dynamic Island suit les réponses en cours, les enregistrements vocaux et les approbations en attente.
+• De nouveaux widgets et commandes pour le centre de contrôle, ainsi qu’un bouton sur l’écran verrouillé pour poser une question tout de suite.
+• Vous pouvez désormais choisir le modèle de saisie vocale et enregistrer vos propres mots dans un dictionnaire pour la saisie vocale.
+• Yorozu se connecte désormais directement au Gateway en Wi-Fi ou via Tailscale quand c’est possible, et passe par le relais sinon. Les réglages indiquent la connexion utilisée.
+• Yorozu pour Mac peut se jumeler avec le Gateway du même Mac, sans code à saisir.
+• Même après une longue pause, vos appareils se reconnectent d’eux-mêmes, sans nouveau jumelage.
