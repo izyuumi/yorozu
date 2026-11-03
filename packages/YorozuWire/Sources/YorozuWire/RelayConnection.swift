@@ -17,8 +17,6 @@ public actor RelayConnection {
         case updateRequired
         case pairingFailed(String)
         case unpaired
-        /// The relay deleted the room after 30 days without a connection (close 4010): pair again.
-        case pairingExpired
     }
 
     public enum Update: Sendable {
@@ -290,12 +288,12 @@ public actor RelayConnection {
         }
     }
 
-    /// The state a relay close reason leaves for good, when it ends the pairing; an older app retries on "pairing expired".
+    /// The state a relay close reason leaves for good, when it ends the pairing. Anything else retries, among them
+    /// "host offline" (a wiped room its host has not rebuilt yet) and an older relay's "pairing expired".
     static func ended(by reason: String, relayKnows: Bool) -> State? {
         switch reason {
         case "revoked": .unpaired
         case "unknown device" where relayKnows: .unpaired
-        case "pairing expired": .pairingExpired
         default: nil
         }
     }

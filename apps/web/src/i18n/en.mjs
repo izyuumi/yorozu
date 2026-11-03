@@ -105,7 +105,7 @@ export default {
   <p>Your devices reach your Gateway through a relay we operate on Cloudflare at <code>relay.yumi.to</code>. You can also run your own. Your messages, attachments and notification previews are end-to-end encrypted (a Noise IK handshake with X25519 for every connection, then ChaCha20-Poly1305) before they reach the relay, and the relay has no key to decrypt them. The relay processes:</p>
   <ul>
     <li><strong>Public keys</strong> of your Gateway and paired devices, and a room identifier made from your Gateway's key, to check that each device may join and that each message comes from it.</li>
-    <li><strong>When each device last connected</strong>, to delete records of devices that stop connecting.</li>
+    <li><strong>When the room and each device last connected</strong>, to delete rooms nobody uses and, once 16 devices are paired, the records of the one that has gone longest without connecting.</li>
     <li><strong>Push tokens</strong>: your devices' Apple push tokens, to wake them with notifications, and a Live Activity's push token, to update the activity.</li>
     <li><strong>Encrypted messages</strong> from your devices, held while your Gateway is offline so they reach it later: up to 24 hours and at most 5 MiB, then deleted. Nothing your Gateway sends is held.</li>
     <li><strong>Encrypted attachments</strong>, passed through in end-to-end encrypted chunks. The relay sees their size and timing.</li>
@@ -117,7 +117,7 @@ export default {
   </ul>
 
   <h2>How long the relay keeps data</h2>
-  <p>Pairing data on the relay is kept until you unpair, or deleted after 30 days with no connection to the room from any of your devices or your Gateway. A single device's records are deleted after 180 days without that device connecting. Buffered messages are kept for at most 24 hours, pairing tokens for 10 minutes and the Mac pairing mailbox for 10 minutes.</p>
+  <p>Pairing data on the relay is kept until you unpair, or deleted after 30 days with no connection to the room from any of your devices or your Gateway. Your pairing itself is stored on your own devices and your Gateway, so after the relay deletes a room they reconnect on their own, with no need to pair again. Buffered messages are kept for at most 24 hours, pairing tokens for 10 minutes and the Mac pairing mailbox for 10 minutes.</p>
 
   <h2>Notifications</h2>
   <p>Push notifications are delivered by Apple. Each message notification carries a preview of the reply (the conversation title and its first line, at most 256 bytes), encrypted for your device alone; your device opens it. For messages and notification previews, the relay and Apple see only the encrypted box.</p>

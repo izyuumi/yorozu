@@ -474,7 +474,7 @@ public actor RacingConnection {
                 return await leg.stop()
             }
             switch new {
-            case .updateRequired, .unpaired, .pairingExpired, .pairingFailed:
+            case .updateRequired, .unpaired, .pairingFailed:
                 return await fail(new)
             default:
                 break

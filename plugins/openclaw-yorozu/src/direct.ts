@@ -96,8 +96,6 @@ export type DirectOptions = {
   /** `local_pair` (feature flag `local-pair`): writes the local pairing file and returns its path. Asked only on a
    * loopback listener. */
   localPair?: () => Promise<string>;
-  /** A device authenticated, or sent a box, over this path (its signing key, base64url). */
-  seen?: (deviceKey: string) => void;
   log?: Log;
 };
 
@@ -194,7 +192,6 @@ export async function serveDirect(opts: DirectOptions): Promise<DirectListener> 
         if (!(await hub.handshake(payload, sig, link))) return refuse("handshake refused");
         if (ws.readyState !== OPEN) return hub.detach(link);
         device = decoded.deviceSigningKey;
-        opts.seen?.(b64u(device));
         clearTimeout(deadline);
         return settle();
       }
@@ -207,8 +204,6 @@ export async function serveDirect(opts: DirectOptions): Promise<DirectListener> 
       if (decoded?.type !== "box") return;
       const opened = hub.open(decoded, link);
       if (!opened) return;
-      // A session can stay open for months; each box counts (the plugin reports at most once a day).
-      opts.seen?.(b64u(device));
       send(JSON.stringify({ type: "accepted", sig }));
       await hub.handle(opened);
     };

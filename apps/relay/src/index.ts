@@ -7,12 +7,14 @@ import {
   allowNotify,
   AUTH_TIMEOUT_MS,
   CLOSE_BAD_SIGNATURE,
+  CLOSE_HOST_OFFLINE,
   CLOSE_POLICY,
   CLOSE_PROTOCOL,
   CLOSE_RATE_LIMIT,
   dropCount,
   evictions,
   frameWire,
+  HOST_OFFLINE_REASON,
   newBucket,
   MAX_PAYLOAD_BYTES,
   PHONE_BUFFER_CAP_BYTES,
@@ -90,6 +92,8 @@ type Room = {
   phones: Set<WebSocket>;
   tokens: Map<string, number>;
   devices: Map<string, number>;
+  /** The current host announced its devices; until then a nonce join of an unknown device retries. */
+  announced: boolean;
   pushTokens: Map<string, string>;
   buffer: Buffered[];
   notifyWindow: NotifyWindow;
@@ -111,6 +115,7 @@ function newRoom(): Room {
     phones: new Set(),
     tokens: new Map(),
     devices: new Map(),
+    announced: false,
     pushTokens: new Map(),
     buffer: [],
     notifyWindow: { count: 0, startedAt: Date.now() },
@@ -297,6 +302,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           rooms.set(id, room);
           if (room.mac && room.mac !== ws) room.mac.close(CLOSE_PROTOCOL, "replaced");
           room.mac = ws;
+          room.announced = false;
           conn.role = "mac";
           conn.room = room;
           conn.roomId = id;
@@ -343,6 +349,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           if (!announced) return ws.close(CLOSE_PROTOCOL, "bad devices");
           const keep = new Set(announced.devices);
           const room = conn.room;
+          room.announced = true;
           for (const phone of room.phones) {
             const key = phoneKeys.get(phone);
             if (key) keep.add(key);
@@ -367,7 +374,11 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
             return ws.close(CLOSE_PROTOCOL, "bad pubkey");
           }
           if (token === undefined) {
-            if (!room.devices.has(phonePubkey)) return ws.close(CLOSE_PROTOCOL, "unknown device");
+            if (!room.devices.has(phonePubkey)) {
+              // Only the host's announce can say a device is unknown; until it has, the device retries.
+              if (!room.announced) return ws.close(CLOSE_HOST_OFFLINE, HOST_OFFLINE_REASON);
+              return ws.close(CLOSE_PROTOCOL, "unknown device");
+            }
             if (!verifySignature(conn.nonce, sig, key)) {
               return ws.close(CLOSE_BAD_SIGNATURE, "bad join signature");
             }

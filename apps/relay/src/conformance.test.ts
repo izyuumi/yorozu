@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { CLOSE_BAD_SIGNATURE, CLOSE_PROTOCOL, CLOSE_RATE_LIMIT, FRAMES_PER_SEC, MAX_DEVICES, TOKEN_TTL_MS } from "./protocol.js";
+import { CLOSE_BAD_SIGNATURE, CLOSE_HOST_OFFLINE, CLOSE_PROTOCOL, CLOSE_RATE_LIMIT, FRAMES_PER_SEC, MAX_DEVICES, TOKEN_TTL_MS } from "./protocol.js";
 
 export type Keys = { pub: string; sign(data: string): Promise<string> };
 
@@ -65,6 +65,8 @@ export function conformance(relay: Adapter) {
     const macKeys = await keypair();
     const room = await roomId(macKeys.pub);
     const mac = await connectMac(macKeys);
+    // As the plugin does after every `registered`: until it announces, the relay can't call a device unknown.
+    mac.send({ type: "devices", devices: [] });
     const { phone, keys } = await connectPhone(room, await mintToken(mac));
     expect(await phone.next()).toMatchObject({ type: "joined", ownerOnline: true });
     return { macKeys, room, mac, phone, keys };
@@ -177,10 +179,12 @@ export function conformance(relay: Adapter) {
     expect(await (await connectPhone(room, live)).phone.next()).toMatchObject({ type: "joined" });
   });
 
-  test("a join to a room nobody registered fails the same way, with or without a token", async () => {
+  test("a join to a room nobody registered: a token is unknown, a nonce join is told to retry", async () => {
     const room = await roomId((await keypair()).pub);
     expect(await (await connectPhone(room, "no-such-token")).phone.closed()).toBe(CLOSE_PROTOCOL);
-    expect(await (await rejoinPhone(room, await keypair())).closed()).toBe(CLOSE_PROTOCOL);
+    const early = await rejoinPhone(room, await keypair());
+    expect(await early.closed()).toBe(CLOSE_HOST_OFFLINE);
+    expect(await early.closedReason()).toBe("host offline");
   });
 
   test("a known device rejoins against the nonce, with no second token", async () => {
@@ -465,11 +469,22 @@ export function conformance(relay: Adapter) {
     const mac = await connectMac(macKeys);
     const phoneKeys = await keypair();
 
-    expect(await (await rejoinPhone(room, phoneKeys)).closed()).toBe(CLOSE_PROTOCOL);
+    const early = await rejoinPhone(room, phoneKeys);
+    expect(await early.closed()).toBe(CLOSE_HOST_OFFLINE);
+    expect(await early.closedReason()).toBe("host offline");
 
     mac.send({ type: "devices", devices: [phoneKeys.pub] });
     const phone = await rejoinPhone(room, phoneKeys);
     expect(await phone.next()).toMatchObject({ type: "joined", roomId: room });
+  });
+
+  test("once the host announced, a revoked device is unknown, not told to retry", async () => {
+    const { mac, room, phone, keys } = await paired();
+    mac.send({ type: "revoke", pubkey: keys.pub });
+    expect(await phone.closed()).toBe(CLOSE_PROTOCOL);
+    const after = await rejoinPhone(room, keys);
+    expect(await after.closed()).toBe(CLOSE_PROTOCOL);
+    expect(await after.closedReason()).toBe("unknown device");
   });
 
   test("a shorter announced list drops the devices missing from it", async () => {

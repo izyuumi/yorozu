@@ -105,7 +105,7 @@ export default {
   <p>Vos appareils joignent votre Gateway via un relais que nous exploitons sur Cloudflare à l’adresse <code>relay.yumi.to</code>. Vous pouvez aussi exploiter le vôtre. Vos messages, pièces jointes et aperçus de notification sont chiffrés de bout en bout (une négociation Noise IK avec X25519 à chaque connexion, puis ChaCha20-Poly1305) avant d’atteindre le relais, et le relais ne dispose d’aucune clé pour les déchiffrer. Le relais traite :</p>
   <ul>
     <li><strong>Les clés publiques</strong> de votre Gateway et de vos appareils jumelés, et un identifiant de salon tiré de la clé de votre Gateway, pour vérifier qu’un appareil peut rejoindre le salon et que chaque message vient bien de lui.</li>
-    <li><strong>La dernière connexion de chaque appareil</strong>, pour supprimer les données des appareils qui ne se connectent plus.</li>
+    <li><strong>La dernière connexion du salon et de chaque appareil</strong>, pour supprimer les salons que personne n’utilise et, une fois 16 appareils jumelés, les données de celui qui ne s’est pas connecté depuis le plus longtemps.</li>
     <li><strong>Les jetons push</strong> : les jetons push Apple de vos appareils, pour les réveiller par des notifications, et le jeton push d’une activité en direct, pour la mettre à jour.</li>
     <li><strong>Les messages chiffrés</strong> de vos appareils, conservés pendant que votre Gateway est hors ligne pour lui parvenir plus tard : jusqu’à 24 heures et 5 Mio au maximum, puis supprimés. Rien de ce qu’envoie votre Gateway n’est conservé.</li>
     <li><strong>Les pièces jointes chiffrées</strong>, transmises en fragments chiffrés de bout en bout. Le relais voit leur taille et leur horodatage.</li>
@@ -117,7 +117,7 @@ export default {
   </ul>
 
   <h2>Durée de conservation sur le relais</h2>
-  <p>Les données de jumelage sur le relais sont conservées jusqu’à ce que vous dissociiez, ou supprimées après 30 jours sans aucune connexion au salon depuis vos appareils ou votre Gateway. Les données d’un appareil sont supprimées après 180 jours sans connexion de cet appareil. Les messages en attente sont conservés 24 heures au maximum, les jetons de jumelage 10 minutes et la boîte aux lettres de jumelage du Mac 10 minutes.</p>
+  <p>Les données de jumelage sur le relais sont conservées jusqu’à ce que vous dissociiez, ou supprimées après 30 jours sans aucune connexion au salon depuis vos appareils ou votre Gateway. Le jumelage lui-même est enregistré sur vos propres appareils et sur votre Gateway : quand le relais supprime un salon, ils se reconnectent d’eux-mêmes, sans qu’il faille les jumeler à nouveau. Les messages en attente sont conservés 24 heures au maximum, les jetons de jumelage 10 minutes et la boîte aux lettres de jumelage du Mac 10 minutes.</p>
 
   <h2>Notifications</h2>
   <p>Les notifications push sont distribuées par Apple. Chaque notification de message contient un aperçu de la réponse (le titre de la conversation et sa première ligne, 256 octets au maximum), chiffré pour votre seul appareil ; c’est votre appareil qui l’ouvre. Pour les messages et les aperçus de notification, le relais et Apple ne voient que la boîte chiffrée.</p>

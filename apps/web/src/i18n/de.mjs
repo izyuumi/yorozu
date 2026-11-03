@@ -105,7 +105,7 @@ export default {
   <p>Deine Geräte erreichen dein Gateway über ein Relay, das wir auf Cloudflare unter <code>relay.yumi.to</code> betreiben. Du kannst auch dein eigenes betreiben. Deine Nachrichten, Anhänge und Mitteilungsvorschauen sind Ende-zu-Ende-verschlüsselt (ein Noise-IK-Handshake mit X25519 bei jeder Verbindung, dann ChaCha20-Poly1305), bevor sie das Relay erreichen, und das Relay hat keinen Schlüssel, um sie zu entschlüsseln. Das Relay verarbeitet:</p>
   <ul>
     <li><strong>Öffentliche Schlüssel</strong> deines Gateways und deiner gekoppelten Geräte sowie eine aus dem Schlüssel des Gateways gebildete Raumkennung, um zu prüfen, ob ein Gerät beitreten darf und ob jede Nachricht von ihm stammt.</li>
-    <li><strong>Wann sich jedes Gerät zuletzt verbunden hat</strong>, um Einträge von Geräten zu löschen, die sich nicht mehr verbinden.</li>
+    <li><strong>Wann sich der Raum und jedes Gerät zuletzt verbunden haben</strong>, um Räume zu löschen, die niemand nutzt, und sobald 16 Geräte gekoppelt sind, die Einträge des Geräts, das sich am längsten nicht verbunden hat.</li>
     <li><strong>Push-Token</strong>: die Apple-Push-Token deiner Geräte, um sie mit Mitteilungen zu wecken, und das Push-Token einer Live-Aktivität, um sie zu aktualisieren.</li>
     <li><strong>Verschlüsselte Nachrichten</strong> deiner Geräte, gehalten, solange dein Gateway offline ist, damit sie es später erreichen: bis zu 24 Stunden und höchstens 5 MiB, dann gelöscht. Nichts, was dein Gateway sendet, wird gehalten.</li>
     <li><strong>Verschlüsselte Anhänge</strong>, weitergereicht in Ende-zu-Ende-verschlüsselten Teilen. Das Relay sieht ihre Größe und ihren Zeitpunkt.</li>
@@ -117,7 +117,7 @@ export default {
   </ul>
 
   <h2>Wie lange das Relay Daten speichert</h2>
-  <p>Kopplungsdaten auf dem Relay werden gespeichert, bis du entkoppelst, oder nach 30 Tagen gelöscht, in denen sich keines deiner Geräte und auch nicht dein Gateway mit dem Raum verbunden hat. Die Einträge eines einzelnen Geräts werden nach 180 Tagen ohne Verbindung dieses Geräts gelöscht. Zwischengespeicherte Nachrichten werden höchstens 24 Stunden gehalten, Kopplungstoken 10 Minuten und das Kopplungspostfach für den Mac 10 Minuten.</p>
+  <p>Kopplungsdaten auf dem Relay werden gespeichert, bis du entkoppelst, oder nach 30 Tagen gelöscht, in denen sich keines deiner Geräte und auch nicht dein Gateway mit dem Raum verbunden hat. Die Kopplung selbst ist auf deinen eigenen Geräten und deinem Gateway gespeichert. Löscht das Relay einen Raum, verbinden sie sich deshalb von selbst wieder, ohne dass du sie neu koppeln musst. Zwischengespeicherte Nachrichten werden höchstens 24 Stunden gehalten, Kopplungstoken 10 Minuten und das Kopplungspostfach für den Mac 10 Minuten.</p>
 
   <h2>Mitteilungen</h2>
   <p>Push-Mitteilungen werden von Apple zugestellt. Jede Nachrichtenmitteilung enthält eine Vorschau der Antwort (den Titel der Unterhaltung und ihre erste Zeile, höchstens 256 Byte), verschlüsselt allein für dein Gerät; dein Gerät öffnet sie. Bei Nachrichten und Mitteilungsvorschauen sehen das Relay und Apple nur die verschlüsselte Box.</p>
