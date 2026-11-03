@@ -4,8 +4,10 @@ on:
     types: [closed]
     branches: [main]
 
+# GitHub keeps one pending run per group; ordinary PR Promote runs used to
+# replace a pending Release Mac. This condition must match the job's if.
 concurrency:
-  group: release-mac
+  group: ${{ github.event.pull_request.merged && github.event.pull_request.head.ref == 'release' && 'release-mac' || format('promote-noop-{0}', github.run_id) }}
   cancel-in-progress: false
 permissions: {}
 
