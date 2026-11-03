@@ -19,5 +19,5 @@
     { "from": 24.8, "to": 29.0, "text": "プライベート。\nエンドツーエンド暗号化。" }
   ],
   "disclosure": { "from": 24.8, "text": "ご自身の OpenClaw Gateway が必要です" },
-  "end": { "from": 27.4, "name": "Yorozu" }
+  "end": { "from": 27.4, "name": "よろず Yorozu" }
 }
