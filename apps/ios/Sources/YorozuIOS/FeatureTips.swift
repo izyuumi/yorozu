@@ -4,6 +4,9 @@ import TipKit
 /// One-time TipKit hints that point at a new feature where it lives; each goes away once the feature is used.
 enum FeatureTips {
     static func configure() {
+        #if DEBUG
+        if PreviewScene.current != nil { Tips.hideAllTipsForTesting() }
+        #endif
         try? Tips.configure([.displayFrequency(.daily)])
     }
 }

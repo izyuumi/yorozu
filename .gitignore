@@ -19,6 +19,11 @@ apps/ios/Derived/
 /memory/
 
 node_modules/
+# App Store app preview (apps/preview): Simulator takes, voice clips, renders.
+apps/preview/footage/
+apps/preview/out/
+artifacts/
+apps/preview/**/*.wav
 apps/relay/dist/
 .wrangler/
 dist/

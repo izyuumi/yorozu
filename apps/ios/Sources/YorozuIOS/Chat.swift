@@ -660,9 +660,15 @@ private struct Composer: View {
             if voice.phase == .idle {
                 row
             } else {
-                VoiceBar(session: voice, onInsert: { cursor.insert($0, into: &text) }, onSend: { if let clip = voice.handOff() { onVoiceSend(clip) } })
+                VoiceBar(session: voice, onInsert: { cursor.insert($0, into: &text) }, onSend: sendVoice)
             }
         }
+        #if DEBUG
+        .onReceive(NotificationCenter.default.publisher(for: PreviewScene.tapMic)) { _ in tapMic() }
+        .onReceive(NotificationCenter.default.publisher(for: PreviewScene.tapSend)) { _ in
+            if voice.phase == .recording { sendVoice() } else { send() }
+        }
+        #endif
         .sheet(isPresented: $settingUpVoice) { VoiceSetupSheet() }
         .task(id: request) {
             guard let request else { return }
@@ -719,15 +725,21 @@ private struct Composer: View {
         .padding(inset)
     }
 
+    private func tapMic() {
+        if VoiceSetup.shared.ready {
+            VoiceInputTip().invalidate(reason: .actionPerformed)
+            Task { await voice.start() }
+        } else {
+            settingUpVoice = true
+        }
+    }
+
+    private func sendVoice() {
+        if let clip = voice.handOff() { onVoiceSend(clip) }
+    }
+
     private var mic: some View {
-        Button {
-            if VoiceSetup.shared.ready {
-                VoiceInputTip().invalidate(reason: .actionPerformed)
-                Task { await voice.start() }
-            } else {
-                settingUpVoice = true
-            }
-        } label: {
+        Button(action: tapMic) {
             Image(systemName: "mic").textStyle(.body, weight: .semibold).foregroundStyle(.secondary).composerControl()
         }
         .buttonStyle(.plain)

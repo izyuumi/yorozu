@@ -2,6 +2,7 @@ packages:
   - apps/relay
   - apps/mcp
   - apps/web
+  - apps/preview
 
 allowBuilds:
   esbuild: true

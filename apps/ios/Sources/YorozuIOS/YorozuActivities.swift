@@ -60,7 +60,13 @@ final class YorozuActivities {
 
     private init(model: AppModel) { self.model = model }
 
-    private var available: Bool { Self.enabled && !model.isDemo && ActivityAuthorizationInfo().areActivitiesEnabled }
+    private var available: Bool {
+        var live = !model.isDemo
+        #if DEBUG
+        live = live || PreviewScene.current?.locked == true
+        #endif
+        return Self.enabled && live && ActivityAuthorizationInfo().areActivitiesEnabled
+    }
     private var inFront: Bool { UIApplication.shared.applicationState == .active }
 
     // MARK: Job sources

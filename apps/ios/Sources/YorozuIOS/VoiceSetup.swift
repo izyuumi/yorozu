@@ -54,12 +54,20 @@ final class VoiceSetup {
     static var listed: [VoiceEngineID] { VoiceEngineID.allCases.filter(compiled) }
 
     /// Whether this device can use voice input at all.
-    static var supported: Bool { VoiceEngineID.allCases.contains(where: usable) }
+    static var supported: Bool {
+        #if DEBUG
+        if PreviewScene.transcript != nil { return true }
+        #endif
+        return VoiceEngineID.allCases.contains(where: usable)
+    }
 
     var model: VoiceModel? { engine.flatMap { VoiceModel.all[$0] } }
 
     /// Whether the chosen engine can transcribe now.
     var ready: Bool {
+        #if DEBUG
+        if PreviewScene.transcript != nil { return true }
+        #endif
         guard let engine else { return false }
         return engine == .apple ? apple.state == .ready : model?.state == .ready
     }
