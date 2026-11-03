@@ -93,6 +93,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: scripts/external_testflight.sh --audit
       - run: scripts/app_store_metadata.sh --check
+      - run: scripts/release_notes_test.sh
 
   relay:
     needs: changes

@@ -1,0 +1,9 @@
+# Release-notes overrides for scripts/release_notes.sh (the beta and stable release bodies, the release PR,
+# CHANGELOG.md and TestFlight What to Test). One line per pull request whose own title no longer says what
+# users get, because a later PR changed it:
+#   #<n> <title>   show <title>, a Conventional Commits title that may end in "(#a, #b)", in place of PR #<n>'s
+#   #<n> -         leave PR #<n> out
+# Lines that don't start with "#<number> " are comments. Drop the lines once the version they touch is stable.
+#656 feat(relay): delete room data after 30 idle days; the room rebuilds itself without re-pairing (#656, #661)
+#657 -
+#661 -
