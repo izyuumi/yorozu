@@ -1,0 +1,20 @@
+{
+  "name": "@yorozu/preview",
+  "private": true,
+  "description": "The App Store app preview: Simulator takes of the real app, captioned in Remotion. Never published.",
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "render": "node scripts/render.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@remotion/cli": "4.0.540",
+    "@types/node": "26.6.5",
+    "@types/react": "^19.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "remotion": "4.0.540",
+    "typescript": "^5.9.2"
+  }
+}

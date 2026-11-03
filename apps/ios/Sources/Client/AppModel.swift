@@ -104,8 +104,15 @@ final class AppModel {
                 Task { @MainActor in model.shareSent() }
             }, ShareInbox.sentNotification as CFString, nil, .deliverImmediately)
         #endif
-        if ProcessInfo.processInfo.arguments.contains("--demo") {
+        var demo = ProcessInfo.processInfo.arguments.contains("--demo")
+        #if DEBUG
+        demo = demo || PreviewScene.current != nil
+        #endif
+        if demo {
             enterDemo()
+            #if DEBUG
+            PreviewScene.current?.play(model: self)
+            #endif
             return
         }
         liveStateLoaded = true

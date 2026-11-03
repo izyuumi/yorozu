@@ -119,12 +119,21 @@ actor DemoTransport: ClientTransport {
 
     private func finished(_ messageID: String) { pending[messageID] = nil }
 
+    /// Before delivered, the tool row, the tool's end and the reply.
+    private static let pauses: [Duration] = {
+        #if DEBUG
+        if let scene = PreviewScene.current { return scene.pauses }
+        #endif
+        return [.milliseconds(180), .milliseconds(250), .milliseconds(850), .zero]
+    }()
+
     private func answer(_ message: Message) async {
+        let pauses = Self.pauses
         continuation?.yield(.accepted(messageId: message.messageId))
-        guard await pause(.milliseconds(180)) else { return }
+        guard await pause(pauses[0]) else { return }
         let ref = MessageRef(convId: message.convId, messageId: message.messageId)
         emit(.delivered(ref))
-        guard await pause(.milliseconds(250)) else { return }
+        guard await pause(pauses[1]) else { return }
         emit(.runStarted(ref))
         let reset = ["/new", "/reset"].contains(message.text.lowercased())
         let callID = "demo-\(message.messageId)"
@@ -132,7 +141,7 @@ actor DemoTransport: ClientTransport {
             emit(.tool(Tool(convId: message.convId, messageId: message.messageId, callId: callID,
                 name: "demo_sample", status: .running)))
         }
-        guard await pause(.milliseconds(850)) else { return }
+        guard await pause(pauses[2]) else { return }
         if reset {
             append(.reset, id: WireEvent.newId(), text: nil, to: message.convId)
             emit(.history(History(convId: message.convId, items: histories[message.convId] ?? [],
@@ -141,6 +150,7 @@ actor DemoTransport: ClientTransport {
             emit(.tool(Tool(convId: message.convId, messageId: message.messageId, callId: callID,
                 name: "demo_sample", status: .done)))
         }
+        if pauses[3] > .zero { guard await pause(pauses[3]) else { return } }
         let text = reset ? DemoData.resetReply
             : DemoData.reply(to: message.text)
         let id = WireEvent.newId()

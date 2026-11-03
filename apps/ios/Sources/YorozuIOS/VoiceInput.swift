@@ -22,7 +22,11 @@ final class VoiceSession {
 
     func start() async {
         guard phase == .idle else { return }
-        switch AVAudioApplication.shared.recordPermission {
+        var permission = AVAudioApplication.shared.recordPermission
+        #if DEBUG
+        if PreviewScene.transcript != nil { permission = .granted } // the recorder plays a clip instead of the microphone
+        #endif
+        switch permission {
         case .granted: break
         case .undetermined:
             guard await AVAudioApplication.requestRecordPermission() else { return }
@@ -98,6 +102,12 @@ struct VoiceClip {
 
     /// The transcript in the chosen language with the voice dictionary applied; an empty one counts as a failure.
     @MainActor func transcribe() async -> Result<String, Error> {
+        #if DEBUG
+        if let transcript = PreviewScene.transcript {
+            try? await Task.sleep(for: .milliseconds(600))
+            return .success(transcript)
+        }
+        #endif
         let language = VoiceLanguage(rawValue: UserDefaults.standard.string(forKey: VoiceModel.languageKey) ?? "") ?? .automatic
         let dictionary = VoiceDictionary.stored
         let loading = loading ?? VoiceSetup.shared.load()

@@ -25,8 +25,12 @@ enum DemoData {
     }()
 
     static var titles: [String: String] {
-        [welcomeID: content.titles[0], travelID: content.titles[1],
+        var titles = [welcomeID: content.titles[0], travelID: content.titles[1],
             codeID: content.titles[2], archiveID: content.titles[3]]
+        #if DEBUG
+        if PreviewScene.current != nil { titles[PreviewScene.tidyID] = PreviewScene.tidyTitle }
+        #endif
+        return titles
     }
 
     static var histories: [String: [HistoryItem]] {
@@ -46,12 +50,16 @@ enum DemoData {
             }
             return items
         }
-        return [
+        var histories = [
             welcomeID: thread(content.welcome, age: 420_000),
             travelID: thread(content.travel, age: 7_200_000),
             codeID: thread(content.code, age: 86_400_000, toolRow: true),
             archiveID: thread(content.archive, age: 172_800_000)
         ]
+        #if DEBUG
+        if PreviewScene.current != nil { histories[PreviewScene.tidyID] = thread(PreviewScene.tidy, age: 90_000, toolRow: true) }
+        #endif
+        return histories
     }
 
     static var devices: [DeviceInfo] {
@@ -85,6 +93,9 @@ enum DemoData {
     static var resetReply: String { content.resetReply }
 
     static func reply(to text: String) -> String {
+        #if DEBUG
+        if PreviewScene.current != nil, let reply = PreviewScene.reply(to: text) { return reply }
+        #endif
         let text = text.lowercased()
         let reply = content.replies.first { reply in reply.keywords.contains { text.contains($0) } }
         return reply?.text ?? content.fallback

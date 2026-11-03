@@ -18,6 +18,9 @@ final class VoiceRecorder {
         capture.reset()
         levels = []
         seconds = 0
+        #if DEBUG
+        if PreviewScene.transcript != nil { return play(PreviewScene.voiceClip()) }
+        #endif
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.record, mode: .default)
@@ -45,6 +48,13 @@ final class VoiceRecorder {
 
     /// Stops recording and returns the clip.
     func stop() -> [Float] {
+        #if DEBUG
+        if let player {
+            player.cancel()
+            self.player = nil
+            return capture.samples()
+        }
+        #endif
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         #if os(iOS)
@@ -55,14 +65,42 @@ final class VoiceRecorder {
 
     private func update(level: Float, seconds: Double) {
         guard engine.isRunning else { return }
-        self.seconds = seconds
-        levels.append(level)
-        if levels.count > Self.trail { levels.removeFirst(levels.count - Self.trail) }
+        show(level: level, seconds: seconds)
         if seconds >= Self.maxSeconds {
             engine.inputNode.removeTap(onBus: 0)
             engine.stop()
         }
     }
+
+    private func show(level: Float, seconds: Double) {
+        self.seconds = seconds
+        levels.append(level)
+        if levels.count > Self.trail { levels.removeFirst(levels.count - Self.trail) }
+    }
+
+    nonisolated private static func level(_ samples: UnsafeBufferPointer<Float>) -> Float {
+        let rms = (samples.reduce(0) { $0 + $1 * $1 } / Float(samples.count)).squareRoot()
+        return max(0, min(1, (20 * log10(max(rms, 1e-6)) + 50) / 50))
+    }
+
+    #if DEBUG
+    @ObservationIgnored private var player: Task<Void, Never>?
+
+    /// The preview's talk take: the clip, then silence, in place of the microphone, at the same pace.
+    private func play(_ clip: [Float]) {
+        let chunk = Transcriber.sampleRate / 10
+        player = Task { [weak self] in
+            var offset = 0
+            while !Task.isCancelled, let self {
+                let part = (offset..<offset + chunk).map { $0 < clip.count ? clip[$0] : 0 }
+                offset += chunk
+                let total = part.withUnsafeBufferPointer { self.capture.append($0, limit: Int(Self.maxSeconds) * Transcriber.sampleRate) }
+                show(level: part.withUnsafeBufferPointer(Self.level), seconds: Double(total) / Double(Transcriber.sampleRate))
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+    }
+    #endif
 
     /// Built outside the main actor: the engine calls it on its own audio thread.
     nonisolated private static func tap(converter: AVAudioConverter, target: AVAudioFormat, capture: Capture,
@@ -83,9 +121,7 @@ final class VoiceRecorder {
             guard let channel = out.floatChannelData?[0], out.frameLength > 0 else { return }
             let samples = UnsafeBufferPointer(start: channel, count: Int(out.frameLength))
             let total = capture.append(samples, limit: Int(VoiceRecorder.maxSeconds) * Transcriber.sampleRate)
-            let rms = (samples.reduce(0) { $0 + $1 * $1 } / Float(samples.count)).squareRoot()
-            let level = max(0, min(1, (20 * log10(max(rms, 1e-6)) + 50) / 50))
-            report(level, Double(total) / Double(Transcriber.sampleRate))
+            report(level(samples), Double(total) / Double(Transcriber.sampleRate))
         }
     }
 

@@ -1,0 +1,23 @@
+{
+  "scenes": [
+    { "scene": "hook", "from": 0.0, "to": 5.8, "inPoint": 0.0 },
+    { "scene": "lockscreen", "from": 5.4, "to": 9.8, "inPoint": 0.0 },
+    { "scene": "needs-you", "from": 9.4, "to": 12.6, "inPoint": 4.0 },
+    { "scene": "approve", "from": 12.2, "to": 16.8, "inPoint": 0.0 },
+    { "scene": "talk", "from": 16.4, "to": 24.8, "inPoint": 0.0 },
+    { "scene": "list", "from": 24.4, "to": 29.0, "inPoint": 0.5 }
+  ],
+  "captions": [
+    { "from": 0.0, "to": 1.8, "text": "あなたのエージェントを、ポケットに" },
+    { "from": 1.8, "to": 3.6, "text": "動くのは、あなたのコンピュータ" },
+    { "from": 3.6, "to": 5.4, "text": "結果が手元に届く" },
+    { "from": 5.8, "to": 9.0, "text": "ロック画面で進み具合がわかる" },
+    { "from": 9.0, "to": 12.2, "text": "必要なときだけ、あなたに確認" },
+    { "from": 12.6, "to": 16.4, "text": "OKすれば、続きを進める" },
+    { "from": 16.8, "to": 20.4, "text": "打たずに、話しかける" },
+    { "from": 20.4, "to": 24.4, "text": "話すだけで伝わる" },
+    { "from": 24.8, "to": 29.0, "text": "プライベート。エンドツーエンド暗号化。" }
+  ],
+  "disclosure": { "from": 24.8, "text": "ご自身の OpenClaw Gateway が必要です" },
+  "end": { "from": 27.4, "name": "よろず Yorozu" }
+}

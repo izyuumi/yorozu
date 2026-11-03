@@ -33,3 +33,4 @@ A locale without its own header or search art gets `en-US/creative/header-textle
 `scripts/app_store_media.sh` prints what it would upload, place and order in the iOS version being prepared; `--apply`,
 run by hand, does it. PNGs must have no alpha channel and the exact pixel size App Store Connect lists for the group.
 Why the art looks the way it does: [ART.md](ART.md).
+The iPhone app preview video (en-US and ja) is made in [apps/preview](../../../preview/README.md).
