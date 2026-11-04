@@ -10,7 +10,7 @@
   },
   "devDependencies": {
     "@remotion/cli": "4.0.540",
-    "@types/node": "26.6.5",
+    "@types/node": "26.6.6",
     "@types/react": "^19.3.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
