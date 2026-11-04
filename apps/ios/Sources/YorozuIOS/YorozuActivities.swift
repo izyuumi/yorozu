@@ -74,8 +74,7 @@ final class YorozuActivities {
     /// Adds or replaces a job; `convId` is where its row opens, the title is stored only while previews are on.
     func upsert(_ job: YorozuJob, convId: String? = nil, title: String? = nil) {
         guard available else { return }
-        ActivityLabelsStore.update { $0.upsert(token: job.token, convId: convId, kind: job.kind, title: title, previews: WidgetStore.previews) }
-        apply(.upsert(job))
+        apply(.upsert(job), label: ActivityLabels.Entry(convId: convId, kind: job.kind, title: title))
     }
 
     func finish(id token: String, state: YorozuJob.State, alert: JobEvent.Alert? = nil) {
@@ -204,14 +203,14 @@ final class YorozuActivities {
         return activity?.content.state.jobs ?? jobs
     }
 
-    private func apply(_ change: JobChange?, alert: JobEvent.Alert? = nil) {
+    private func apply(_ change: JobChange?, label: ActivityLabels.Entry? = nil, alert: JobEvent.Alert? = nil) {
         guard available else { return }
+        let step = YorozuJobs.queued(change, label: label)
         enqueue { [weak self] in
             guard let self else { return }
             let before = await current()
-            let next = YorozuJobs.apply(before, change, now: Date())
+            let next = step(before, Date())
             jobs = next
-            prune(next)
             scheduleExpiry(next)
             if let activity {
                 // Leaving with nothing running still ends it, so the system dismisses it after the linger.

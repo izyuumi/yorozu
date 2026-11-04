@@ -141,6 +141,27 @@ private func job(_ token: String, _ kind: YorozuJob.Kind, _ state: YorozuJob.Sta
         #expect(try !String(decoding: Data(contentsOf: url), as: UTF8.self).contains("Trip"))
     }
 
+    @Test func queuedUpsertsKeepEveryConversationLabel() {
+        let url = FileManager.default.temporaryDirectory.appending(path: "ActivityLabels-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let jobs = [job("a", .turn), job("b", .recording), job("c", .needsYou)]
+        let labels = [
+            ActivityLabels.Entry(convId: "conv-a", kind: .turn, title: "Trip"),
+            ActivityLabels.Entry(convId: "conv-b", kind: .recording, title: "Notes"),
+            ActivityLabels.Entry(convId: "conv-c", kind: .needsYou, title: "Groceries"),
+        ]
+        let queued = zip(jobs, labels).map { job, label in
+            YorozuJobs.queued(.upsert(job), label: label, previews: { true }, at: url)
+        }
+        var current: [YorozuJob] = []
+        for step in queued { current = step(current, t0) }
+        #expect(Set(current.map(\.token)) == ["a", "b", "c"])
+        let stored = ActivityLabelsStore.read(from: url)
+        for (job, label) in zip(jobs, labels) {
+            #expect(stored.entries[job.token] == label)
+        }
+    }
+
     @Test func pushesUpdateTheActivity() {
         var labels = ActivityLabels()
         labels.upsert(token: "turn", convId: "conv", kind: .turn, title: nil, previews: false)

@@ -145,6 +145,24 @@ enum YorozuJobs {
         return capped(pruned(merged, now: now))
     }
 
+    /// A queued job change and its device-only label.
+    static func queued(_ change: JobChange?, label: ActivityLabels.Entry? = nil,
+                       previews: @escaping () -> Bool = { WidgetStore.previews }, at url: URL? = ActivityLabelsStore.url)
+        -> ([YorozuJob], Date) -> [YorozuJob] {
+        return { current, now in
+            let previews = previews()
+            var next = current
+            ActivityLabelsStore.update(previews: previews, at: url) { labels in
+                if case .upsert(let job) = change, let label {
+                    labels.upsert(token: job.token, convId: label.convId, kind: label.kind, title: label.title, previews: previews)
+                }
+                next = apply(current, change, now: now)
+                labels.prune(keeping: Set(next.map(\.token)))
+            }
+            return next
+        }
+    }
+
     static func shouldEnd(_ jobs: [YorozuJob]) -> Bool { jobs.isEmpty }
 
     /// When the next finished job expires, if any.

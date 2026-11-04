@@ -148,17 +148,13 @@ enum PreviewScene: String {
         await at(-0.5)
         while YorozuActivities.shared == nil { try? await Task.sleep(for: .milliseconds(100)) }
         guard let activities = YorozuActivities.shared else { return }
-        // Each change settles before the next: a change still queued keeps only its own jobs' labels.
-        func settle() async { try? await Task.sleep(for: .milliseconds(150)) }
         let titles = DemoData.titles
         let epoch = Self.epoch
         activities.upsert(self == .needsYou ? YorozuJob(kind: .needsYou, startedAt: epoch.addingTimeInterval(-10))
                 : YorozuJob(kind: .turn, steps: 3, startedAt: epoch.addingTimeInterval(-130)),
             convId: Self.tidyID, title: Self.tidyTitle)
-        await settle()
         activities.upsert(YorozuJob(kind: .turn, steps: 1, startedAt: epoch.addingTimeInterval(-65)),
             convId: DemoData.travelID, title: titles[DemoData.travelID])
-        await settle()
         activities.upsert(YorozuJob(kind: .turn, state: .done, startedAt: epoch.addingTimeInterval(-300), finishedAt: epoch.addingTimeInterval(-20)),
             convId: DemoData.welcomeID, title: titles[DemoData.welcomeID])
     }
