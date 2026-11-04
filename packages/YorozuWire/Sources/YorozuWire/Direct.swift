@@ -58,7 +58,10 @@ extension RelayConnection: ConnectionLeg {}
 /// handshakes at a time: the plugin keeps a device's newest session, so two inits in flight could leave it holding the
 /// loser's. A network path change or a lost session starts a new race; nothing migrates, and the app resends its
 /// unacknowledged outbox on the new session. Each race reads the stored `direct_hints`, and Bonjour results join it as
-/// they come.
+/// they come. A granted direct handshake gets 3 s while the relay remains; without it the normal 15 s limit applies.
+/// Failed granted candidates are skipped per room and network kind for 10 minutes, including Bonjour and relay hints.
+/// Direct success clears its failure; path changes and removing a pairing clear the room. Permission retries ignore
+/// failures for that race only. While pairing, failures are neither recorded nor skipped.
 public actor RacingConnection {
     typealias Legs = @Sendable (_ pairing: QrPayload, _ relayKnows: Bool, _ direct: [URL], _ unversionedWire: Bool)
         -> (relay: any ConnectionLeg, direct: [any ConnectionLeg])
@@ -86,6 +89,8 @@ public actor RacingConnection {
     private let pathChanges: @Sendable () -> AsyncStream<Void>
     private let network: @Sendable () async -> String
     private let winners: any RaceWinners
+    private let failures: any RaceFailures
+    private let now: @Sendable () -> Date
     private let sleep: Sleep
     private let joinWindow: Duration
 
@@ -98,7 +103,7 @@ public actor RacingConnection {
     private var relayID: Int?
     /// The race's direct legs in dial order.
     private var order: [Int] = []
-    /// Every direct URL this race dialed or is dialing.
+    /// Every direct URL this race knows, including candidates skipped after a recent failure.
     private var dialed: Set<String> = []
     private var browsing: Task<Void, Never>?
     private var started: Set<Int> = []
@@ -106,6 +111,8 @@ public actor RacingConnection {
     private var relayState: RelayConnection.State?
     private var listeners: [Task<Void, Never>] = []
     private var waiting: [Int] = []
+    private var handshakeTimer: Task<Void, Never>?
+    private var grantSerial = 0
     private var holder: Int?
     private var winner: Int?
     private var hostWasOffline = false
@@ -118,6 +125,7 @@ public actor RacingConnection {
     private var pushToken: String?
     private var raceBegan = ContinuousClock.now
     private var raceNetwork = "none"
+    private var ignoreFailures = false
     private var sessionBegan = ContinuousClock.now
     private var quickLosses = 0
 
@@ -142,13 +150,14 @@ public actor RacingConnection {
                 lanAllowed: LocalNetwork.allowed, lanDenied: LocalNetwork.denied)
         }, hints: DirectHintStore(), browse: { key in LocalNetwork.usable ? Bonjour.browse(hostKey: key) : nil },
             pathChanges: RacingConnection.networkChanges, network: { await NetworkKind.shared.current() },
-            winners: DefaultsRaceWinners(), hostIsLocal: { DirectCandidates.hostMayBeLocal($0, LocalInterface.current()) })
+            winners: DefaultsRaceWinners(), failures: DefaultsRaceFailures(), hostIsLocal: { DirectCandidates.hostMayBeLocal($0, LocalInterface.current()) })
     }
 
     init(pairing: QrPayload, relayKnows: Bool, unversionedWire: Bool = false, legs: @escaping Legs, direct: @escaping DirectLeg,
         candidates: @escaping Candidates, hints: DirectHintStore, browse: Browse?,
         pathChanges: @escaping @Sendable () -> AsyncStream<Void>,
-        network: @escaping @Sendable () async -> String, winners: any RaceWinners,
+        network: @escaping @Sendable () async -> String, winners: any RaceWinners, failures: any RaceFailures,
+        now: @escaping @Sendable () -> Date = { Date() },
         sleep: @escaping Sleep = { try await Task.sleep(for: $0) }, joinWindow: Duration = RacingConnection.joinWindow,
         hostIsLocal: @escaping @Sendable (DirectHints?) -> Bool = { _ in true }) {
         self.pairing = pairing
@@ -163,13 +172,16 @@ public actor RacingConnection {
         self.pathChanges = pathChanges
         self.network = network
         self.winners = winners
+        self.failures = failures
+        self.now = now
         self.sleep = sleep
         self.joinWindow = joinWindow
     }
 
-    /// Forgets which path won for this pairing room, on every network kind: for a pairing the app removes or replaces.
+    /// Forgets winners and direct failures on every network kind when a pairing is removed or replaced.
     public static func forgetRaceWinners(room: String) {
         DefaultsRaceWinners.forget(room: room)
+        DefaultsRaceFailures().forget(room: room)
     }
 
     public func updates() -> AsyncStream<RelayConnection.Update> {
@@ -184,7 +196,7 @@ public actor RacingConnection {
         let changes = pathChanges()
         paths = Task { [weak self] in
             // A new path can change which candidates answer: always a new race.
-            for await _ in changes { await self?.race() }
+            for await _ in changes { await self?.pathChanged() }
         }
         await race()
     }
@@ -212,6 +224,11 @@ public actor RacingConnection {
         }
         guard winner != nil || pairing.secret != nil || ContinuousClock.now - raceBegan >= .seconds(1) else { return }
         await race(preferDirect: true)
+    }
+
+    private func pathChanged() async {
+        if let room = pairing.roomId { failures.forget(room: room) }
+        await race()
     }
 
     public func stop() async {
@@ -248,6 +265,8 @@ public actor RacingConnection {
         raceBegan = .now
         again?.cancel()
         again = nil
+        handshakeTimer?.cancel()
+        handshakeTimer = nil
         for task in listeners + timers { task.cancel() }
         listeners = []
         timers = []
@@ -278,11 +297,18 @@ public actor RacingConnection {
         guard round == self.round, running else { return }
         // Pairing races the stored hints too, which came with the QR code (#532 step 5); Bonjour waits until it paired.
         let paired = pairing.secret == nil
-        let found = candidates(pairing.roomId.flatMap(hints.load(room:)))
+        var found = candidates(pairing.roomId.flatMap(hints.load(room:)))
+        raceNetwork = network
+        ignoreFailures = preferDirect || !paired
+        dialed = Set(found.candidates.map(\.absoluteString))
+        found.candidates = found.candidates.filter { url in
+            guard recentlyFailed(url.absoluteString) else { return true }
+            found.skipped.append(("direct candidate", "stalled recently"))
+            return false
+        }
         let (relay, direct) = makeLegs(pairing, relayKnows, found.candidates, unversionedWire)
         raceBegan = .now
-        raceNetwork = network
-        dialed = Set(direct.map(\.key))
+        dialed.formUnion(direct.map(\.key))
         let last = pairing.roomId.flatMap { winners.winner(room: $0, network: network) }
         var plan = RacePolicy.plan(direct: direct.map(\.key), lastWinner: last)
         if preferDirect, !plan.direct.isEmpty { plan.relay = max(plan.relay, RacePolicy.headStart) }
@@ -327,6 +353,10 @@ public actor RacingConnection {
     /// A Bonjour result joins the race in flight as one more direct leg, unless the race already dials its URL.
     private func add(_ url: URL, _ round: Int) {
         guard round == self.round, running, winner == nil, dialed.insert(url.absoluteString).inserted else { return }
+        guard !recentlyFailed(url.absoluteString) else {
+            connectionLog.info("race \(round, privacy: .public) skipped Bonjour candidate (stalled recently)")
+            return
+        }
         let leg = makeDirect(pairing, url, unversionedWire)
         let id = register(leg)
         order.append(id)
@@ -340,7 +370,7 @@ public actor RacingConnection {
         guard let room = pairing.roomId else { return }
         hints.save(new, room: room)
         guard id == relayID, pairing.secret == nil,
-              candidates(new).candidates.contains(where: { !dialed.contains($0.absoluteString) }) else { return }
+              candidates(new).candidates.contains(where: { !dialed.contains($0.absoluteString) && !recentlyFailed($0.absoluteString) }) else { return }
         connectionLog.info("race \(self.round, privacy: .public): new direct hints on the relay, racing again")
         rerace(after: .zero, preferDirect: true)
     }
@@ -394,20 +424,59 @@ public actor RacingConnection {
         }
     }
 
+    private func recentlyFailed(_ key: String) -> Bool {
+        guard !ignoreFailures, pairing.secret == nil, let room = pairing.roomId,
+              let date = failures.failedAt(key, room: room, network: raceNetwork) else { return false }
+        return now().timeIntervalSince(date) < RacePolicy.directFailureLifetime
+    }
+
+    private func recordFailure(_ id: Int) {
+        guard id != relayID, winner == nil, pairing.secret == nil,
+              let room = pairing.roomId, let leg = legs[id] else { return }
+        failures.record(leg.key, room: room, network: raceNetwork, at: now())
+    }
+
     private func give(_ id: Int) async {
         holder = id
-        guard await legs[id]?.grant() != true else { return }
-        if holder == id { holder = nil }
+        grantSerial += 1
+        let serial = grantSerial
+        let round = round
+        handshakeTimer?.cancel()
+        let granted = await legs[id]?.grant() == true
+        guard round == self.round, holder == id, serial == grantSerial else { return }
+        if granted {
+            guard id != relayID, winner == nil, let relayID, legs[relayID] != nil else { return }
+            let sleep = sleep
+            handshakeTimer = Task { [weak self] in
+                do { try await sleep(RacePolicy.directHandshakeTimeout) } catch { return }
+                await self?.handshakeExpired(id, round, serial)
+            }
+            return
+        }
+        holder = nil
+        await next()
+    }
+
+    private func handshakeExpired(_ id: Int, _ round: Int, _ serial: Int) async {
+        guard round == self.round, serial == grantSerial, winner == nil, holder == id,
+              let relayID, legs[relayID] != nil, let leg = legs[id] else { return }
+        recordFailure(id)
+        legs[id] = nil
+        waiting.removeAll { $0 == id }
+        connectionLog.info("race \(round, privacy: .public): direct handshake stalled, falling back")
+        await leg.stop()
+        guard round == self.round else { return }
+        holder = nil
+        launch(relayID, round)
+        hurry()
         await next()
     }
 
     private func next() async {
         while holder == nil, !waiting.isEmpty {
             let id = waiting.removeFirst()
-            guard let leg = legs[id] else { continue }
-            holder = id
-            if await leg.grant() { return }
-            if holder == id { holder = nil }
+            guard legs[id] != nil else { continue }
+            return await give(id)
         }
     }
 
@@ -415,6 +484,10 @@ public actor RacingConnection {
         guard round == self.round, legs[id] != nil else { return }
         switch update {
         case .sessionOpen(let peer):
+            if id != relayID, let room = pairing.roomId, let leg = legs[id] {
+                failures.clear(leg.key, room: room, network: raceNetwork)
+            }
+            handshakeTimer?.cancel()
             unversionedWire = peer.capabilities.contains(UnversionedWire.capability)
             let won = winner != id
             if id == winner, id == relayID, hostWasOffline {
@@ -455,6 +528,10 @@ public actor RacingConnection {
             }
             continuation?.yield(.sessionOpen(peer))
         case .state(let new):
+            if holder == id, new != .handshaking, new != .ready {
+                recordFailure(id)
+                handshakeTimer?.cancel()
+            }
             let refused = if case .pairingFailed = new { true } else { false }
             if id == relayID, pairing.secret != nil, !relayReached, refused || new == .offline {
                 relayReached = true

@@ -181,10 +181,49 @@ final class MemoryWinners: RaceWinners, @unchecked Sendable {
     }
 }
 
-/// Every wait the racer asked for; each one lasts until the race is over, so nothing starts on a timer.
+final class MemoryFailures: RaceFailures, @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [String: [String: [String: Date]]] = [:]
+    private var date = Date(timeIntervalSince1970: 1_000)
+    var now: Date { lock.withLock { date } }
+    func advance(_ seconds: TimeInterval) { lock.withLock { date.addTimeInterval(seconds) } }
+    func failedAt(_ key: String, room: String, network: String) -> Date? {
+        lock.withLock { stored[room]?[network]?[key] }
+    }
+    func record(_ key: String, room: String, network: String, at: Date) {
+        lock.withLock { stored[room, default: [:]][network, default: [:]][key] = at }
+    }
+    func clear(_ key: String, room: String, network: String) {
+        lock.withLock { stored[room]?[network]?[key] = nil }
+    }
+    func forget(room: String) { lock.withLock { stored[room] = nil } }
+}
+
+/// Records waits; controlled waits finish when released, and `never` waits until cancellation.
 actor Sleeps {
     private(set) var asked: [Duration] = []
     func add(_ duration: Duration) { asked.append(duration) }
+
+    private var waits: [(Duration, AsyncStream<Void>.Continuation)] = []
+
+    private func hold(_ duration: Duration, _ continuation: AsyncStream<Void>.Continuation) {
+        asked.append(duration)
+        waits.append((duration, continuation))
+    }
+
+    func release(_ duration: Duration) {
+        for (delay, continuation) in waits where delay == duration { continuation.finish() }
+        waits.removeAll { $0.0 == duration }
+    }
+
+    nonisolated var controlled: RacingConnection.Sleep {
+        { duration in
+            let (stream, continuation) = AsyncStream<Void>.makeStream()
+            await self.hold(duration, continuation)
+            for await _ in stream {}
+            try Task.checkCancellation()
+        }
+    }
 
     nonisolated var never: RacingConnection.Sleep {
         { duration in
@@ -201,6 +240,7 @@ struct RaceTests {
     let seen = Seen()
     let changes = AsyncStream<Void>.makeStream()
     let winners = MemoryWinners()
+    let failures = MemoryFailures()
     let sleeps = Sleeps()
     let hints = DirectHintStore(suite: "yorozu.tests.\(UUID().uuidString)")
     let browser = Browser()
@@ -236,8 +276,8 @@ struct RaceTests {
         }
         let changes = changes
         let racer = RacingConnection(pairing: pairing, relayKnows: secret == nil, unversionedWire: unversionedWire, legs: legs, direct: added, candidates: makeCandidates ?? candidates,
-            hints: hints, browse: bonjour ? browse : nil, pathChanges: { changes.stream }, network: { network }, winners: winners,
-            sleep: sleep ?? { try await Task.sleep(for: $0 / 100) }, joinWindow: joinWindow, hostIsLocal: hostIsLocal)
+            hints: hints, browse: bonjour ? browse : nil, pathChanges: { changes.stream }, network: { network }, winners: winners, failures: failures, now: { failures.now },
+            sleep: sleep ?? { try await Task.sleep(for: $0 == .seconds(3) ? .seconds(3600) : $0 / 100) }, joinWindow: joinWindow, hostIsLocal: hostIsLocal)
         let updates = await racer.updates()
         let seen = seen
         Task { for await update in updates { await seen.add(update) } }
@@ -285,6 +325,161 @@ struct RaceTests {
         await racer.stop()
     }
 
+    @Test(arguments: [false, true]) func aStalledGrantedDirectLegReleasesTheRelay(relayWaiting: Bool) async {
+        if !relayWaiting { winners.record("direct0", room: "room", network: "wifi") }
+        let racer = await racer(sleep: sleeps.controlled)
+        let (relay, direct) = await round(1)
+        await started(direct)
+        await direct[0].becomeReady()
+        await eventually("direct granted") { await direct[0].grants == 1 }
+        if relayWaiting {
+            await started([relay])
+            await relay.becomeReady()
+        } else {
+            #expect(await !relay.started)
+        }
+        await eventually("three second limit armed") { await sleeps.asked.contains(.seconds(3)) }
+        await sleeps.release(.seconds(3))
+        await eventually("stalled direct stopped") { await direct[0].stopped }
+        if !relayWaiting {
+            await started([relay])
+            await relay.becomeReady()
+        }
+        #expect(failures.failedAt("direct0", room: "room", network: "wifi") == failures.now)
+        await eventually("relay granted") { await relay.grants == 1 }
+        await relay.open()
+        await eventually("relay opened") { await seen.opened == ["relay"] }
+        await racer.stop()
+        let next = await self.racer(sleep: sleeps.never)
+        #expect(await round(2).direct.isEmpty)
+        await next.stop()
+    }
+
+    @Test(arguments: [false, true]) func recentFailuresSkipDirectAndDoNotLoopOnHintsOrBonjour(cachedHints: Bool) async {
+        let key = "ws://192.168.0.9:8738"
+        failures.record(key, room: "room", network: "wifi", at: failures.now)
+        winners.record(key, room: "room", network: "wifi")
+        if cachedHints { hints.save(lanHints, room: "room") }
+        let racer = await racer(direct: 0, sleep: sleeps.never, bonjour: true)
+        let (relay, direct) = await round(1)
+        #expect(direct.isEmpty)
+        await started([relay])
+        #expect(await sleeps.asked.isEmpty, "relay starts at zero despite the previous direct winner")
+        await eventually("browsing") { await browser.browsed == 1 }
+        browser.find(key)
+        await relay.becomeReady()
+        await relay.open()
+        await eventually("relay open") { await seen.opened == ["relay"] }
+        await relay.emit(.event(.directHints(lanHints)))
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await races.added.isEmpty)
+        #expect(await races.count == 1)
+        await racer.stop()
+    }
+
+    @Test func failuresExpireAndStayScopedToRoomAndNetwork() async {
+        failures.record("direct0", room: "room", network: "wifi", at: failures.now)
+        let first = await racer(sleep: sleeps.never)
+        #expect(await round(1).direct.isEmpty)
+        await first.stop()
+        let wired = await racer(sleep: sleeps.never, network: "wired")
+        #expect(await round(2).direct.count == 1)
+        await wired.stop()
+        failures.advance(600)
+        failures.record("direct0", room: "other-room", network: "wifi", at: failures.now)
+        let expired = await racer(sleep: sleeps.never)
+        #expect(await round(3).direct.count == 1)
+        await expired.stop()
+    }
+
+    @Test func pathChangesClearFailuresEvenOnTheSameNetworkKind() async {
+        failures.record("direct0", room: "room", network: "wifi", at: failures.now)
+        failures.record("direct0", room: "room", network: "wired", at: failures.now)
+        let racer = await racer(sleep: sleeps.never)
+        #expect(await round(1).direct.isEmpty)
+        changes.continuation.yield(())
+        let (_, direct) = await round(2)
+        #expect(direct.count == 1)
+        #expect(failures.failedAt("direct0", room: "room", network: "wired") == nil)
+        await racer.stop()
+    }
+
+    @Test(arguments: [false, true]) func permissionRetryIgnoresMemoryForOneRaceAndADirectWinClearsIt(directWins: Bool) async {
+        failures.record("direct0", room: "room", network: "wifi", at: failures.now)
+        let racer = await racer(sleep: sleeps.never, joinWindow: .zero)
+        let (relay, _) = await round(1)
+        await started([relay])
+        await relay.becomeReady()
+        await relay.open()
+        await eventually("relay open") { await seen.opened == ["relay"] }
+        await racer.raceAgain()
+        let (relay2, direct) = await round(2)
+        #expect(direct.count == 1)
+        #expect(failures.failedAt("direct0", room: "room", network: "wifi") != nil)
+        await started(direct)
+        if directWins {
+            await direct[0].becomeReady()
+            await direct[0].open()
+            await eventually("direct win clears failure") {
+                failures.failedAt("direct0", room: "room", network: "wifi") == nil
+            }
+        } else {
+            await direct[0].fail()
+            await started([relay2])
+            await relay2.becomeReady()
+            await relay2.open()
+            await eventually("relay won retry") { await seen.opened == ["relay", "relay"] }
+            await racer.reconnect()
+            #expect(await round(3).direct.isEmpty, "normal races use memory again")
+        }
+        await racer.stop()
+    }
+
+    @Test(arguments: [false, true]) func pairingDoesNotSkipOrRecordFailures(stalls: Bool) async {
+        let old = failures.now
+        failures.record("direct0", room: "room", network: "wifi", at: old)
+        failures.advance(1)
+        let racer = await racer(sleep: sleeps.controlled, secret: "sec")
+        let (relay, direct) = await round(1)
+        #expect(direct.count == 1)
+        await started([relay] + direct)
+        await direct[0].becomeReady()
+        await eventually("timeout armed") { await sleeps.asked.contains(.seconds(3)) }
+        await relay.becomeReady()
+        if stalls {
+            await sleeps.release(.seconds(3))
+            await eventually("direct stopped") { await direct[0].stopped }
+        } else {
+            await direct[0].fail()
+        }
+        await eventually("relay granted") { await relay.grants == 1 }
+        #expect(failures.failedAt("direct0", room: "room", network: "wifi") == old)
+        await racer.stop()
+    }
+
+    @Test(arguments: [false, true]) func offlinePairingKeepsTheNormalHandshakeLimit(refusedBeforeGrant: Bool) async {
+        let racer = await racer(sleep: sleeps.controlled, secret: "sec")
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        if !refusedBeforeGrant {
+            await direct[0].becomeReady()
+            await eventually("timeout armed") { await sleeps.asked.contains(.seconds(3)) }
+        }
+        await relay.emit(.state(.pairingFailed("unknown device")))
+        await eventually("relay removed") { await relay.stopped }
+        if refusedBeforeGrant {
+            await direct[0].becomeReady()
+            await eventually("direct granted") { await direct[0].grants == 1 }
+        }
+        await sleeps.release(.seconds(3))
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await !direct[0].stopped)
+        if refusedBeforeGrant { #expect(await !sleeps.asked.contains(.seconds(3))) }
+        await direct[0].open()
+        await eventually("offline paired") { await seen.opened == ["direct0"] }
+        await racer.stop()
+    }
+
     @Test func directWinsAndTheRelayIsClosed() async {
         let racer = await racer()
         let (relay, direct) = await round(1)
@@ -314,6 +509,7 @@ struct RaceTests {
         await relay.becomeReady()
         await direct[0].fail()
         await eventually("relay granted once direct failed") { await relay.grants == 1 }
+        #expect(failures.failedAt("direct0", room: "room", network: "wifi") == failures.now)
         await relay.open()
         await eventually("relay opened") { await seen.opened == ["relay"] }
         #expect(await seen.routesAndSessions == ["route:relay", "open:relay"])
@@ -386,6 +582,7 @@ struct RaceTests {
         #expect(await !direct[1].started, "50 ms behind the first candidate")
         await direct[0].fail()
         await started([direct[1]])
+        #expect(failures.failedAt("direct0", room: "room", network: "wifi") == nil, "no failure memory before a grant")
         await direct[1].becomeReady()
         await direct[1].open()
         await eventually("second candidate won") { await seen.opened == ["direct1"] }
@@ -395,7 +592,7 @@ struct RaceTests {
         let (relay2, direct2) = await round(2)
         await started([direct2[1]])
         await eventually("relay and other candidate wait") {
-            let asked = await sleeps.asked
+            let asked = await sleeps.asked.filter { $0 != RacePolicy.directHandshakeTimeout }
             return asked.count == 3 && asked.suffix(2).sorted() == [.milliseconds(50), .milliseconds(300)]
         }
         #expect(await !relay2.started)
@@ -489,7 +686,7 @@ struct RaceTests {
         await eventually("direct opened again") { await seen.opened == ["direct0", "direct0"] }
         await direct2[0].fail()
         await eventually("second quick loss pauses 1 s") { await sleeps.asked.contains(.seconds(1)) }
-        #expect(await !sleeps.asked.contains { $0 >= .seconds(1) && $0 != .seconds(1) })
+        #expect(await !sleeps.asked.contains { $0 > .seconds(1) && $0 != RacePolicy.directHandshakeTimeout })
         try? await Task.sleep(for: .milliseconds(30))
         #expect(await races.count == 2)
         #expect(await seen.states.last == .connecting)
@@ -778,6 +975,7 @@ struct RaceTests {
     // Offline pairing (#532 step 5).
 
     @Test func aPairingRaceDialsTheStoredHintsAndADirectWinPairs() async {
+        failures.record("ws://192.168.0.9:8738", room: "room", network: "wifi", at: failures.now)
         hints.save(lanHints, room: "room")
         let racer = await racer(direct: 0, bonjour: true, secret: "sec")
         let (relay, direct) = await round(1)
@@ -787,6 +985,7 @@ struct RaceTests {
         await direct[0].becomeReady()
         await direct[0].open()
         await eventually("direct opened") { await seen.opened == ["ws://192.168.0.9:8738"] }
+        #expect(failures.failedAt("ws://192.168.0.9:8738", room: "room", network: "wifi") == nil)
         await eventually("relay closed") { await relay.stopped }
         #expect(await browser.browsed == 0, "no Bonjour while pairing")
         changes.continuation.yield()

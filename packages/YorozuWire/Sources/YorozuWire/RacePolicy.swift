@@ -9,6 +9,10 @@ enum RacePolicy {
     static let stagger = Duration.milliseconds(50)
     /// The relay's wait when a direct candidate won last time on this network kind.
     static let headStart = Duration.milliseconds(300)
+    /// A granted direct handshake gets 3 s to open while a relay fallback remains.
+    static let directHandshakeTimeout = Duration.seconds(3)
+    /// Failed direct handshakes are skipped for 10 minutes on this room and network kind.
+    static let directFailureLifetime: TimeInterval = 10 * 60
     /// A session that lived less than this counts as a quick loss.
     static let quickSession = Duration.seconds(10)
     static let maxPause = Duration.seconds(30)
@@ -79,6 +83,53 @@ struct DefaultsRaceWinners: RaceWinners {
     static func forget(room: String) {
         let defaults = UserDefaults.standard
         for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix(room)) { defaults.removeObject(forKey: key) }
+    }
+}
+
+/// Direct handshake failures, timestamped per candidate URL, pairing room and network kind.
+protocol RaceFailures: Sendable {
+    func failedAt(_ key: String, room: String, network: String) -> Date?
+    func record(_ key: String, room: String, network: String, at: Date)
+    func clear(_ key: String, room: String, network: String)
+    func forget(room: String)
+}
+
+struct DefaultsRaceFailures: RaceFailures {
+    private static let lock = NSLock()
+    private static func prefix(_ room: String) -> String { "yorozu.raceFailures.\(room)." }
+
+    private func entries(room: String, network: String) -> [String: Date] {
+        UserDefaults.standard.dictionary(forKey: Self.prefix(room) + network) as? [String: Date] ?? [:]
+    }
+
+    func failedAt(_ key: String, room: String, network: String) -> Date? {
+        entries(room: room, network: network)[key]
+    }
+
+    func record(_ key: String, room: String, network: String, at: Date) {
+        Self.lock.withLock {
+            // Lapsed entries go as new ones come, so the store never grows past the live failures.
+            var stored = entries(room: room, network: network).filter { at.timeIntervalSince($0.value) < RacePolicy.directFailureLifetime }
+            stored[key] = at
+            UserDefaults.standard.set(stored, forKey: Self.prefix(room) + network)
+        }
+    }
+
+    func clear(_ key: String, room: String, network: String) {
+        Self.lock.withLock {
+            var stored = entries(room: room, network: network)
+            stored[key] = nil
+            UserDefaults.standard.set(stored, forKey: Self.prefix(room) + network)
+        }
+    }
+
+    func forget(room: String) {
+        Self.lock.withLock {
+            let defaults = UserDefaults.standard
+            for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(Self.prefix(room)) {
+                defaults.removeObject(forKey: key)
+            }
+        }
     }
 }
 
