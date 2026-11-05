@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.0
+
+### Features
+
+- **wire:** fall back to the relay 3 s into a stalled direct handshake and remember the stall (#672)
+
+### Fixes
+
+- **ios:** write a Live Activity row's label in the same queued step as its job (#664) (#671)
+
 ## 0.12.0
 
 ### Features
