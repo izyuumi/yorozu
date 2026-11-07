@@ -33,6 +33,21 @@ public actor RelayConnection {
     /// A relay, or the plugin's direct listener (#532): a probe instead of `join`, no relay buffer, flow control or push.
     enum Path: Sendable { case relay, direct }
 
+    private enum Handshake {
+        case idle
+        case awaitingGrant
+        case initSent(ClientHandshake, deadline: Task<Void, Never>)
+        case awaitingPeerInfo(deadline: Task<Void, Never>)
+        case open
+
+        func cancelDeadline() {
+            switch self {
+            case .initSent(_, let deadline), .awaitingPeerInfo(let deadline): deadline.cancel()
+            default: break
+            }
+        }
+    }
+
     private let path: Path
     private var pairing: QrPayload
     private let identity: PhoneIdentity
@@ -44,8 +59,6 @@ public actor RelayConnection {
     private var triedAsKnown = false
     private var probeNonce: String?
     private var ready: (@Sendable () -> Void)?
-    private var awaitingGrant = false
-    private var granted = false
     private var hostCapabilities: [String] = []
 
     private var continuation: AsyncStream<Update>.Continuation?
@@ -53,9 +66,8 @@ public actor RelayConnection {
     private var generation = 0
     private var socket: URLSessionWebSocketTask?
     private var hostOnline = false
-    private var handshake: ClientHandshake?
+    private var handshake = Handshake.idle
     private var session: Session?
-    private var peerReady = false
     private var state = State.offline
     private var sentSigs: [String: String] = [:]
     private var attempt = 0
@@ -65,7 +77,6 @@ public actor RelayConnection {
     private var retry: Task<Void, Never>?
     private var pinger: Task<Void, Never>?
     private var pongDeadline: Task<Void, Never>?
-    private var handshakeDeadline: Task<Void, Never>?
     private var pushToken: String?
     private var joined = false
     /// "<path> <host[:port]>" for the log: never the query, which holds the room id.
@@ -124,9 +135,7 @@ public actor RelayConnection {
     }
 
     func grant() -> Bool {
-        guard awaitingGrant, let socket, hostOnline, session == nil else { return false }
-        awaitingGrant = false
-        granted = true
+        guard case .awaitingGrant = handshake, let socket, hostOnline, session == nil else { return false }
         beginHandshake(on: socket)
         return true
     }
@@ -243,7 +252,6 @@ public actor RelayConnection {
         endSession()
         hostOnline = false
         probeNonce = nil
-        granted = false
         sentSigs = [:]
         pinger?.cancel()
         pongDeadline?.cancel()
@@ -251,12 +259,9 @@ public actor RelayConnection {
     }
 
     private func endSession() {
-        awaitingGrant = false
-        handshake = nil
+        handshake.cancelDeadline()
+        handshake = .idle
         session = nil
-        peerReady = false
-        handshakeDeadline?.cancel()
-        handshakeDeadline = nil
     }
 
     private func closed(reason: String) {
@@ -447,9 +452,9 @@ public actor RelayConnection {
     }
 
     private func handshakeWhenGranted(on socket: URLSessionWebSocketTask) {
-        guard let ready, !granted else { return beginHandshake(on: socket) }
-        endSession()
-        awaitingGrant = true
+        guard case .idle = handshake else { return }
+        guard let ready else { return beginHandshake(on: socket) }
+        handshake = .awaitingGrant
         set(.handshaking)
         ready()
     }
@@ -457,29 +462,37 @@ public actor RelayConnection {
     private func beginHandshake(on socket: URLSessionWebSocketTask) {
         endSession()
         guard let hs = try? ClientHandshake(identity: identity, pairing: pairing, format: wireFormat) else { return }
-        handshake = hs
         set(.handshaking)
         _ = transmit(hs.frame, on: socket)
         connectionLog.info("\(self.label, privacy: .public): handshake granted, init sent (\(String(describing: hs.frame.format), privacy: .public))")
-        handshakeDeadline = Task {
+        let deadline = Task {
             try? await Task.sleep(for: Self.handshakeTimeout)
-            guard !Task.isCancelled, socket === self.socket, self.hostOnline, !self.peerReady else { return }
+            guard !Task.isCancelled, socket === self.socket, self.hostOnline else { return }
+            let awaitingResponse: Bool
+            switch self.handshake {
+            case .initSent: awaitingResponse = true
+            case .awaitingPeerInfo: awaitingResponse = false
+            default: return
+            }
             connectionLog.error("\(self.label, privacy: .public): handshake timed out")
             // Nothing buffers on the direct path: a handshake that got no answer fails the leg.
             if self.path == .direct { return self.closed(reason: "") }
-            self.wireFormat = self.wireFormat.afterHandshakeTimeout(onRelay: true, awaitingResponse: self.handshake != nil)
+            self.wireFormat = self.wireFormat.afterHandshakeTimeout(onRelay: true, awaitingResponse: awaitingResponse)
+            // Format fallback continues the same granted attempt.
             self.beginHandshake(on: socket)
         }
+        handshake = .initSent(hs, deadline: deadline)
     }
 
     private func frame(_ payload: String, on socket: URLSessionWebSocketTask) {
         guard let frame = try? Frame(payload: payload) else { return }
         switch frame {
         case .handshakeResponse:
-            guard session == nil, let handshake, var opened = try? handshake.finish(frame),
+            guard session == nil, case .initSent(let pending, let deadline) = handshake,
+                  var opened = try? pending.finish(frame),
                   let hello = try? opened.seal(.peerInfo(local)) else { return }
             session = opened
-            self.handshake = nil
+            handshake = .awaitingPeerInfo(deadline: deadline)
             _ = transmit(hello, on: socket)
         case .transport:
             guard var session, let event = try? session.openEvent(frame) else { return }
@@ -494,15 +507,14 @@ public actor RelayConnection {
         if case .peerInfo(let peer) = event {
             wireFormat = Wire.Format(unversionedWire: peer.capabilities.contains(UnversionedWire.capability))
         }
-        guard peerReady else {
+        guard case .open = handshake else {
             guard case .peerInfo(let peer) = event else {
                 if case .error(let error) = event, error.code == "update_required" { stopForUpdate() }
                 return
             }
             guard local.negotiate(with: peer) != nil else { return stopForUpdate() }
-            peerReady = true
-            handshakeDeadline?.cancel()
-            handshakeDeadline = nil
+            handshake.cancelDeadline()
+            handshake = .open
             pairing.secret = nil
             hostCapabilities = peer.capabilities
             connectionLog.info("\(self.label, privacy: .public): session open after \((ContinuousClock.now - self.dialed).ms, privacy: .public) ms")
