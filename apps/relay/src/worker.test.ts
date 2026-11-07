@@ -648,6 +648,89 @@ test("INTENDED CHANGE: at the pending bound a fresh token join waits instead of 
   expect(await retry.next()).toMatchObject({ type: "joined" });
 });
 
+async function pendingRoom() {
+  const host = await keypair();
+  const name = await roomId(host.pub);
+  const mac = await connectMac(host);
+  const devices = [];
+  // Consume each batch before minting more: at most eight live tokens.
+  for (let batch = 0; batch < 2; batch++) {
+    const tokens = [];
+    for (let i = 0; i < 8; i++) tokens.push(await mintToken(mac));
+    for (const token of tokens) {
+      const device = await connectPhone(name, token);
+      expect(await device.phone.next()).toMatchObject({ type: "joined" });
+      devices.push(device);
+    }
+  }
+  await runInDurableObject(room(name), async (_instance, state) => {
+    expect(await state.storage.get("roster")).toBe("unconfirmed");
+    expect((await state.storage.list({ prefix: "p:" })).size).toBe(16);
+  });
+  return { mac, name, devices };
+}
+
+test.each(["nonce", "token"] as const)(
+  "a host-known device refused at the pending bound joins after the host re-announces, token kept (%s)",
+  async (mode) => {
+    const { mac, name, devices } = await pendingRoom();
+    const keys = await keypair();
+    const token = await mintToken(mac);
+    const tokenJoin = async () => {
+      const phone = await connect(name);
+      await phone.next();
+      phone.send({ type: "join", roomId: name, phonePubkey: keys.pub, token, sig: await sign(token, keys) });
+      return phone;
+    };
+    const assertConnected = async () => {
+      for (const { phone } of devices) {
+        phone.send({ type: "ping" });
+        expect(await Promise.race([phone.next(), phone.closed()])).toEqual({ type: "pong" });
+      }
+    };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const refused = await tokenJoin();
+      expect(await Promise.race([refused.next(), refused.closed()])).toBe(4011);
+      expect(await refused.closedReason()).toBe("host offline");
+      expect(await stored(name)).toContain(`t:${token}`);
+      await assertConnected();
+    }
+    mac.send({ type: "devices", devices: [...devices.map(({ keys }) => keys.pub), keys.pub] });
+    await macSettled(mac);
+    const admitted = mode === "nonce" ? await rejoin(name, keys) : await tokenJoin();
+    expect(await Promise.race([admitted.next(), admitted.closed()])).toMatchObject({ type: "joined" });
+    await assertConnected();
+    if (mode === "nonce") expect(await stored(name)).toContain(`t:${token}`);
+    if (mode === "token") {
+      expect(await stored(name)).not.toContain(`t:${token}`);
+      const spent = await tokenJoin();
+      expect(await spent.closed()).toBe(4001);
+      expect(await spent.closedReason()).toBe("unknown token");
+      await assertConnected();
+    }
+  },
+);
+
+test("an announce that drops pending rows frees the bound for a fresh pairing", async () => {
+  const { mac, name, devices } = await pendingRoom();
+  await vi.waitFor(() => expect(mac.phones.at(-1)).toBe(16));
+  for (const { phone } of devices.slice(8)) {
+    phone.close();
+  }
+  // Wait for the relay to observe departures; a client close need not echo a close event.
+  await vi.waitFor(() => expect(mac.phones.at(-1)).toBe(8));
+  await quiet(name, 9);
+  mac.send({ type: "devices", devices: devices.slice(0, 8).map(({ keys }) => keys.pub) });
+  await macSettled(mac);
+  const fresh = await connectPhone(name, await mintToken(mac));
+  expect(await Promise.race([fresh.phone.next(), fresh.phone.closed()])).toMatchObject({ type: "joined" });
+  for (const { keys } of devices.slice(8)) expect(await stored(name)).not.toContain(`p:${keys.pub}`);
+  for (const { phone } of devices.slice(0, 8)) {
+    phone.send({ type: "ping" });
+    expect(await Promise.race([phone.next(), phone.closed()])).toEqual({ type: "pong" });
+  }
+});
+
 test("an explicit revoke stays terminal", async () => {
   const { mac, phone, keys, room: name } = await paired();
   mac.send({ type: "devices", devices: [keys.pub] });
