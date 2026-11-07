@@ -1051,12 +1051,80 @@ const activityPush = (device: string, extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-test("a relay that can push says so when the host registers", async () => {
+test("registered only adds fields", async () => {
   const keys = await keypair();
-  const mac = await connect(await roomId(keys.pub));
+  const name = await roomId(keys.pub);
+  const mac = await connect(name);
   const { nonce } = await mac.next();
   mac.send({ type: "register", pubkey: keys.pub, nonceSig: await sign(nonce, keys) });
-  expect(await mac.next()).toMatchObject({ type: "registered", liveActivity: true, activityTimestamp: true });
+  const { activityTimestamp, ...legacy } = await mac.next();
+  expect(legacy).toEqual({ type: "registered", roomId: name, phones: 0, pushProxy: true, liveActivity: true });
+  expect(activityTimestamp).toBe(true);
+});
+
+test("a v0.13.0 host flow with no new fields works unchanged", async () => {
+  const calls = fakeApns();
+  const macKeys = await keypair();
+  const name = await roomId(macKeys.pub);
+  const mac = await connectMac(macKeys);
+  mac.send({ type: "devices", devices: [] });
+  const { phone, keys } = await connectPhone(name, await mintToken(mac));
+  expect(await phone.next()).toMatchObject({ type: "joined", ownerOnline: true });
+  phone.send({ type: "push", deviceToken: DEVICE_TOKEN });
+  await settled(phone);
+  mac.send({ type: "activityToken", device: keys.pub, token: ACTIVITY_TOKEN });
+  await macSettled(mac);
+
+  const now = Date.now();
+  await tightBudgets(name, now)(JSON.stringify(activityPush(keys.pub)));
+  await vi.waitFor(() => expect(calls).toHaveLength(1));
+  expect(calls[0]!.url).toBe(`https://apns.test/3/device/${ACTIVITY_TOKEN}`);
+  expect(Object.keys(calls[0]!.body.aps).sort()).toEqual(["content-state", "event", "stale-date", "timestamp"]);
+  expect(calls[0]!.body.aps.timestamp).toBe(Math.floor(now / 1000));
+
+  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
+  await vi.waitFor(() => expect(calls).toHaveLength(2));
+  expect(calls[1]!.url).toBe(`https://apns.test/3/device/${DEVICE_TOKEN}`);
+  expect(calls[1]!.headers.get("apns-push-type")).toBe("alert");
+  mac.send({ type: "ack", seq: 0 });
+  mac.send({ type: "ping" });
+  expect(await mac.next()).toEqual({ type: "pong" });
+  expect(mac.ws.readyState).toBe(WebSocket.OPEN);
+});
+
+test("a relay without APNs advertises neither liveActivity nor activityTimestamp", async () => {
+  const calls = fakeApns();
+  const keys = await keypair();
+  const name = await roomId(keys.pub);
+  const mac = await connect(name);
+  const { nonce } = await mac.next();
+  const register = { type: "register", pubkey: keys.pub, nonceSig: await sign(nonce, keys) };
+  const device = (await keypair()).pub;
+  await runInDurableObject(room(name), async (_instance, state) => {
+    const withoutApns = { ...(env as unknown as Env) };
+    delete withoutApns.APNS_KEY_ID;
+    delete withoutApns.APNS_TEAM_ID;
+    delete withoutApns.APNS_KEY_P8;
+    delete withoutApns.APNS_HOST;
+    delete withoutApns.APNS_SANDBOX_HOST;
+    delete withoutApns.APNS_TOPIC;
+    const awake = new Room(state, withoutApns);
+    const socket = state.getWebSockets()[0]!;
+    await awake.webSocketMessage(socket, JSON.stringify(register));
+    await awake.webSocketMessage(socket, JSON.stringify({ type: "devices", devices: [device] }));
+    await awake.webSocketMessage(socket, JSON.stringify({ type: "activityToken", device, token: ACTIVITY_TOKEN }));
+    expect(await state.storage.get(`activity:${device}`)).toEqual({ token: ACTIVITY_TOKEN });
+    await awake.webSocketMessage(socket, JSON.stringify(activityPush(device)));
+    await (awake as unknown as { activityTail: Promise<unknown> }).activityTail;
+    await awake.webSocketMessage(socket, JSON.stringify({ type: "ping" }));
+  });
+  const registered = await mac.next();
+  expect(registered).toMatchObject({ type: "registered", roomId: name });
+  expect(registered).not.toHaveProperty("liveActivity");
+  expect(registered).not.toHaveProperty("activityTimestamp");
+  expect(await mac.next()).toEqual({ type: "pong" });
+  expect(mac.ws.readyState).toBe(WebSocket.OPEN);
+  expect(calls).toHaveLength(0);
 });
 
 test("an activity push queued before a new activity token is never sent to the new token", async () => {

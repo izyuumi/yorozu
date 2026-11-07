@@ -55,6 +55,19 @@ const adapter: Adapter = {
 
 conformance(adapter);
 
+test("the Node relay's registered carries neither liveActivity nor activityTimestamp", async () => {
+  const keys = keypair();
+  const mac = client(relay.port, roomId(keys.pub));
+  peers.push(mac);
+  await mac.open;
+  const { nonce } = await mac.next();
+  mac.send({ type: "register", pubkey: keys.pub, nonceSig: signChallenge(nonce, keys.priv) });
+  const registered = await mac.next();
+  expect(registered).toMatchObject({ type: "registered", roomId: roomId(keys.pub) });
+  expect(registered).not.toHaveProperty("liveActivity");
+  expect(registered).not.toHaveProperty("activityTimestamp");
+});
+
 test("host push refresh keeps the oldest device when a new token join evicts the next oldest", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   const macKeys = keypair();

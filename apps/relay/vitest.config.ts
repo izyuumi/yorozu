@@ -40,7 +40,7 @@ export default defineConfig({
         ],
         test: {
           name: "worker",
-          include: ["src/worker.test.ts", "src/apns.test.ts", "src/mailbox.test.ts"],
+          include: ["src/worker.test.ts", "src/apns.test.ts", "src/mailbox.test.ts", "src/compat.test.ts"],
         },
       },
     ],
