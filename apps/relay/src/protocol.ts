@@ -148,20 +148,6 @@ export const parseDevices = (msg: Record<string, unknown>, cap = MAX_DEVICES): D
     ? { devices: (msg.devices as string[]).slice(-cap) }
     : null;
 
-export function evictions(
-  known: readonly [pubkey: string, at: number][],
-  pubkey: string,
-  cap = MAX_DEVICES,
-): string[] {
-  if (known.some(([key]) => key === pubkey)) return [];
-  const surplus = known.length - cap + 1;
-  if (surplus <= 0) return [];
-  return [...known]
-    .sort(([, a], [, b]) => a - b)
-    .slice(0, surplus)
-    .map(([key]) => key);
-}
-
 export const NOTIFY_CLASSES = ["reply", "approval", "done", "failed"] as const;
 export type NotifyClass = (typeof NOTIFY_CLASSES)[number];
 

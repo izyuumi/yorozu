@@ -77,6 +77,26 @@ public actor RacingConnection {
     static let joinWindow = Duration.seconds(10)
     static let browseTime = Duration.seconds(5)
 
+    private enum Grant {
+        case free
+        case held(leg: Int, serial: UUID, grace: Task<Void, Never>?)
+
+        var leg: Int? {
+            if case .held(let leg, _, _) = self { leg } else { nil }
+        }
+
+        mutating func cancelGrace() {
+            guard case .held(let leg, let serial, let grace) = self else { return }
+            grace?.cancel()
+            self = .held(leg: leg, serial: serial, grace: nil)
+        }
+
+        mutating func release() {
+            cancelGrace()
+            self = .free
+        }
+    }
+
     private var pairing: QrPayload
     private var relayKnows: Bool
     private var unversionedWire: Bool
@@ -111,9 +131,7 @@ public actor RacingConnection {
     private var relayState: RelayConnection.State?
     private var listeners: [Task<Void, Never>] = []
     private var waiting: [Int] = []
-    private var handshakeTimer: Task<Void, Never>?
-    private var grantSerial = 0
-    private var holder: Int?
+    private var grant: Grant = .free
     private var winner: Int?
     private var hostWasOffline = false
     /// While pairing: the relay leg joined, or `relayUnreachable` went out, this race.
@@ -265,8 +283,7 @@ public actor RacingConnection {
         raceBegan = .now
         again?.cancel()
         again = nil
-        handshakeTimer?.cancel()
-        handshakeTimer = nil
+        grant.release()
         for task in listeners + timers { task.cancel() }
         listeners = []
         timers = []
@@ -279,7 +296,6 @@ public actor RacingConnection {
         started = []
         relayState = nil
         waiting = []
-        holder = nil
         winner = nil
         hostWasOffline = false
         relayReached = false
@@ -417,10 +433,11 @@ public actor RacingConnection {
 
     private func ready(_ id: Int, _ round: Int) async {
         guard round == self.round, legs[id] != nil else { return }
-        if holder == nil || holder == id || winner == id {
+        if grant.leg == nil || grant.leg == id || winner == id {
             await give(id)
         } else if !waiting.contains(id) {
             waiting.append(id)
+            armGrace()
         }
     }
 
@@ -437,43 +454,54 @@ public actor RacingConnection {
     }
 
     private func give(_ id: Int) async {
-        holder = id
-        grantSerial += 1
-        let serial = grantSerial
+        grant.release()
+        let serial = UUID()
+        grant = .held(leg: id, serial: serial, grace: nil)
         let round = round
-        handshakeTimer?.cancel()
         let granted = await legs[id]?.grant() == true
-        guard round == self.round, holder == id, serial == grantSerial else { return }
+        guard round == self.round, case .held(id, serial, _) = grant else { return }
         if granted {
-            guard id != relayID, winner == nil, let relayID, legs[relayID] != nil else { return }
-            let sleep = sleep
-            handshakeTimer = Task { [weak self] in
-                do { try await sleep(RacePolicy.directHandshakeTimeout) } catch { return }
-                await self?.handshakeExpired(id, round, serial)
-            }
+            armGrace()
             return
         }
-        holder = nil
+        grant.release()
         await next()
     }
 
-    private func handshakeExpired(_ id: Int, _ round: Int, _ serial: Int) async {
-        guard round == self.round, serial == grantSerial, winner == nil, holder == id,
-              let relayID, legs[relayID] != nil, let leg = legs[id] else { return }
+    private var canFallBack: Bool {
+        relayID.flatMap { legs[$0] } != nil || waiting.contains { $0 != grant.leg && legs[$0] != nil }
+    }
+
+    private func armGrace() {
+        guard case .held(let id, let serial, nil) = grant, id != relayID, winner == nil, canFallBack else { return }
+        let round = round
+        let sleep = sleep
+        let grace = Task { [weak self] in
+            do { try await sleep(RacePolicy.directHandshakeTimeout) } catch { return }
+            await self?.handshakeExpired(id, round, serial)
+        }
+        grant = .held(leg: id, serial: serial, grace: grace)
+    }
+
+    private func handshakeExpired(_ id: Int, _ round: Int, _ serial: UUID) async {
+        guard round == self.round, case .held(id, serial, _) = grant, winner == nil,
+              let leg = legs[id] else { return }
+        grant.cancelGrace()
+        guard canFallBack else { return }
         recordFailure(id)
         legs[id] = nil
         waiting.removeAll { $0 == id }
         connectionLog.info("race \(round, privacy: .public): direct handshake stalled, falling back")
         await leg.stop()
-        guard round == self.round else { return }
-        holder = nil
-        launch(relayID, round)
+        guard round == self.round, case .held(id, serial, _) = grant else { return }
+        grant.release()
+        if let relayID { launch(relayID, round) }
         hurry()
         await next()
     }
 
     private func next() async {
-        while holder == nil, !waiting.isEmpty {
+        while grant.leg == nil, !waiting.isEmpty {
             let id = waiting.removeFirst()
             guard legs[id] != nil else { continue }
             return await give(id)
@@ -487,7 +515,7 @@ public actor RacingConnection {
             if id != relayID, let room = pairing.roomId, let leg = legs[id] {
                 failures.clear(leg.key, room: room, network: raceNetwork)
             }
-            handshakeTimer?.cancel()
+            grant.cancelGrace()
             unversionedWire = peer.capabilities.contains(UnversionedWire.capability)
             let won = winner != id
             if id == winner, id == relayID, hostWasOffline {
@@ -507,7 +535,7 @@ public actor RacingConnection {
                 let label = legs[id]?.label ?? "leg"
                 connectionLog.info("race \(round, privacy: .public) won by \(label, privacy: .public) after \((ContinuousClock.now - self.raceBegan).ms, privacy: .public) ms")
                 winner = id
-                holder = id
+                grant = .held(leg: id, serial: UUID(), grace: nil)
                 waiting = []
                 for timer in timers { timer.cancel() }
                 timers = []
@@ -528,9 +556,9 @@ public actor RacingConnection {
             }
             continuation?.yield(.sessionOpen(peer))
         case .state(let new):
-            if holder == id, new != .handshaking, new != .ready {
+            if grant.leg == id, new != .handshaking, new != .ready {
                 recordFailure(id)
-                handshakeTimer?.cancel()
+                grant.cancelGrace()
             }
             let refused = if case .pairingFailed = new { true } else { false }
             if id == relayID, pairing.secret != nil, !relayReached, refused || new == .offline {
@@ -544,8 +572,8 @@ public actor RacingConnection {
                 relayState = new
                 legs[id] = nil
                 waiting.removeAll { $0 == id }
-                if holder == id {
-                    holder = nil
+                if grant.leg == id {
+                    grant.release()
                     await next()
                 }
                 return await leg.stop()
@@ -568,7 +596,7 @@ public actor RacingConnection {
                 connectionLog.info("\(leg.label, privacy: .public) session lost (\(String(describing: new), privacy: .public)) after \(lived.ms, privacy: .public) ms, quick losses \(self.quickLosses, privacy: .public); racing again in \(String(describing: pause), privacy: .public)")
                 legs[id] = nil
                 winner = nil
-                holder = nil
+                grant.release()
                 set(.connecting)
                 rerace(after: pause)
                 return await leg.stop()
@@ -580,8 +608,8 @@ public actor RacingConnection {
             // `.ready` comes just before `.sessionOpen`; the holder keeps its turn through both.
             if new != .handshaking && new != .ready {
                 waiting.removeAll { $0 == id }
-                if holder == id {
-                    holder = nil
+                if grant.leg == id {
+                    grant.release()
                     await next()
                 }
             }

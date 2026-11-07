@@ -38,12 +38,13 @@ struct RootView: View {
             switch phase {
             #if os(iOS)
             case .background:
+                let visit = model.enterBackground()
                 let task = UIApplication.shared.beginBackgroundTask(withName: "Sending messages")
                 Task {
+                    defer { UIApplication.shared.endBackgroundTask(task) }
                     _ = await model.waitUntilSent(limit: .seconds(25))
                     await YorozuActivities.shared?.waitUntilReported(limit: .seconds(5))
-                    model.suspend()
-                    UIApplication.shared.endBackgroundTask(task)
+                    model.suspend(visit: visit)
                 }
             #endif
             case .active:
@@ -62,7 +63,17 @@ struct RootView: View {
             default: break
             }
         }
-        .onChange(of: scenePhase, initial: true) { _, phase in model.setActive(phase == .active) }
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            switch phase {
+            case .active: model.setActive(true)
+            case .inactive: model.setActive(false)
+            // iOS skips this to preserve the background visit set by enterBackground().
+            #if !os(iOS)
+            case .background: model.setActive(false)
+            #endif
+            default: break
+            }
+        }
         .yorozuTint()
         .yorozuAppearance()
     }
