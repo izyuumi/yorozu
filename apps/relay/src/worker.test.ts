@@ -335,7 +335,7 @@ test("presence survives hibernation: it is read off the live sockets, not rememb
 
 type Call = { url: string; headers: Headers; body: any };
 
-function fakeApns(status: (url: string) => number = () => 200): Call[] {
+function fakeApns(status: (url: string) => number | Promise<number> = () => 200): Call[] {
   apns.resetToken();
   const calls: Call[] = [];
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -344,7 +344,7 @@ function fakeApns(status: (url: string) => number = () => 200): Call[] {
       headers: new Headers(init?.headers),
       body: JSON.parse(String(init?.body)),
     });
-    const code = status(String(input));
+    const code = await status(String(input));
     return new Response(code === 400 ? JSON.stringify({ reason: "BadDeviceToken" }) : null, {
       status: code,
     });
@@ -414,6 +414,84 @@ const record = async (room: string, pubkey: string): Promise<any> => {
     state.storage.get(`push:${pubkey}`),
   );
 };
+
+test("v0.13.0 app join shapes need no new fields", async () => {
+  const macKeys = await keypair();
+  const name = await roomId(macKeys.pub);
+  const mac = await connectMac(macKeys);
+  // These helpers send exactly the shipped token and nonce join fields.
+  const { phone, keys } = await connectPhone(name, await mintToken(mac));
+  const joined = { type: "joined", roomId: name, ownerOnline: true, flowControl: true };
+  expect(await phone.next()).toEqual(joined);
+
+  const checkPushAndFlow = async (peer: Client, deviceToken: string) => {
+    peer.send({ type: "push", deviceToken });
+    await settled(peer);
+    expect(await record(name, keys.pub)).toEqual({ deviceToken });
+    // Exceed the unacknowledged window: ignoring the old flowAck shape would close this peer.
+    const payload = "x".repeat(128 * 1024);
+    for (let i = 0; i < 18; i++) {
+      await frame(mac, payload, macKeys);
+      const received = await peer.next();
+      expect(received).toMatchObject({ type: "frame", payload, flowBytes: expect.any(Number) });
+      peer.send({ type: "flowAck", bytes: String(received.flowBytes) });
+      await settled(peer);
+    }
+    peer.send({ type: "ping" });
+    expect(await Promise.race([peer.next(), peer.closed()])).toEqual({ type: "pong" });
+  };
+
+  await checkPushAndFlow(phone, DEVICE_TOKEN);
+  phone.close();
+  await quiet(name, 1);
+  const back = await rejoin(name, keys);
+  expect(await back.next()).toEqual(joined);
+  await checkPushAndFlow(back, SECOND_DEVICE_TOKEN);
+});
+
+test.each([
+  { situation: "revoke", code: 4001, reason: "revoked" },
+  { situation: "nonce join after the host announced the device away", code: 4001, reason: "unknown device" },
+  { situation: "spent token", code: 4001, reason: "unknown token" },
+  { situation: "unknown token", code: 4001, reason: "unknown token" },
+  { situation: "expired token", code: 4001, reason: "expired token" },
+  { situation: "unknown nonce device before the host announced", code: 4011, reason: "host offline" },
+])("close reasons old apps act on are unchanged for unchanged situations ($situation)", async ({ situation, code, reason }) => {
+  const macKeys = await keypair();
+  const name = await roomId(macKeys.pub);
+  const mac = await connectMac(macKeys);
+  let refused: Client;
+  if (situation === "revoke" || situation === "nonce join after the host announced the device away") {
+    const { phone, keys } = await connectPhone(name, await mintToken(mac));
+    expect(await phone.next()).toMatchObject({ type: "joined" });
+    mac.send({ type: "devices", devices: [keys.pub] });
+    await macSettled(mac);
+    if (situation === "revoke") {
+      mac.send({ type: "revoke", pubkey: keys.pub });
+      refused = phone;
+    } else {
+      phone.close();
+      await quiet(name, 1);
+      mac.send({ type: "devices", devices: [] });
+      await macSettled(mac);
+      refused = await rejoin(name, keys);
+    }
+  } else if (situation === "unknown nonce device before the host announced") {
+    refused = await rejoin(name, await keypair());
+  } else {
+    const token = situation === "unknown token" ? "no-such-token" : await mintToken(mac);
+    if (situation === "spent token") {
+      expect(await (await connectPhone(name, token)).phone.next()).toMatchObject({ type: "joined" });
+    } else if (situation === "expired token") {
+      await runInDurableObject(room(name), (_instance, state) =>
+        state.storage.put(`t:${token}`, Date.now() - 1),
+      );
+    }
+    refused = (await connectPhone(name, token)).phone;
+  }
+  expect(await refused.closed()).toBe(code);
+  expect(await refused.closedReason()).toBe(reason);
+});
 
 const wake = (name: string) => runInDurableObject(room(name), (instance) =>
   (instance as unknown as { wake(notify: Notify, now: number): Promise<void> }).wake(
@@ -515,43 +593,192 @@ test("revoke forgets a host-registered push token", async () => {
   expect(calls).toHaveLength(0);
 });
 
-test("evicting the oldest device removes its push registration and socket", async () => {
+test("a full room keeps every device the host listed: the oldest rejoins without any announce", async () => {
   const { mac, phone, keys, room: name } = await paired();
+  const others = await Promise.all(Array.from({ length: MAX_DEVICES - 1 }, () => keypair()));
+  const devices = [keys.pub, ...others.map((device) => device.pub)];
+  mac.send({ type: "devices", devices });
+  await macSettled(mac);
   await runInDurableObject(room(name), async (_instance, state) => {
+    for (const [at, pubkey] of devices.entries()) await state.storage.put(`p:${pubkey}`, at);
+  });
+
+  const next = await connectPhone(name, await mintToken(mac));
+  expect(await next.phone.next()).toMatchObject({ type: "joined" });
+  phone.send({ type: "ping" });
+  expect(await Promise.race([phone.next(), phone.closed()])).toEqual({ type: "pong" });
+  expect(await record(name, keys.pub)).toEqual({ deviceToken: DEVICE_TOKEN });
+  expect(await (await rejoin(name, keys)).next()).toMatchObject({ type: "joined" });
+});
+
+test("INTENDED CHANGE: at the pending bound a fresh token join waits instead of evicting", async () => {
+  // Roster fix, not equivalence: v0.13.0 evicted the oldest with "revoked", unpairing its app.
+  const macKeys = await keypair();
+  const name = await roomId(macKeys.pub);
+  const mac = await connectMac(macKeys);
+  mac.send({ type: "devices", devices: [] });
+  const devices = [];
+  for (let i = 0; i < 16; i++) {
+    const device = await connectPhone(name, await mintToken(mac));
+    expect(await device.phone.next()).toMatchObject({ type: "joined" });
+    devices.push(device);
+  }
+  const oldest = devices[0]!;
+  expect(await (await rejoin(name, oldest.keys)).next()).toMatchObject({ type: "joined" });
+  // A lagging announce keeps connected devices pending, so it cannot free pending capacity.
+  mac.send({ type: "devices", devices: [] });
+  const token = await mintToken(mac);
+  const refused = await connectPhone(name, token);
+  expect(await Promise.race([refused.phone.next(), refused.phone.closed()])).toBe(4011);
+  expect(await refused.phone.closedReason()).toBe("host offline");
+  for (const { phone } of devices) {
+    phone.send({ type: "ping" });
+    expect(await Promise.race([phone.next(), phone.closed()])).toEqual({ type: "pong" });
+  }
+  const unknown = await rejoin(name, refused.keys);
+  expect(await unknown.closed()).toBe(4001);
+  expect(await unknown.closedReason()).toBe("unknown device");
+
+  mac.send({ type: "devices", devices: devices.map(({ keys }) => keys.pub) });
+  await macSettled(mac);
+  const retry = await connect(name);
+  await retry.next();
+  retry.send({ type: "join", roomId: name, token, phonePubkey: refused.keys.pub,
+    sig: await sign(token, refused.keys) });
+  expect(await retry.next()).toMatchObject({ type: "joined" });
+});
+
+async function pendingRoom() {
+  const host = await keypair();
+  const name = await roomId(host.pub);
+  const mac = await connectMac(host);
+  const devices = [];
+  // Consume each batch before minting more: at most eight live tokens.
+  for (let batch = 0; batch < 2; batch++) {
+    const tokens = [];
+    for (let i = 0; i < 8; i++) tokens.push(await mintToken(mac));
+    for (const token of tokens) {
+      const device = await connectPhone(name, token);
+      expect(await device.phone.next()).toMatchObject({ type: "joined" });
+      devices.push(device);
+    }
+  }
+  await runInDurableObject(room(name), async (_instance, state) => {
+    expect(await state.storage.get("roster")).toBe("unconfirmed");
+    expect((await state.storage.list({ prefix: "p:" })).size).toBe(16);
+  });
+  return { mac, name, devices };
+}
+
+test.each(["nonce", "token"] as const)(
+  "a host-known device refused at the pending bound joins after the host re-announces, token kept (%s)",
+  async (mode) => {
+    const { mac, name, devices } = await pendingRoom();
+    const keys = await keypair();
+    const token = await mintToken(mac);
+    const tokenJoin = async () => {
+      const phone = await connect(name);
+      await phone.next();
+      phone.send({ type: "join", roomId: name, phonePubkey: keys.pub, token, sig: await sign(token, keys) });
+      return phone;
+    };
+    const assertConnected = async () => {
+      for (const { phone } of devices) {
+        phone.send({ type: "ping" });
+        expect(await Promise.race([phone.next(), phone.closed()])).toEqual({ type: "pong" });
+      }
+    };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const refused = await tokenJoin();
+      expect(await Promise.race([refused.next(), refused.closed()])).toBe(4011);
+      expect(await refused.closedReason()).toBe("host offline");
+      expect(await stored(name)).toContain(`t:${token}`);
+      await assertConnected();
+    }
+    mac.send({ type: "devices", devices: [...devices.map(({ keys }) => keys.pub), keys.pub] });
+    await macSettled(mac);
+    const admitted = mode === "nonce" ? await rejoin(name, keys) : await tokenJoin();
+    expect(await Promise.race([admitted.next(), admitted.closed()])).toMatchObject({ type: "joined" });
+    await assertConnected();
+    if (mode === "nonce") expect(await stored(name)).toContain(`t:${token}`);
+    if (mode === "token") {
+      expect(await stored(name)).not.toContain(`t:${token}`);
+      const spent = await tokenJoin();
+      expect(await spent.closed()).toBe(4001);
+      expect(await spent.closedReason()).toBe("unknown token");
+      await assertConnected();
+    }
+  },
+);
+
+test("an announce that drops pending rows frees the bound for a fresh pairing", async () => {
+  const { mac, name, devices } = await pendingRoom();
+  await vi.waitFor(() => expect(mac.phones.at(-1)).toBe(16));
+  for (const { phone } of devices.slice(8)) {
+    phone.close();
+  }
+  // Wait for the relay to observe departures; a client close need not echo a close event.
+  await vi.waitFor(() => expect(mac.phones.at(-1)).toBe(8));
+  await quiet(name, 9);
+  mac.send({ type: "devices", devices: devices.slice(0, 8).map(({ keys }) => keys.pub) });
+  await macSettled(mac);
+  const fresh = await connectPhone(name, await mintToken(mac));
+  expect(await Promise.race([fresh.phone.next(), fresh.phone.closed()])).toMatchObject({ type: "joined" });
+  for (const { keys } of devices.slice(8)) expect(await stored(name)).not.toContain(`p:${keys.pub}`);
+  for (const { phone } of devices.slice(0, 8)) {
+    phone.send({ type: "ping" });
+    expect(await Promise.race([phone.next(), phone.closed()])).toEqual({ type: "pong" });
+  }
+});
+
+test("an explicit revoke stays terminal", async () => {
+  const { mac, phone, keys, room: name } = await paired();
+  mac.send({ type: "devices", devices: [keys.pub] });
+  mac.send({ type: "revoke", pubkey: keys.pub });
+  expect(await phone.closed()).toBe(4001);
+  expect(await phone.closedReason()).toBe("revoked");
+  const retry = await rejoin(name, keys);
+  expect(await retry.closed()).toBe(4001);
+  expect(await retry.closedReason()).toBe("unknown device");
+});
+
+test("an announce that omits a device still makes it unknown", async () => {
+  const { mac, phone, keys, room: name } = await paired();
+  mac.send({ type: "devices", devices: [keys.pub] });
+  await macSettled(mac);
+  phone.close();
+  await quiet(name, 1);
+  mac.send({ type: "devices", devices: [] });
+  await macSettled(mac);
+  const unknown = await rejoin(name, keys);
+  expect(await unknown.closed()).toBe(4001);
+  expect(await unknown.closedReason()).toBe("unknown device");
+});
+
+test.each(["host", "unconfirmed"] as const)("legacy numeric rows are classified before a new host register (%s)", async (roster) => {
+  const { macKeys, mac, phone, keys, room: name } = await paired();
+  await runInDurableObject(room(name), async (_instance, state) => {
+    await state.storage.delete("vouched");
+    await state.storage.put("roster", roster);
     await state.storage.put(`p:${keys.pub}`, 0);
     for (let i = 1; i < MAX_DEVICES; i++) await state.storage.put(`p:known-${i}`, i);
   });
-
-  const next = await connectPhone(name, await mintToken(mac));
-  expect(await next.phone.next()).toMatchObject({ type: "joined" });
-  expect(await record(name, keys.pub)).toBeUndefined();
-  expect(await phone.closed()).toBe(4001);
-});
-
-test("host push refresh keeps the oldest device when a new token join evicts the next oldest", async () => {
-  const { mac, phone, keys, room: name } = await paired();
-  const second = await connectPhone(name, await mintToken(mac));
-  expect(await second.phone.next()).toMatchObject({ type: "joined" });
-  await runInDurableObject(room(name), async (_instance, state) => {
-    await state.storage.put(`p:${keys.pub}`, 0);
-    await state.storage.put(`p:${second.keys.pub}`, 1);
-    for (let i = 2; i < MAX_DEVICES; i++) await state.storage.put(`p:known-${i}`, i);
-  });
-  mac.send({ type: "push", device: keys.pub, token: DEVICE_TOKEN });
-  await macSettled(mac);
-
-  const next = await connectPhone(name, await mintToken(mac));
-  expect(await next.phone.next()).toMatchObject({ type: "joined" });
-  await runInDurableObject(room(name), async (_instance, state) => {
-    const devices = await state.storage.list<number>({ prefix: "p:" });
-    expect(devices.size).toBe(MAX_DEVICES);
-    expect(devices.has(`p:${keys.pub}`)).toBe(true);
-    expect(devices.has(`p:${second.keys.pub}`)).toBe(false);
-  });
+  mac.close();
+  expect(await phone.next()).toMatchObject({ type: "owner", online: false });
+  const back = await connectMac(macKeys);
+  expect(await phone.next()).toMatchObject({ type: "owner", online: true });
+  // Timestamp refresh must preserve the row's provenance.
+  back.send({ type: "push", device: keys.pub, token: DEVICE_TOKEN });
+  const next = await connectPhone(name, await mintToken(back));
+  if (roster === "host") {
+    expect(await next.phone.next()).toMatchObject({ type: "joined" });
+  } else {
+    expect(await Promise.race([next.phone.next(), next.phone.closed()])).toBe(CLOSE_HOST_OFFLINE);
+  }
   expect(await record(name, keys.pub)).toEqual({ deviceToken: DEVICE_TOKEN });
-  expect(await second.phone.closed()).toBe(4001);
   phone.send({ type: "ping" });
   expect(await phone.next()).toEqual({ type: "pong" });
+  expect(await (await rejoin(name, keys)).next()).toMatchObject({ type: "joined" });
 });
 
 test("an unjoined socket cannot register push, and only the mac may notify", async () => {
@@ -1051,12 +1278,152 @@ const activityPush = (device: string, extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-test("a relay that can push says so when the host registers", async () => {
+test("registered only adds fields", async () => {
   const keys = await keypair();
-  const mac = await connect(await roomId(keys.pub));
+  const name = await roomId(keys.pub);
+  const mac = await connect(name);
   const { nonce } = await mac.next();
   mac.send({ type: "register", pubkey: keys.pub, nonceSig: await sign(nonce, keys) });
-  expect(await mac.next()).toMatchObject({ type: "registered", liveActivity: true });
+  const { activityTimestamp, ...legacy } = await mac.next();
+  expect(legacy).toEqual({ type: "registered", roomId: name, phones: 0, pushProxy: true, liveActivity: true });
+  expect(activityTimestamp).toBe(true);
+});
+
+test("a v0.13.0 host flow with no new fields works unchanged", async () => {
+  const calls = fakeApns();
+  const macKeys = await keypair();
+  const name = await roomId(macKeys.pub);
+  const mac = await connectMac(macKeys);
+  mac.send({ type: "devices", devices: [] });
+  const { phone, keys } = await connectPhone(name, await mintToken(mac));
+  expect(await phone.next()).toMatchObject({ type: "joined", ownerOnline: true });
+  phone.send({ type: "push", deviceToken: DEVICE_TOKEN });
+  await settled(phone);
+  mac.send({ type: "activityToken", device: keys.pub, token: ACTIVITY_TOKEN });
+  await macSettled(mac);
+
+  const now = Date.now();
+  await tightBudgets(name, now)(JSON.stringify(activityPush(keys.pub)));
+  await vi.waitFor(() => expect(calls).toHaveLength(1));
+  expect(calls[0]!.url).toBe(`https://apns.test/3/device/${ACTIVITY_TOKEN}`);
+  expect(Object.keys(calls[0]!.body.aps).sort()).toEqual(["content-state", "event", "stale-date", "timestamp"]);
+  expect(calls[0]!.body.aps.timestamp).toBe(Math.floor(now / 1000));
+
+  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
+  await vi.waitFor(() => expect(calls).toHaveLength(2));
+  expect(calls[1]!.url).toBe(`https://apns.test/3/device/${DEVICE_TOKEN}`);
+  expect(calls[1]!.headers.get("apns-push-type")).toBe("alert");
+  mac.send({ type: "ack", seq: 0 });
+  mac.send({ type: "ping" });
+  expect(await mac.next()).toEqual({ type: "pong" });
+  expect(mac.ws.readyState).toBe(WebSocket.OPEN);
+});
+
+test("a relay without APNs advertises neither liveActivity nor activityTimestamp", async () => {
+  const calls = fakeApns();
+  const keys = await keypair();
+  const name = await roomId(keys.pub);
+  const mac = await connect(name);
+  const { nonce } = await mac.next();
+  const register = { type: "register", pubkey: keys.pub, nonceSig: await sign(nonce, keys) };
+  const device = (await keypair()).pub;
+  await runInDurableObject(room(name), async (_instance, state) => {
+    const withoutApns = { ...(env as unknown as Env) };
+    delete withoutApns.APNS_KEY_ID;
+    delete withoutApns.APNS_TEAM_ID;
+    delete withoutApns.APNS_KEY_P8;
+    delete withoutApns.APNS_HOST;
+    delete withoutApns.APNS_SANDBOX_HOST;
+    delete withoutApns.APNS_TOPIC;
+    const awake = new Room(state, withoutApns);
+    const socket = state.getWebSockets()[0]!;
+    await awake.webSocketMessage(socket, JSON.stringify(register));
+    await awake.webSocketMessage(socket, JSON.stringify({ type: "devices", devices: [device] }));
+    await awake.webSocketMessage(socket, JSON.stringify({ type: "activityToken", device, token: ACTIVITY_TOKEN }));
+    expect(await state.storage.get(`activity:${device}`)).toEqual({ token: ACTIVITY_TOKEN });
+    await awake.webSocketMessage(socket, JSON.stringify(activityPush(device)));
+    await (awake as unknown as { activityTail: Promise<unknown> }).activityTail;
+    await awake.webSocketMessage(socket, JSON.stringify({ type: "ping" }));
+  });
+  const registered = await mac.next();
+  expect(registered).toMatchObject({ type: "registered", roomId: name });
+  expect(registered).not.toHaveProperty("liveActivity");
+  expect(registered).not.toHaveProperty("activityTimestamp");
+  expect(await mac.next()).toEqual({ type: "pong" });
+  expect(mac.ws.readyState).toBe(WebSocket.OPEN);
+  expect(calls).toHaveLength(0);
+});
+
+test("an activity push queued before a new activity token is never sent to the new token", async () => {
+  let release!: (status: number) => void;
+  const blocked = new Promise<number>((resolve) => { release = resolve; });
+  const calls = fakeApns(() => calls.length === 1 ? blocked : 200);
+  const { mac, keys, room: name } = await withActivity();
+  try {
+    mac.send(activityPush(keys.pub, { priority: 10 }));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    mac.send(activityPush(keys.pub));
+    mac.send({ type: "activityToken", device: keys.pub, token: REPLACEMENT_TOKEN });
+    await macSettled(mac);
+    expect(await activityRecord(name, keys.pub)).toEqual({ token: REPLACEMENT_TOKEN });
+  } finally {
+    release(200);
+  }
+  await runInDurableObject(room(name), async (instance) => {
+    await (instance as unknown as { activityTail: Promise<unknown> }).activityTail;
+  });
+  expect(calls).toHaveLength(1);
+
+  mac.send(activityPush(keys.pub, { priority: 10 }));
+  await vi.waitFor(() => expect(calls).toHaveLength(2));
+  expect(calls.map((call) => call.url)).toEqual([
+    `https://apns.test/3/device/${ACTIVITY_TOKEN}`,
+    `https://apns.test/3/device/${REPLACEMENT_TOKEN}`,
+  ]);
+});
+
+test.each(["revoked", "forgotten"])("a push queued before the device is revoked or the token forgotten is not sent (%s)", async (action) => {
+  let release!: (status: number) => void;
+  const blocked = new Promise<number>((resolve) => { release = resolve; });
+  const calls = fakeApns(() => calls.length === 1 ? blocked : 200);
+  const { mac, keys, room: name } = await withActivity();
+  try {
+    mac.send(activityPush(keys.pub));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    mac.send(activityPush(keys.pub));
+    mac.send(action === "revoked"
+      ? { type: "revoke", pubkey: keys.pub }
+      : { type: "activityToken", device: keys.pub });
+    await macSettled(mac);
+    expect(await activityRecord(name, keys.pub)).toBeUndefined();
+  } finally {
+    release(200);
+  }
+  await runInDurableObject(room(name), async (instance) => {
+    await (instance as unknown as { activityTail: Promise<unknown> }).activityTail;
+  });
+  expect(calls).toHaveLength(1);
+});
+
+test("an activity push passes the host timestamp unchanged or defaults to relay time", async () => {
+  const calls = fakeApns();
+  const { mac, keys, room: name } = await withActivity();
+  const now = 1_800_000_000_999;
+  const deliver = tightBudgets(name, now);
+  await deliver(JSON.stringify(activityPush(keys.pub, { timestamp: 9_000_000_000_000_000 })));
+  await vi.waitFor(() => expect(calls).toHaveLength(1));
+  await deliver(JSON.stringify(activityPush(keys.pub)));
+  await vi.waitFor(() => expect(calls).toHaveLength(2));
+  expect(calls.map((call) => call.body.aps.timestamp)).toEqual([9_000_000_000_000_000, 1_800_000_000]);
+});
+
+test.each([0, -1, 1.5, "1", 2 ** 53])("a malformed activity timestamp closes the host socket (%s)", async (timestamp) => {
+  const calls = fakeApns();
+  const { mac, keys } = await withActivity();
+  mac.send(activityPush(keys.pub, { timestamp }));
+  expect(await mac.closed()).toBe(4001);
+  expect(await mac.closedReason()).toBe("bad activity push");
+  expect(calls).toHaveLength(0);
 });
 
 test("a live activity push carries counts only, to the activity topic, with no alert", async () => {

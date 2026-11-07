@@ -148,20 +148,6 @@ export const parseDevices = (msg: Record<string, unknown>, cap = MAX_DEVICES): D
     ? { devices: (msg.devices as string[]).slice(-cap) }
     : null;
 
-export function evictions(
-  known: readonly [pubkey: string, at: number][],
-  pubkey: string,
-  cap = MAX_DEVICES,
-): string[] {
-  if (known.some(([key]) => key === pubkey)) return [];
-  const surplus = known.length - cap + 1;
-  if (surplus <= 0) return [];
-  return [...known]
-    .sort(([, a], [, b]) => a - b)
-    .slice(0, surplus)
-    .map(([key]) => key);
-}
-
 export const NOTIFY_CLASSES = ["reply", "approval", "done", "failed"] as const;
 export type NotifyClass = (typeof NOTIFY_CLASSES)[number];
 
@@ -287,6 +273,7 @@ export type ActivityPush = {
   event: "update" | "end";
   state: ActivityState;
   priority: 5 | 10;
+  timestamp?: number;
   staleDate?: number;
   dismissalDate?: number;
 };
@@ -347,6 +334,7 @@ export const parseActivityPush = (msg: Record<string, unknown>): ActivityPush | 
   if (!deviceKey(msg.device) || typeof msg.event !== "string") return null;
   if (msg.event !== "update" && msg.event !== "end") return undefined;
   if (msg.priority !== 5 && msg.priority !== 10) return null;
+  if (msg.timestamp !== undefined && !epochSeconds(msg.timestamp)) return null;
   if (msg.staleDate !== undefined && !epochSeconds(msg.staleDate)) return null;
   if (msg.dismissalDate !== undefined && !epochSeconds(msg.dismissalDate)) return null;
   const state = parseActivityState(msg.state);
@@ -356,6 +344,7 @@ export const parseActivityPush = (msg: Record<string, unknown>): ActivityPush | 
     event: msg.event as ActivityPush["event"],
     state,
     priority: msg.priority as ActivityPush["priority"],
+    ...(msg.timestamp !== undefined ? { timestamp: msg.timestamp as number } : {}),
     ...(msg.staleDate !== undefined ? { staleDate: msg.staleDate as number } : {}),
     ...(msg.dismissalDate !== undefined ? { dismissalDate: msg.dismissalDate as number } : {}),
   };
@@ -365,7 +354,7 @@ export const parseActivityPush = (msg: Record<string, unknown>): ActivityPush | 
 export function activityPayload(push: ActivityPush, now: number): unknown {
   return {
     aps: {
-      timestamp: Math.floor(now / 1000),
+      timestamp: push.timestamp ?? Math.floor(now / 1000),
       event: push.event,
       "content-state": push.state,
       ...(push.staleDate !== undefined ? { "stale-date": push.staleDate } : {}),

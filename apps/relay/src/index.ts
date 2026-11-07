@@ -12,11 +12,11 @@ import {
   CLOSE_PROTOCOL,
   CLOSE_RATE_LIMIT,
   dropCount,
-  evictions,
   frameWire,
   HOST_OFFLINE_REASON,
   newBucket,
   MAX_PAYLOAD_BYTES,
+  MAX_DEVICES,
   PHONE_BUFFER_CAP_BYTES,
   MAX_TOKENS_PER_ROOM,
   NOTIFY_PER_MINUTE,
@@ -92,6 +92,7 @@ type Room = {
   phones: Set<WebSocket>;
   tokens: Map<string, number>;
   devices: Map<string, number>;
+  vouched: Set<string>;
   /** The current host announced its devices; until then a nonce join of an unknown device retries. */
   announced: boolean;
   pushTokens: Map<string, string>;
@@ -115,6 +116,7 @@ function newRoom(): Room {
     phones: new Set(),
     tokens: new Map(),
     devices: new Map(),
+    vouched: new Set(),
     announced: false,
     pushTokens: new Map(),
     buffer: [],
@@ -194,6 +196,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
     const gone = new Set(pubkeys);
     for (const pubkey of gone) {
       room.devices.delete(pubkey);
+      room.vouched.delete(pubkey);
       room.pushTokens.delete(pubkey);
     }
     for (const phone of room.phones) {
@@ -202,9 +205,11 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
     }
   };
 
-  const remember = (room: Room, pubkey: string, now: number): void => {
-    forget(room, evictions([...room.devices], pubkey));
+  const remember = (room: Room, pubkey: string, now: number): boolean => {
+    if (!room.devices.has(pubkey)
+      && [...room.devices.keys()].filter((key) => !room.vouched.has(key)).length >= MAX_DEVICES) return false;
     room.devices.set(pubkey, now);
+    return true;
   };
 
   const dropRoomIfIdle = (id: string, room: Room): void => {
@@ -350,6 +355,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           const keep = new Set(announced.devices);
           const room = conn.room;
           room.announced = true;
+          room.vouched = new Set(announced.devices);
           for (const phone of room.phones) {
             const key = phoneKeys.get(phone);
             if (key) keep.add(key);
@@ -393,8 +399,8 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
             if (!verifySignature(token, sig, key)) {
               return ws.close(CLOSE_BAD_SIGNATURE, "bad join signature");
             }
+            if (!remember(room, phonePubkey, now)) return ws.close(CLOSE_HOST_OFFLINE, HOST_OFFLINE_REASON);
             room.tokens.delete(token);
-            remember(room, phonePubkey, now);
           }
           room.phones.add(ws);
           phoneKeys.set(ws, phonePubkey);

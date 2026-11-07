@@ -87,7 +87,7 @@ test("Hub sends hints immediately after peer_info and on change only to direct-c
   const received: Record<string, unknown[][]> = {};
   for (const [key, capabilities] of [["old", []], ["new", ["direct"]]] as const) {
     received[key] = [];
-    const entry = { session: { seal: (bytes: Uint8Array) => Buffer.from(bytes).toString() } as any,
+    const entry = { phase: "awaitingPeer" as const, session: { seal: (bytes: Uint8Array) => Buffer.from(bytes).toString() } as any,
       link: { path: "relay" as const, send: (payloads: string[]) => received[key]!.push(payloads.map((s) => JSON.parse(s))) } };
     hub.served.set(key, entry);
     await hub.handle({ deviceKey: key, entry, plain: encodeEvent({ kind: "peer_info", data: { ...peer, capabilities: [...capabilities] } }) });

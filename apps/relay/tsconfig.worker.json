@@ -13,6 +13,8 @@
     "src/worker.ts",
     "src/protocol.ts",
     "src/apns.ts",
+    "compat/v0.13.0/src/**/*.ts",
+    "src/compat.test.ts",
     "src/worker.test.ts",
     "src/apns.test.ts"
   ]

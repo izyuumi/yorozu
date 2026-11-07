@@ -1,0 +1,111 @@
+{
+  "producer": "relay-roster-authority-6bfaab27",
+  "scenario": "announced",
+  "entries": [
+    [
+      "activity:O7QdCbLCN5hSO_CnhGDkW-mry_oJ4TiHiaezDklLIdE",
+      {
+        "token": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      }
+    ],
+    [
+      "owner",
+      "7PvLjovTrs0AjWOXGE6viIeQvpDPByCmWZNn0UZDEBg"
+    ],
+    [
+      "p:0kkUDoUrHy8jILc8P1V4KLZ2A2OxQLQS5d4YWQRlQNY",
+      1794040865713
+    ],
+    [
+      "p:O7QdCbLCN5hSO_CnhGDkW-mry_oJ4TiHiaezDklLIdE",
+      1794040865711
+    ],
+    [
+      "push:O7QdCbLCN5hSO_CnhGDkW-mry_oJ4TiHiaezDklLIdE",
+      {
+        "deviceToken": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ],
+    [
+      "roster",
+      "host"
+    ],
+    [
+      "seen",
+      1794040865711
+    ],
+    [
+      "t:AlCL90CiwxtBZgWcHVaASOgGVNAXAkQ7hHzKaBoVu4Q",
+      1794041465712
+    ],
+    [
+      "t:ELFYnKRh7tVOiAJ3BEKbDN8wwr_LLOI2W4ykhYjN_h8",
+      1794041465714
+    ],
+    [
+      "t:SYYrJK_mEjlG4Y1dM5qt1RX8B2DPifddsR3TRNrNs5g",
+      1794041465714
+    ],
+    [
+      "token-order",
+      [
+        "t:AlCL90CiwxtBZgWcHVaASOgGVNAXAkQ7hHzKaBoVu4Q",
+        "t:ELFYnKRh7tVOiAJ3BEKbDN8wwr_LLOI2W4ykhYjN_h8",
+        "t:SYYrJK_mEjlG4Y1dM5qt1RX8B2DPifddsR3TRNrNs5g"
+      ]
+    ],
+    [
+      "vouched",
+      [
+        "O7QdCbLCN5hSO_CnhGDkW-mry_oJ4TiHiaezDklLIdE",
+        "0kkUDoUrHy8jILc8P1V4KLZ2A2OxQLQS5d4YWQRlQNY"
+      ]
+    ]
+  ],
+  "keys": {
+    "host": {
+      "pub": "7PvLjovTrs0AjWOXGE6viIeQvpDPByCmWZNn0UZDEBg",
+      "priv": {
+        "kty": "OKP",
+        "key_ops": [
+          "sign"
+        ],
+        "alg": "EdDSA",
+        "ext": true,
+        "crv": "Ed25519",
+        "x": "7PvLjovTrs0AjWOXGE6viIeQvpDPByCmWZNn0UZDEBg",
+        "d": "oGpXT_eav1xAu7siAuB597KdyIwQqFbjV4i6D-KIzuw"
+      }
+    },
+    "devices": [
+      {
+        "pub": "O7QdCbLCN5hSO_CnhGDkW-mry_oJ4TiHiaezDklLIdE",
+        "priv": {
+          "kty": "OKP",
+          "key_ops": [
+            "sign"
+          ],
+          "alg": "EdDSA",
+          "ext": true,
+          "crv": "Ed25519",
+          "x": "O7QdCbLCN5hSO_CnhGDkW-mry_oJ4TiHiaezDklLIdE",
+          "d": "5UIPOfsWc6Rxc9yPiwmBjaqlv39Kp9j8FgkEYcw16os"
+        }
+      },
+      {
+        "pub": "0kkUDoUrHy8jILc8P1V4KLZ2A2OxQLQS5d4YWQRlQNY",
+        "priv": {
+          "kty": "OKP",
+          "key_ops": [
+            "sign"
+          ],
+          "alg": "EdDSA",
+          "ext": true,
+          "crv": "Ed25519",
+          "x": "0kkUDoUrHy8jILc8P1V4KLZ2A2OxQLQS5d4YWQRlQNY",
+          "d": "z0CwS6V0KphkpeeVwQPhLCllKupqxMtrkOuEQ5Ug6og"
+        }
+      }
+    ]
+  }
+}

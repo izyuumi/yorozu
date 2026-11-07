@@ -1,0 +1,60 @@
+{
+  "producer": "v0.13.0-6c09908c",
+  "scenario": "unannounced",
+  "entries": [
+    [
+      "owner",
+      "7n2zV3A-NFllN3bEZ8d59yI7-iz0iwHD1dNh9d8SnXg"
+    ],
+    [
+      "p:z0X-TaHp3oQj2n2-MBsSz-pOMeHURgdyCOC11gp3pxU",
+      1794038361831
+    ],
+    [
+      "seen",
+      1794038361831
+    ],
+    [
+      "t:Ypv_RJF6Ixv9FneY3qb__Wxq4aAY5byQAAG0AoI1CtM",
+      1794038961831
+    ],
+    [
+      "token-order",
+      [
+        "t:Ypv_RJF6Ixv9FneY3qb__Wxq4aAY5byQAAG0AoI1CtM"
+      ]
+    ]
+  ],
+  "keys": {
+    "host": {
+      "pub": "7n2zV3A-NFllN3bEZ8d59yI7-iz0iwHD1dNh9d8SnXg",
+      "priv": {
+        "kty": "OKP",
+        "key_ops": [
+          "sign"
+        ],
+        "alg": "EdDSA",
+        "ext": true,
+        "crv": "Ed25519",
+        "x": "7n2zV3A-NFllN3bEZ8d59yI7-iz0iwHD1dNh9d8SnXg",
+        "d": "WA39QoROMUucO7H3HLueKsYcNAX_DXU9edBicqS88Mg"
+      }
+    },
+    "devices": [
+      {
+        "pub": "z0X-TaHp3oQj2n2-MBsSz-pOMeHURgdyCOC11gp3pxU",
+        "priv": {
+          "kty": "OKP",
+          "key_ops": [
+            "sign"
+          ],
+          "alg": "EdDSA",
+          "ext": true,
+          "crv": "Ed25519",
+          "x": "z0X-TaHp3oQj2n2-MBsSz-pOMeHURgdyCOC11gp3pxU",
+          "d": "jrO8iegzngQ0oxJ7EP0HoO9UfgTXdUmJ5ny7TuisnME"
+        }
+      }
+    ]
+  }
+}

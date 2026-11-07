@@ -480,6 +480,38 @@ struct RaceTests {
         await racer.stop()
     }
 
+    @Test(arguments: [false, true])
+    func aRefusedRelayStillHandsAStalledGrantToTheNextDirectLeg(refusedAfterGraceArmed: Bool) async {
+        let racer = await racer(direct: 2, sleep: sleeps.controlled, secret: "sec")
+        let (relay, direct) = await round(1)
+        await started([relay, direct[0]])
+        await eventually("second direct scheduled") { await sleeps.asked.contains(.milliseconds(50)) }
+        await sleeps.release(.milliseconds(50))
+        await started(direct)
+        if !refusedAfterGraceArmed {
+            await relay.emit(.state(.pairingFailed("unknown device")))
+            await eventually("relay removed") { await relay.stopped }
+        }
+        await direct[0].becomeReady()
+        await eventually("first direct granted") { await direct[0].grants == 1 }
+        await direct[1].becomeReady()
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await direct[1].grants == 0)
+        await eventually("three second limit armed") { await sleeps.asked.contains(.seconds(3)) }
+        if refusedAfterGraceArmed {
+            await relay.emit(.state(.pairingFailed("unknown device")))
+            await eventually("relay removed") { await relay.stopped }
+        }
+        await sleeps.release(.seconds(3))
+        await eventually("stalled direct stopped") { await direct[0].stopped }
+        await eventually("next direct granted") { await direct[1].grants == 1 }
+        #expect(await direct[0].stopped)
+        #expect(await direct[1].grants == 1)
+        await direct[1].open()
+        await eventually("next direct opened") { await seen.opened == ["direct1"] }
+        await racer.stop()
+    }
+
     @Test func directWinsAndTheRelayIsClosed() async {
         let racer = await racer()
         let (relay, direct) = await round(1)
