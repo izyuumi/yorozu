@@ -4,6 +4,85 @@ import Testing
 @testable import YorozuWire
 
 struct RelayLegTests {
+    // Preventive coverage: no failing pairing-standing baseline. Expectations preserve the existing wire policy.
+    @Test func closeDecisionMatchesTheWirePolicy() {
+        let standings: [RelayConnection.Standing] = [.knownToRelay,
+            .codeOnly(retriedAsKnown: false), .codeOnly(retriedAsKnown: true),
+            .pairedDirect(retriedAsKnown: false), .pairedDirect(retriedAsKnown: true)]
+        let rows: [(String, [RelayConnection.CloseOutcome])] = [
+            ("revoked", Array(repeating: .terminal(.unpaired), count: 5)),
+            ("unknown device", [.terminal(.unpaired), .terminal(.pairingFailed("unknown device")),
+                .terminal(.pairingFailed("unknown device")), .retry, .retry]),
+            ("unknown token", [.terminal(.pairingFailed("unknown token")), .retryAsKnown,
+                .terminal(.pairingFailed("unknown token")), .retryAsKnown, .retry]),
+            ("expired token", [.terminal(.pairingFailed("expired token")), .terminal(.pairingFailed("expired token")),
+                .terminal(.pairingFailed("expired token")), .retryAsKnown, .retry]),
+            ("host offline", Array(repeating: .retry, count: 5)),
+            ("pairing expired", Array(repeating: .retry, count: 5)),
+            ("", Array(repeating: .retry, count: 5)),
+        ]
+        for (reason, outcomes) in rows {
+            for (standing, expected) in zip(standings, outcomes) {
+                let actual = RelayConnection.afterClose(reason: reason, standing: standing)
+                #expect(actual == expected, "reason: \(reason), standing: \(standing)")
+            }
+        }
+    }
+
+    // Preventive: no failing baseline; pins the allowed transitions.
+    @Test func standingTransitionsMatchTheAllowedPolicy() {
+        let rows: [(standing: RelayConnection.Standing, joined: RelayConnection.Standing,
+            retried: RelayConnection.Standing, opened: RelayConnection.Standing)] = [
+            (.knownToRelay, .knownToRelay, .knownToRelay, .knownToRelay),
+            (.codeOnly(retriedAsKnown: false), .knownToRelay,
+                .codeOnly(retriedAsKnown: true), .pairedDirect(retriedAsKnown: false)),
+            (.codeOnly(retriedAsKnown: true), .knownToRelay,
+                .codeOnly(retriedAsKnown: true), .pairedDirect(retriedAsKnown: true)),
+            (.pairedDirect(retriedAsKnown: false), .knownToRelay,
+                .pairedDirect(retriedAsKnown: true), .pairedDirect(retriedAsKnown: false)),
+            (.pairedDirect(retriedAsKnown: true), .knownToRelay,
+                .pairedDirect(retriedAsKnown: true), .pairedDirect(retriedAsKnown: true)),
+        ]
+        for row in rows {
+            #expect(row.standing.afterJoined() == row.joined, "standing: \(row.standing)")
+            #expect(row.standing.afterRetryAsKnown() == row.retried, "standing: \(row.standing)")
+            #expect(row.standing.afterSessionOpened() == row.opened, "standing: \(row.standing)")
+        }
+    }
+
+    // Preventive: no failing baseline; pins the allowed transitions.
+    @Test func knownToRelayIsAbsorbing() {
+        let standing = RelayConnection.Standing.knownToRelay
+        #expect(standing.afterJoined() == .knownToRelay)
+        #expect(standing.afterRetryAsKnown() == .knownToRelay)
+        #expect(standing.afterSessionOpened() == .knownToRelay)
+    }
+
+    // Preventive: no failing baseline; pins the allowed transitions.
+    @Test func retryAsKnownIsIdempotent() {
+        let standings: [RelayConnection.Standing] = [.knownToRelay,
+            .codeOnly(retriedAsKnown: false), .codeOnly(retriedAsKnown: true),
+            .pairedDirect(retriedAsKnown: false), .pairedDirect(retriedAsKnown: true)]
+        for standing in standings {
+            let once = standing.afterRetryAsKnown()
+            #expect(once.afterRetryAsKnown() == once, "standing: \(standing)")
+        }
+    }
+
+    // Preventive: no failing baseline; pins the allowed transitions.
+    @Test func closeNeverRetriesAsKnownTwice() {
+        let standings: [RelayConnection.Standing] = [
+            .codeOnly(retriedAsKnown: true), .pairedDirect(retriedAsKnown: true)]
+        let reasons = ["revoked", "unknown device", "unknown token", "expired token",
+            "host offline", "pairing expired", ""]
+        for standing in standings {
+            for reason in reasons {
+                #expect(RelayConnection.afterClose(reason: reason, standing: standing) != .retryAsKnown,
+                    "reason: \(reason), standing: \(standing)")
+            }
+        }
+    }
+
     @Test func aRelayLegAsksTheRaceAgainAfterTheHostReturns() async throws {
         let deadline = ContinuousClock.now + .seconds(8)
         let relay = try LoopbackRelay()
