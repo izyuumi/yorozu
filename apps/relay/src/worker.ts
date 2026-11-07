@@ -22,10 +22,10 @@ import {
   CLOSE_PROTOCOL,
   CLOSE_RATE_LIMIT,
   dropCount,
-  evictions,
   frameWire,
   isRoomId,
   MAX_PAYLOAD_BYTES,
+  MAX_DEVICES,
   PHONE_BUFFER_CAP_BYTES,
   MAX_TOKENS_PER_ROOM,
   newBucket,
@@ -145,6 +145,7 @@ const seenKey = "seen";
 
 const announcedKey = "announced";
 const rosterKey = "roster";
+const vouchedKey = "vouched";
 
 export class Room implements DurableObject {
   private tail: Promise<unknown> = Promise.resolve();
@@ -427,14 +428,28 @@ export class Room implements DurableObject {
     if (done.length > 0) await this.state.storage.delete(done);
   }
 
-  private async remember(pubkey: string, now: number): Promise<void> {
-    const known = [...(await this.state.storage.list<number>({ prefix: devicePrefix }))].map(
-      ([key, at]): [string, number] => [key.slice(devicePrefix.length), at],
-    );
-    const drop = evictions(known, pubkey);
-    if (drop.length > 0) await this.state.storage.put(rosterKey, "unconfirmed" satisfies Roster);
-    await this.forget(drop, "cache");
+  private async vouched(): Promise<Set<string>> {
+    const storage = this.state.storage;
+    const saved = await storage.get<string[]>(vouchedKey);
+    if (saved !== undefined) return new Set(saved);
+    // Keep p: timestamps backward-readable. Legacy rows are vouched under host authority, otherwise pending.
+    const legacy = await this.roster() === "host"
+      ? [...(await storage.list<number>({ prefix: devicePrefix })).keys()].map((key) => key.slice(devicePrefix.length))
+      : [];
+    await storage.put(vouchedKey, legacy);
+    return new Set(legacy);
+  }
+
+  private async remember(pubkey: string, now: number): Promise<boolean> {
+    const vouched = await this.vouched();
+    const known = await this.state.storage.list<number>({ prefix: devicePrefix });
+    // Rows outside the latest announce are pending; only a fresh row consumes pending capacity.
+    if (!known.has(devicePrefix + pubkey)
+      && [...known.keys()].filter((key) => !vouched.has(key.slice(devicePrefix.length))).length >= MAX_DEVICES) {
+      return false;
+    }
     await this.state.storage.put(devicePrefix + pubkey, now);
+    return true;
   }
 
   private async roster(): Promise<Roster> {
@@ -449,8 +464,11 @@ export class Room implements DurableObject {
     return migrated;
   }
 
-  private async forget(pubkeys: readonly string[], cause: "host" | "cache" = "host"): Promise<void> {
+  private async forget(pubkeys: readonly string[]): Promise<void> {
     if (pubkeys.length === 0) return;
+    const vouched = await this.vouched();
+    for (const key of pubkeys) vouched.delete(key);
+    await this.state.storage.put(vouchedKey, [...vouched]);
     await this.state.storage.delete(pubkeys.map((key) => devicePrefix + key));
     await this.state.storage.delete(pubkeys.map((key) => pushPrefix + key));
     await this.state.storage.delete(pubkeys.map((key) => activityPrefix + key));
@@ -458,8 +476,7 @@ export class Room implements DurableObject {
     for (const phone of this.sockets("phone")) {
       const key = (phone.deserializeAttachment() as Conn | null)?.key;
       if (key && gone.has(key)) {
-        this.drop(phone, cause === "host" ? CLOSE_PROTOCOL : CLOSE_HOST_OFFLINE,
-          cause === "host" ? "revoked" : HOST_OFFLINE_REASON);
+        this.drop(phone, CLOSE_PROTOCOL, "revoked");
       }
     }
   }
@@ -673,6 +690,8 @@ export class Room implements DurableObject {
         }
         // The room id is this key's hash, so a wiped room accepts its host again like a new one.
         if (owner === null) await storage.put("owner", pubkey);
+        // Preserve legacy provenance before this socket resets roster authority.
+        await this.vouched();
         await storage.put(rosterKey, "unconfirmed" satisfies Roster);
         await this.touch(now);
         for (const stale of this.sockets("mac")) {
@@ -750,6 +769,7 @@ export class Room implements DurableObject {
         for (const pubkey of keep) {
           if (!known.has(pubkey)) await storage.put(devicePrefix + pubkey, now);
         }
+        await storage.put(vouchedKey, announced.devices);
         await this.forget([...known].filter((pubkey) => !keep.has(pubkey)));
         await storage.put(rosterKey, "host" satisfies Roster);
         return;
@@ -781,8 +801,10 @@ export class Room implements DurableObject {
           if (!(await this.verify(token, sig, phonePubkey))) {
             return this.drop(ws, CLOSE_BAD_SIGNATURE, "bad join signature");
           }
+          if (!(await this.remember(phonePubkey, now))) {
+            return this.drop(ws, CLOSE_HOST_OFFLINE, HOST_OFFLINE_REASON);
+          }
           await storage.delete(tokenPrefix + token);
-          await this.remember(phonePubkey, now);
           await this.touch(now);
         }
         ws.serializeAttachment({ ...conn, role: "phone", key: phonePubkey } satisfies Conn);

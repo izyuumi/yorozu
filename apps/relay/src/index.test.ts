@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import WebSocket from "ws";
-import { AUTH_TIMEOUT_MS, CLOSE_POLICY, MAX_DEVICES, ROOM_ID } from "./protocol.js";
+import { AUTH_TIMEOUT_MS, CLOSE_HOST_OFFLINE, CLOSE_POLICY, MAX_DEVICES, ROOM_ID } from "./protocol.js";
 import { clientIp, roomId, signChallenge, startRelay, trustedHops, type Relay } from "./index.js";
 import { client, connectMac, connectPhone, keypair, mintToken, rejoinPhone, type Client } from "./testing.js";
 import { conformance, type Adapter } from "./conformance.test.js";
@@ -55,7 +55,7 @@ const adapter: Adapter = {
 
 conformance(adapter);
 
-test("host push refresh keeps the oldest device when a new token join evicts the next oldest", async () => {
+test("host push refresh preserves pending rows and a refused token works after announce", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   const macKeys = keypair();
   const mac = await connectMac(relay.port, macKeys);
@@ -74,15 +74,23 @@ test("host push refresh keeps the oldest device when a new token join evicts the
   const second = devices[1]!;
   vi.setSystemTime(Date.now() + 1_000);
   mac.send({ type: "push", device: oldest.keys.pub, token: "a".repeat(64) });
-  const next = await connectPhone(relay.port, room, await mintToken(mac));
+  // A lagging announce keeps connected devices pending, so it cannot free pending capacity.
+  mac.send({ type: "devices", devices: [] });
+  const token = await mintToken(mac);
+  const next = await connectPhone(relay.port, room, token);
   peers.push(next.phone);
-  expect(await next.phone.next()).toMatchObject({ type: "joined" });
-  expect(await Promise.race([oldest.phone.closed, second.phone.closed.then((code) => ({ code }))])).toEqual({ code: 4001 });
+  expect(await Promise.race([next.phone.next(), next.phone.closed])).toBe(CLOSE_HOST_OFFLINE);
   oldest.phone.send({ type: "ping" });
   expect(await oldest.phone.next()).toEqual({ type: "pong" });
-  const revoked = await rejoinPhone(relay.port, room, second.keys);
-  peers.push(revoked);
-  expect(await Promise.race([revoked.next(), revoked.closed])).toBe(4001);
+  const reopened = await rejoinPhone(relay.port, room, second.keys);
+  peers.push(reopened);
+  expect(await reopened.next()).toMatchObject({ type: "joined" });
+  mac.send({ type: "devices", devices: devices.map(({ keys }) => keys.pub) });
+  const retry = await connectPhone(relay.port, room, token);
+  peers.push(retry.phone);
+  expect(await retry.phone.next()).toMatchObject({ type: "joined" });
+  oldest.phone.send({ type: "ping" });
+  expect(await oldest.phone.next()).toEqual({ type: "pong" });
 });
 
 test("host push for an unknown device does not allow it to rejoin", async () => {
