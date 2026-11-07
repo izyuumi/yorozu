@@ -55,6 +55,19 @@ const adapter: Adapter = {
 
 conformance(adapter);
 
+test("the Node relay's registered carries neither liveActivity nor activityTimestamp", async () => {
+  const keys = keypair();
+  const mac = client(relay.port, roomId(keys.pub));
+  peers.push(mac);
+  await mac.open;
+  const { nonce } = await mac.next();
+  mac.send({ type: "register", pubkey: keys.pub, nonceSig: signChallenge(nonce, keys.priv) });
+  const registered = await mac.next();
+  expect(registered).toMatchObject({ type: "registered", roomId: roomId(keys.pub) });
+  expect(registered).not.toHaveProperty("liveActivity");
+  expect(registered).not.toHaveProperty("activityTimestamp");
+});
+
 test("INTENDED CHANGE: at the pending bound a fresh token join waits instead of evicting", async () => {
   // Roster fix, not equivalence: v0.13.0 evicted the oldest with "revoked", unpairing its app.
   vi.useFakeTimers({ toFake: ["Date"] });
