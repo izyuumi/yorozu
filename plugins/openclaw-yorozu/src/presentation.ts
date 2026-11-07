@@ -2,23 +2,30 @@ import { Buffer } from "node:buffer";
 
 export const MAX_STRING_CHARS = 4000;
 export const MAX_BLOCKS = 50;
+export const MAX_DEPTH = 6;
+export const MAX_NODES = 20000;
 export const MAX_TABLE_COLUMNS = 20;
 export const MAX_TABLE_ROWS = 200;
 export const MAX_CHART_SERIES = 12;
 export const MAX_CHART_CATEGORIES = 100;
+export const MAX_CHART_SEGMENTS = 100;
 export const MAX_PRESENTATION_BYTES = 65536;
+export const MAX_PREFLIGHT_CHARS = 4 * MAX_PRESENTATION_BYTES;
+export const MAX_FALLBACK_BYTES = 32768;
 
 export type Tone = "info" | "success" | "warning" | "danger" | "neutral";
 export type ChartType = "bar" | "area" | "line" | "pie";
-type Cell = string | number | boolean | null;
+type Cell = string | number;
 export type TableBlock = {
-  type: "table"; caption?: string; headers: string[]; rows: Cell[][]; rowHeaderColumnIndex?: number;
+  type: "table"; caption: string; headers: string[]; rows: Cell[][]; rowHeaderColumnIndex?: number;
 };
-export type ChartBlock = {
-  type: "chart"; chartType: ChartType; title: string; categories: string[];
-  series: { name: string; values: (number | null)[] }[];
-};
-export type Block = (TableBlock | ChartBlock | { type: "text" | "context"; text: string } | { type: "divider" }) & { alt: string };
+export type ChartBlock = { type: "chart"; title: string } & (
+  { chartType: "pie"; segments: { label: string; value: number }[] } |
+  { chartType: "bar" | "area" | "line"; categories: string[];
+    series: { name: string; values: number[] }[]; xLabel?: string; yLabel?: string }
+);
+type NativeBlock = TableBlock | ChartBlock | { type: "text" | "context"; text: string } | { type: "divider" };
+export type Block = NativeBlock & { alt: string };
 export type Presentation = { title?: string; tone?: Tone; blocks: Block[] };
 export type PresentationSdk = {
   normalize(raw: unknown): unknown;
@@ -26,144 +33,268 @@ export type PresentationSdk = {
   chartAlt(block: ChartBlock): string;
 };
 
+const array = (raw: unknown): raw is unknown[] => {
+  try { return Array.isArray(raw); } catch { return false; }
+};
 const record = (raw: unknown): Record<string, unknown> | undefined =>
-  typeof raw === "object" && raw !== null && !Array.isArray(raw) ? raw as Record<string, unknown> : undefined;
-const own = (raw: Record<string, unknown>, key: string): unknown => Object.hasOwn(raw, key) ? raw[key] : undefined;
-const string = (raw: unknown): string => typeof raw === "string" ? raw.slice(0, MAX_STRING_CHARS) : "";
-const cell = (raw: unknown): raw is Cell => raw === null || typeof raw === "string" || typeof raw === "boolean" ||
-  (typeof raw === "number" && Number.isFinite(raw));
-const finite = (raw: unknown): raw is number | null => raw === null || (typeof raw === "number" && Number.isFinite(raw));
-const context = (text: string): Block | undefined => text.trim() ? { type: "context", text, alt: text } : undefined;
-const tone = (raw: unknown): raw is Tone => typeof raw === "string" && ["info", "success", "warning", "danger", "neutral"].includes(raw);
-const chartType = (raw: unknown): raw is ChartType => typeof raw === "string" && ["bar", "area", "line", "pie"].includes(raw);
+  typeof raw === "object" && raw !== null && !array(raw) ? raw as Record<string, unknown> : undefined;
+const own = (raw: object, key: string, enumerable = true): unknown => {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(raw, key);
+    return descriptor && (!enumerable || descriptor.enumerable) && Object.hasOwn(descriptor, "value") ? descriptor.value : undefined;
+  } catch { return undefined; }
+};
 
-function sanitizeBlock(raw: unknown, sdk: PresentationSdk): Block | undefined {
-  const b = record(raw);
-  if (!b) return undefined;
-  const type = own(b, "type");
-  if (type === "text" || type === "context") {
-    const text = string(own(b, "text"));
-    return text.trim() ? { type, text, alt: text } : undefined;
+// Iterate only the bounded prefix; repair lone surrogates before crossing the wire.
+function string(raw: unknown, limit = MAX_STRING_CHARS, marker = true): string {
+  if (typeof raw !== "string") return "";
+  let result = "";
+  for (const point of raw) {
+    if (result.length + point.length > limit) return result + (marker ? "…" : "");
+    const unit = point.charCodeAt(0);
+    result += point.length === 1 && unit >= 0xD800 && unit <= 0xDFFF ? "\uFFFD" : point;
   }
-  // Dividers need an audible, non-empty fallback even without SDK text.
-  if (type === "divider") return { type, alt: "—" };
-  if (type === "table") {
-    const headers = own(b, "headers");
-    const rows = own(b, "rows");
-    const caption = string(own(b, "caption"));
-    if (!Array.isArray(headers) || !Array.isArray(rows)) return context(caption);
-    let valid = Array.from(headers as unknown[]).every((h: unknown) => typeof h === "string");
-    const table: TableBlock = { type, headers: Array.from(headers as unknown[]).map((h: unknown) => string(h)), rows: [] };
-    if (caption) table.caption = caption;
-    for (const row of Array.from(rows as unknown[])) {
-      if (!Array.isArray(row)) { valid = false; continue; }
-      table.rows.push(Array.from(row as unknown[]).map((v) => {
-        if (!cell(v)) { valid = false; return null; }
-        return typeof v === "string" ? string(v) : v;
-      }));
-    }
-    const index = own(b, "rowHeaderColumnIndex");
-    if (typeof index === "number" && Number.isInteger(index) && index >= 0 && index < table.headers.length) {
-      table.rowHeaderColumnIndex = index;
-    }
-    const alt = string(sdk.tableAlt(table)) || caption || "Table";
-    if (!valid || headers.length > MAX_TABLE_COLUMNS || rows.length > MAX_TABLE_ROWS ||
-      table.rows.some((row) => row.length > MAX_TABLE_COLUMNS)) return context(alt);
-    return { type, ...(caption ? { caption } : {}), headers: table.headers, rows: table.rows,
-      ...(table.rowHeaderColumnIndex !== undefined ? { rowHeaderColumnIndex: table.rowHeaderColumnIndex } : {}), alt };
+  return result;
+}
+function optional(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  const prefix = string(raw, MAX_STRING_CHARS + 256, false);
+  const trimmed = prefix.trim();
+  return string(trimmed) + (trimmed && trimmed.length <= MAX_STRING_CHARS && raw.length > prefix.length ? "…" : "");
+}
+const finite = (raw: unknown): raw is number => typeof raw === "number" && Number.isFinite(raw);
+const context = (text: string): Block => ({ type: "context", text, alt: text });
+const tone = (raw: string): raw is Tone => ["info", "success", "warning", "danger", "neutral"].includes(raw);
+const bytes = (raw: unknown): number => Buffer.byteLength(JSON.stringify(raw), "utf8");
+
+const arrayLimits = { headers: MAX_TABLE_COLUMNS, rows: MAX_TABLE_ROWS, row: MAX_TABLE_COLUMNS,
+  categories: MAX_CHART_CATEGORIES, series: MAX_CHART_SERIES, values: MAX_CHART_CATEGORIES, segments: MAX_CHART_SEGMENTS };
+type CopyKind = "block" | "seriesEntry" | "segment" | "scalar" | keyof typeof arrayLimits;
+
+function preflight(budget: { chars: number; exhausted: boolean }) {
+  let visits = 0;
+  function copyString(value: unknown): string {
+    if (budget.exhausted) return "";
+    const result = optional(value);
+    budget.chars += result.length;
+    if (budget.chars > MAX_PREFLIGHT_CHARS) budget.exhausted = true;
+    return result;
   }
-  if (type === "chart") {
-    const kind = own(b, "chartType");
-    const title = string(own(b, "title"));
-    const categories = own(b, "categories");
-    const series = own(b, "series");
-    if (!chartType(kind) || !title || !Array.isArray(categories) || !Array.isArray(series)) return context(title);
-    let valid = Array.from(categories as unknown[]).every((c: unknown) => typeof c === "string");
-    const chart: ChartBlock = { type, chartType: kind, title, categories: Array.from(categories as unknown[]).map((c: unknown) => string(c)), series: [] };
-    for (const entry of Array.from(series as unknown[])) {
-      const s = record(entry);
-      const values = s && own(s, "values");
-      if (!s || !Array.isArray(values) || typeof own(s, "name") !== "string") { valid = false; continue; }
-      chart.series.push({ name: string(own(s, "name")), values: Array.from(values as unknown[]).map((v) => {
-        if (!finite(v)) { valid = false; return null; }
-        return v;
-      }) });
-    }
-    const alt = string(sdk.chartAlt(chart)) || title;
-    if (!valid || series.length > MAX_CHART_SERIES || categories.length > MAX_CHART_CATEGORIES ||
-      chart.series.some((s) => s.values.length !== chart.categories.length)) return context(alt);
-    return { type, chartType: kind, title, categories: chart.categories, series: chart.series, alt };
+  const path = new WeakSet<object>();
+  function copy(value: unknown, kind: CopyKind, depth: number): unknown {
+    if (budget.exhausted || ++visits > MAX_NODES) { budget.exhausted = true; return undefined; }
+    if (depth > MAX_DEPTH) return undefined;
+    if (typeof value === "string") return copyString(value);
+    if (value === null || typeof value === "boolean" || typeof value === "number") return value;
+    // Preserve invalid scalar presence, notably an invalid optional row-header index.
+    if (kind === "scalar" && value !== undefined) return null;
+    if (typeof value !== "object" || path.has(value)) return undefined;
+    path.add(value);
+    try {
+      if (Object.hasOwn(arrayLimits, kind)) {
+        if (!array(value)) return undefined;
+        const limit = arrayLimits[kind as keyof typeof arrayLimits];
+        const length = own(value, "length", false);
+        if (typeof length !== "number" || !Number.isSafeInteger(length) || length < 0) return undefined;
+        const childKind: CopyKind = kind === "rows" ? "row" : kind === "series" ? "seriesEntry" : kind === "segments" ? "segment" : "scalar";
+        const result: unknown[] = [];
+        for (let i = 0; i < Math.min(length, limit + 1) && !budget.exhausted; i++) {
+          const entry = own(value, String(i));
+          // Lookahead counts only: never traverse the overflow entry.
+          result.push(i === limit ? undefined : copy(entry, childKind, depth + 1));
+        }
+        return result;
+      }
+      if (!record(value)) return undefined;
+      const result: Record<string, unknown> = {};
+      let fields: [string, CopyKind][] = kind === "seriesEntry" ? [["name", "scalar"], ["values", "values"]]
+        : kind === "segment" ? [["label", "scalar"], ["value", "scalar"]] : [["type", "scalar"]];
+      if (kind === "block") {
+        result.type = copyString(own(value, "type")).toLowerCase();
+        if (result.type === "chart") result.chartType = copyString(own(value, "chartType")).toLowerCase();
+        fields = result.type === "text" || result.type === "context" ? [["text", "scalar"]]
+          : result.type === "table" ? [["caption", "scalar"], ["headers", "headers"], ["rows", "rows"], ["rowHeaderColumnIndex", "scalar"]]
+          : result.type === "chart" ? [["title", "scalar"], ...(result.chartType === "pie"
+            ? [["segments", "segments"]] as [string, CopyKind][]
+            : ["bar", "line", "area"].includes(String(result.chartType))
+              ? [["categories", "categories"], ["series", "series"], ["xLabel", "scalar"], ["yLabel", "scalar"]] as [string, CopyKind][] : [])] : [];
+      }
+      for (const [key, childKind] of fields) {
+        if (budget.exhausted) break;
+        const copied = copy(own(value, key), childKind, depth + 1);
+        if (copied !== undefined) result[key] = copied;
+      }
+      return result;
+    } finally { path.delete(value); }
+  }
+  return { copy: (raw: unknown) => record(copy(raw, "block", 1)), string: copyString, exhausted: () => budget.exhausted };
+}
+
+function overflow(b: Record<string, unknown>): string | undefined {
+  const count = (value: unknown, limit: number, unit: string): string | undefined =>
+    array(value) && value.length > limit ? `${limit + 1}+ ${unit}` : undefined;
+  if (b.type === "table") {
+    return count(b.rows, MAX_TABLE_ROWS, "rows") ?? count(b.headers, MAX_TABLE_COLUMNS, "columns") ??
+      (array(b.rows) ? b.rows.map((row: unknown) => count(row, MAX_TABLE_COLUMNS, "columns")).find(Boolean) : undefined);
+  }
+  if (b.type === "chart") {
+    return count(b.segments, MAX_CHART_SEGMENTS, "segments") ?? count(b.categories, MAX_CHART_CATEGORIES, "categories") ??
+      count(b.series, MAX_CHART_SERIES, "series") ?? (array(b.series)
+        ? b.series.map((s: unknown) => count(record(s)?.values, MAX_CHART_CATEGORIES, "values")).find(Boolean) : undefined);
   }
   return undefined;
 }
 
-function availableText(raw: unknown): string {
-  const b = record(raw);
-  if (!b) return "";
-  const type = own(b, "type");
-  if (type === "text" || type === "context") return string(own(b, "text"));
-  if (type === "table") return string(own(b, "caption")) || "Table";
-  if (type === "chart") return string(own(b, "title")) || "Chart";
-  return type === "divider" ? "—" : "";
+// This summary uses only preflight primitives; never SDK renderers or object coercion.
+function omitted(b: Record<string, unknown>, reason: string): Block {
+  const primitive = (v: unknown): string => typeof v === "string" ? string(v, 160) : finite(v) ? String(v) : "";
+  const lines = [optional(b.caption) || optional(b.title) || optional(b.text)];
+  if (array(b.rows)) for (const row of b.rows.slice(0, 3)) {
+    if (array(row)) lines.push(row.slice(0, 4).map(primitive).filter(Boolean).join(", "));
+  }
+  if (array(b.segments)) for (const entry of b.segments.slice(0, 3)) {
+    const s = record(entry);
+    if (s) lines.push([primitive(s.label), primitive(s.value)].filter(Boolean).join(": "));
+  }
+  if (array(b.series)) for (const entry of b.series.slice(0, 3)) {
+    const s = record(entry);
+    if (s) lines.push([primitive(s.name), array(s.values) ? s.values.slice(0, 4).map(primitive).filter(Boolean).join(", ") : ""].filter(Boolean).join(": "));
+  }
+  // Keep the explicit omission note even when the title consumes its whole cap.
+  return context([string(lines.filter(Boolean).join("\n"), MAX_STRING_CHARS - reason.length - 3), `(${reason})`].filter(Boolean).join("\n"));
 }
 
-function availableFallback(raw: unknown): string {
-  const fallback: string[] = [];
-  try {
-    const p = record(raw);
-    if (!p) return "";
-    const title = string(own(p, "title"));
-    if (title.trim()) fallback.push(title);
-    const blocks = own(p, "blocks");
-    if (Array.isArray(blocks)) {
-      for (let i = 0; i < Math.min(blocks.length, MAX_BLOCKS); i++) {
-        try {
-          const text = availableText(blocks[i]);
-          if (text.trim()) fallback.push(text);
-        } catch { /* Untrusted accessors may throw. */ }
+function labels(raw: unknown): raw is string[] {
+  return array(raw) && raw.length > 0 && raw.every((v: unknown) => typeof v === "string" && v.trim().length > 0) &&
+    new Set(raw.map((v: unknown) => typeof v === "string" ? v.trim() : "")).size === raw.length;
+}
+
+// Rebuild SDK output through the same allowlist, then validate before native rendering.
+function native(b: Record<string, unknown>): NativeBlock | undefined {
+  const type = optional(b.type).toLowerCase();
+  if (type === "text" || type === "context") {
+    const text = optional(b.text);
+    return text ? { type, text } : undefined;
+  }
+  if (type === "divider") return { type };
+  if (type === "table") {
+    const caption = optional(b.caption);
+    if (!caption || !labels(b.headers) || !array(b.rows) || !b.rows.length) return;
+    const headers = b.headers.map(optional);
+    const rows: Cell[][] = [];
+    for (const row of b.rows as unknown[]) {
+      if (!array(row) || row.length !== headers.length) return;
+      const cells: Cell[] = [];
+      for (const v of row as unknown[]) {
+        if (finite(v)) cells.push(v);
+        else if (typeof v === "string" && optional(v)) cells.push(optional(v));
+        else return;
       }
+      rows.push(cells);
     }
-  } catch { /* Untrusted accessors may throw. */ }
-  return fallback.join("\n\n");
+    const index = b.rowHeaderColumnIndex;
+    if (index !== undefined && (!finite(index) || !Number.isInteger(index) || index < 0 || index >= headers.length)) return;
+    return { type, caption, headers, rows, ...(typeof index === "number" ? { rowHeaderColumnIndex: index } : {}) };
+  }
+  if (type !== "chart") return;
+  const title = optional(b.title);
+  const chartType = optional(b.chartType).toLowerCase();
+  if (!title) return;
+  if (chartType === "pie") {
+    if (!array(b.segments) || !b.segments.length) return;
+    const segments: { label: string; value: number }[] = [];
+    for (const entry of b.segments as unknown[]) {
+      const s = record(entry);
+      if (!s || !optional(s.label) || !finite(s.value) || s.value <= 0) return;
+      segments.push({ label: optional(s.label), value: s.value });
+    }
+    return { type, chartType, title, segments };
+  }
+  if (!["bar", "line", "area"].includes(chartType) || !labels(b.categories) || !array(b.series) || !b.series.length) return;
+  const categories = b.categories.map(optional);
+  const series: { name: string; values: number[] }[] = [];
+  for (const entry of b.series as unknown[]) {
+    const s = record(entry);
+    if (!s || !optional(s.name) || !array(s.values) || s.values.length !== categories.length || !s.values.every(finite)) return;
+    series.push({ name: optional(s.name), values: s.values as number[] });
+  }
+  if (new Set(series.map((s) => s.name)).size !== series.length) return;
+  const xLabel = optional(b.xLabel), yLabel = optional(b.yLabel);
+  return { type, chartType: chartType as "bar" | "line" | "area", title, categories, series,
+    ...(xLabel ? { xLabel } : {}), ...(yLabel ? { yLabel } : {}) };
+}
+
+function fallback(parts: string[]): string {
+  const marker = "…(truncated)";
+  let result = "";
+  let size = 0;
+  for (const part of parts.filter(Boolean)) {
+    for (const point of (result ? "\n\n" : "") + part) {
+      const n = Buffer.byteLength(point);
+      if (size + n > MAX_FALLBACK_BYTES - Buffer.byteLength(marker)) return result + marker;
+      result += point;
+      size += n;
+    }
+  }
+  return result;
 }
 
 export function sanitizePresentation(raw: unknown, sdk: PresentationSdk): { presentation?: Presentation; fallbackText: string } {
-  const fallback: string[] = [];
-  try {
-    const p = record(sdk.normalize(raw));
-    if (!p) return { fallbackText: availableFallback(raw) };
-    const title = string(own(p, "title"));
-    if (title.trim()) fallback.push(title);
-    const blocks: Block[] = [];
-    let invalid = false;
-    const input = own(p, "blocks");
-    if (Array.isArray(input)) {
-      for (let i = 0; i < Math.min(input.length, MAX_BLOCKS); i++) {
-        try {
-          const block = sanitizeBlock(input[i], sdk);
-          if (block) {
-            blocks.push(block);
-            if (block.alt.trim()) fallback.push(block.alt);
-          }
-        } catch {
-          invalid = true;
-          try {
-            const text = availableText(input[i]);
-            if (text.trim()) fallback.push(text);
-          } catch { /* Untrusted accessors may throw. */ }
-        }
-      }
-    }
-    const presentation: Presentation = { blocks };
-    if (title) presentation.title = title;
-    const t = own(p, "tone");
-    if (typeof t === "string" && tone(t)) presentation.tone = t;
-    const fallbackText = fallback.join("\n\n");
-    if (invalid || !blocks.length || Buffer.byteLength(JSON.stringify(presentation), "utf8") > MAX_PRESENTATION_BYTES) {
-      return { fallbackText };
-    }
-    return { presentation, fallbackText };
-  } catch {
-    return { fallbackText: fallback.join("\n\n") || availableFallback(raw) };
+  if (typeof raw === "string") {
+    if (raw.length > MAX_PRESENTATION_BYTES || Buffer.byteLength(raw, "utf8") > MAX_PRESENTATION_BYTES) return { fallbackText: "" };
+    try { raw = JSON.parse(raw) as unknown; } catch { return { fallbackText: "" }; }
   }
+  const root = record(raw);
+  if (!root) return { fallbackText: "" };
+  const budget = { chars: 0, exhausted: false };
+  const checked = preflight(budget);
+  const normalizedCopy = preflight(budget);
+  const title = checked.string(own(root, "title"));
+  const t = checked.string(own(root, "tone")).toLowerCase();
+  const presentation: Presentation = { ...(title ? { title } : {}), ...(tone(t) ? { tone: t } : {}), blocks: [] };
+  let size = bytes(presentation);
+  const input = own(root, "blocks");
+  const length = array(input) ? own(input, "length", false) : undefined;
+  if (!array(input) || typeof length !== "number" || !Number.isSafeInteger(length) || length < 0) return { fallbackText: fallback([title]) };
+  const blocks = presentation.blocks;
+  const more = (count: number): void => {
+    let note = context(`(${count}+ more blocks omitted)`);
+    while (blocks.length && (blocks.length >= MAX_BLOCKS || size + bytes(note) + 1 > MAX_PRESENTATION_BYTES)) {
+      const last = blocks.pop();
+      size -= bytes(last) + (blocks.length ? 1 : 0);
+      note = context(`(${++count}+ more blocks omitted)`);
+    }
+    blocks.push(note);
+  };
+  for (let i = 0; i < Math.min(length, MAX_BLOCKS + 1); i++) {
+    const entry = own(input, String(i));
+    if (i === MAX_BLOCKS) { more(1); break; }
+    const b = checked.copy(entry);
+    if (!b || !["text", "context", "divider", "table", "chart"].includes(String(b.type))) continue;
+    const over = overflow(b);
+    let block: Block;
+    const reason = over ? `${b.type} truncated: ${over}` : `${b.type} omitted: invalid data`;
+    if (over || checked.exhausted()) block = omitted(b, checked.exhausted() ? `${b.type} omitted: resource limit` : reason);
+    else {
+      try {
+        const normalized = record(sdk.normalize({ blocks: [b] }));
+        const list = normalized && own(normalized, "blocks");
+        const copy = array(list) && normalizedCopy.copy(own(list, "0"));
+        const clean = copy && !overflow(copy) && !normalizedCopy.exhausted() ? native(copy) : undefined;
+        if (!clean) block = omitted(b, normalizedCopy.exhausted() ? `${b.type} omitted: resource limit` : reason);
+        else {
+          const alt = clean.type === "table" ? string(sdk.tableAlt(clean)) : clean.type === "chart" ? string(sdk.chartAlt(clean))
+            : clean.type === "divider" ? "" : clean.text;
+          block = { ...clean, alt };
+        }
+      } catch { block = omitted(b, reason); }
+    }
+    const cost = bytes(block) + (blocks.length ? 1 : 0);
+    if (size + cost > MAX_PRESENTATION_BYTES) { more(Math.min(length, MAX_BLOCKS + 1) - i); break; }
+    blocks.push(block);
+    size += cost;
+    if (checked.exhausted()) { if (i + 1 < length) more(Math.min(length, MAX_BLOCKS + 1) - i - 1); break; }
+  }
+  const fallbackText = fallback([title, ...blocks.map((b) => b.alt)]);
+  return blocks.length ? { presentation, fallbackText } : { fallbackText };
 }

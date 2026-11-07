@@ -1,0 +1,622 @@
+{
+  "sdk": "2026.9.8",
+  "cases": [
+    {
+      "name": "valid table",
+      "input": {
+        "blocks": [
+          {
+            "type": "table",
+            "caption": "Balances",
+            "headers": [
+              "Who",
+              "Paid"
+            ],
+            "rows": [
+              [
+                "A",
+                120
+              ],
+              [
+                "B",
+                0
+              ]
+            ],
+            "rowHeaderColumnIndex": 0
+          }
+        ]
+      },
+      "normalized": {
+        "blocks": [
+          {
+            "type": "table",
+            "caption": "Balances",
+            "headers": [
+              "Who",
+              "Paid"
+            ],
+            "rows": [
+              [
+                "A",
+                120
+              ],
+              [
+                "B",
+                0
+              ]
+            ],
+            "rowHeaderColumnIndex": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ragged table",
+      "input": {
+        "blocks": [
+          {
+            "type": "table",
+            "caption": "Balances",
+            "headers": [
+              "Who",
+              "Paid"
+            ],
+            "rows": [
+              [
+                "A"
+              ]
+            ],
+            "rowHeaderColumnIndex": 0
+          }
+        ]
+      },
+      "normalized": null
+    },
+    {
+      "name": "null cell",
+      "input": {
+        "blocks": [
+          {
+            "type": "table",
+            "caption": "Balances",
+            "headers": [
+              "Who",
+              "Paid"
+            ],
+            "rows": [
+              [
+                "A",
+                null
+              ]
+            ],
+            "rowHeaderColumnIndex": 0
+          }
+        ]
+      },
+      "normalized": null
+    },
+    {
+      "name": "pie",
+      "input": {
+        "blocks": [
+          {
+            "type": "chart",
+            "chartType": "pie",
+            "title": "Shares",
+            "segments": [
+              {
+                "label": "A",
+                "value": 2
+              },
+              {
+                "label": "B",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "normalized": {
+        "blocks": [
+          {
+            "type": "chart",
+            "chartType": "pie",
+            "title": "Shares",
+            "segments": [
+              {
+                "label": "A",
+                "value": 2
+              },
+              {
+                "label": "B",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "bar axes",
+      "input": {
+        "blocks": [
+          {
+            "type": "chart",
+            "chartType": "bar",
+            "title": "Paid",
+            "categories": [
+              "A",
+              "B"
+            ],
+            "series": [
+              {
+                "name": "Paid",
+                "values": [
+                  120,
+                  0
+                ]
+              }
+            ],
+            "xLabel": "Traveler",
+            "yLabel": "Amount"
+          }
+        ]
+      },
+      "normalized": {
+        "blocks": [
+          {
+            "type": "chart",
+            "chartType": "bar",
+            "title": "Paid",
+            "categories": [
+              "A",
+              "B"
+            ],
+            "series": [
+              {
+                "name": "Paid",
+                "values": [
+                  120,
+                  0
+                ]
+              }
+            ],
+            "xLabel": "Traveler",
+            "yLabel": "Amount"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mismatched values",
+      "input": {
+        "blocks": [
+          {
+            "type": "chart",
+            "chartType": "bar",
+            "title": "Paid",
+            "categories": [
+              "A",
+              "B"
+            ],
+            "series": [
+              {
+                "name": "Paid",
+                "values": [
+                  120
+                ]
+              }
+            ],
+            "xLabel": "Traveler",
+            "yLabel": "Amount"
+          }
+        ]
+      },
+      "normalized": null
+    },
+    {
+      "name": "empty cell",
+      "input": {
+        "blocks": [
+          {
+            "type": "table",
+            "caption": "Balances",
+            "headers": [
+              "Who",
+              "Paid"
+            ],
+            "rows": [
+              [
+                "",
+                1
+              ]
+            ],
+            "rowHeaderColumnIndex": 0
+          }
+        ]
+      },
+      "normalized": null
+    },
+    {
+      "name": "blank cell",
+      "input": {
+        "blocks": [
+          {
+            "type": "table",
+            "caption": "Balances",
+            "headers": [
+              "Who",
+              "Paid"
+            ],
+            "rows": [
+              [
+                "   ",
+                1
+              ]
+            ],
+            "rowHeaderColumnIndex": 0
+          }
+        ]
+      },
+      "normalized": null
+    },
+    {
+      "name": "boolean cell",
+      "input": {
+        "blocks": [
+          {
+            "type": "table",
+            "caption": "Balances",
+            "headers": [
+              "Who",
+              "Paid"
+            ],
+            "rows": [
+              [
+                "A",
+                true
+              ]
+            ],
+            "rowHeaderColumnIndex": 0
+          }
+        ]
+      },
+      "normalized": null
+    },
+    {
+      "name": "missing caption",
+      "input": {
+        "blocks": [
+          {
+            "type": "table",
+            "headers": [
+              "H"
+            ],
+            "rows": [
+              [
+                1
+              ]
+            ]
+          }
+        ]
+      },
+      "normalized": null
+    },
+    {
+      "name": "duplicate headers",
+      "input": {
+        "blocks": [
+          {
+            "type": "table",
+            "caption": "Balances",
+            "headers": [
+              "H",
+              "H"
+            ],
+            "rows": [
+              [
+                "A",
+                120
+              ],
+              [
+                "B",
+                0
+              ]
+            ],
+            "rowHeaderColumnIndex": 0
+          }
+        ]
+      },
+      "normalized": null
+    },
+    {
+      "name": "invalid row header",
+      "input": {
+        "blocks": [
+          {
+            "type": "table",
+            "caption": "Balances",
+            "headers": [
+              "Who",
+              "Paid"
+            ],
+            "rows": [
+              [
+                "A",
+                120
+              ],
+              [
+                "B",
+                0
+              ]
+            ],
+            "rowHeaderColumnIndex": 2
+          }
+        ]
+      },
+      "normalized": null
+    },
+    {
+      "name": "duplicate categories",
+      "input": {
+        "blocks": [
+          {
+            "type": "chart",
+            "chartType": "bar",
+            "title": "Paid",
+            "categories": [
+              "A",
+              "A"
+            ],
+            "series": [
+              {
+                "name": "Paid",
+                "values": [
+                  120,
+                  0
+                ]
+              }
+            ],
+            "xLabel": "Traveler",
+            "yLabel": "Amount"
+          }
+        ]
+      },
+      "normalized": null
+    },
+    {
+      "name": "duplicate series",
+      "input": {
+        "blocks": [
+          {
+            "type": "chart",
+            "chartType": "bar",
+            "title": "Paid",
+            "categories": [
+              "A",
+              "B"
+            ],
+            "series": [
+              {
+                "name": "Paid",
+                "values": [
+                  120,
+                  0
+                ]
+              },
+              {
+                "name": "Paid",
+                "values": [
+                  120,
+                  0
+                ]
+              }
+            ],
+            "xLabel": "Traveler",
+            "yLabel": "Amount"
+          }
+        ]
+      },
+      "normalized": null
+    },
+    {
+      "name": "null chart value",
+      "input": {
+        "blocks": [
+          {
+            "type": "chart",
+            "chartType": "bar",
+            "title": "Paid",
+            "categories": [
+              "A",
+              "B"
+            ],
+            "series": [
+              {
+                "name": "Paid",
+                "values": [
+                  null,
+                  1
+                ]
+              }
+            ],
+            "xLabel": "Traveler",
+            "yLabel": "Amount"
+          }
+        ]
+      },
+      "normalized": null
+    },
+    {
+      "name": "zero pie",
+      "input": {
+        "blocks": [
+          {
+            "type": "chart",
+            "chartType": "pie",
+            "title": "Shares",
+            "segments": [
+              {
+                "label": "A",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "normalized": null
+    },
+    {
+      "name": "negative pie",
+      "input": {
+        "blocks": [
+          {
+            "type": "chart",
+            "chartType": "pie",
+            "title": "Shares",
+            "segments": [
+              {
+                "label": "A",
+                "value": -1
+              }
+            ]
+          }
+        ]
+      },
+      "normalized": null
+    },
+    {
+      "name": "trimmed text",
+      "input": {
+        "blocks": [
+          {
+            "type": "text",
+            "text": "  Hello  "
+          }
+        ]
+      },
+      "normalized": {
+        "blocks": [
+          {
+            "type": "text",
+            "text": "Hello"
+          }
+        ]
+      }
+    },
+    {
+      "name": "blank text",
+      "input": {
+        "blocks": [
+          {
+            "type": "text",
+            "text": "  "
+          }
+        ]
+      },
+      "normalized": null
+    },
+    {
+      "name": "line",
+      "input": {
+        "blocks": [
+          {
+            "type": "chart",
+            "chartType": "line",
+            "title": "Paid",
+            "categories": [
+              "A",
+              "B"
+            ],
+            "series": [
+              {
+                "name": "Paid",
+                "values": [
+                  120,
+                  0
+                ]
+              }
+            ],
+            "xLabel": "Traveler",
+            "yLabel": "Amount"
+          }
+        ]
+      },
+      "normalized": {
+        "blocks": [
+          {
+            "type": "chart",
+            "chartType": "line",
+            "title": "Paid",
+            "categories": [
+              "A",
+              "B"
+            ],
+            "series": [
+              {
+                "name": "Paid",
+                "values": [
+                  120,
+                  0
+                ]
+              }
+            ],
+            "xLabel": "Traveler",
+            "yLabel": "Amount"
+          }
+        ]
+      }
+    },
+    {
+      "name": "area",
+      "input": {
+        "blocks": [
+          {
+            "type": "chart",
+            "chartType": "area",
+            "title": "Paid",
+            "categories": [
+              "A",
+              "B"
+            ],
+            "series": [
+              {
+                "name": "Paid",
+                "values": [
+                  120,
+                  0
+                ]
+              }
+            ],
+            "xLabel": "Traveler",
+            "yLabel": "Amount"
+          }
+        ]
+      },
+      "normalized": {
+        "blocks": [
+          {
+            "type": "chart",
+            "chartType": "area",
+            "title": "Paid",
+            "categories": [
+              "A",
+              "B"
+            ],
+            "series": [
+              {
+                "name": "Paid",
+                "values": [
+                  120,
+                  0
+                ]
+              }
+            ],
+            "xLabel": "Traveler",
+            "yLabel": "Amount"
+          }
+        ]
+      }
+    }
+  ]
+}
