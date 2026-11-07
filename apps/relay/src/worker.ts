@@ -99,15 +99,25 @@ const roleOf = (ws: WebSocket): Conn["role"] =>
 type Conn = {
   nonce: string;
   room: string;
-  role: "mac" | "phone" | null;
-  key: string | null;
   bucket?: Bucket;
   since?: number;
   sentBytes?: number;
   ackedBytes?: number;
-  /** The host sent `devices` on this socket, so the room's device list is the host's own again. */
-  announced?: boolean;
-};
+} & (
+  | { role: null; key: null }
+  | { role: "phone"; key: string }
+  // Read only when migrating attachments serialized before explicit roster state.
+  | { role: "mac"; key: string; announced?: boolean }
+);
+
+type Roster = "host" | "unconfirmed";
+type JoinDecision = "tokenSpent" | "rejoin" | "waitForAnnounce" | "reject";
+
+function joinDecision(hasToken: boolean, known: boolean, roster: Roster): JoinDecision {
+  if (hasToken) return "tokenSpent";
+  if (known) return "rejoin";
+  return roster === "host" ? "reject" : "waitForAnnounce";
+}
 
 type Buffered = { raw: string; bytes: number; at: number; seq: number };
 
@@ -134,6 +144,7 @@ type ActivityRecord = { token: string; sandbox?: boolean };
 const seenKey = "seen";
 
 const announcedKey = "announced";
+const rosterKey = "roster";
 
 export class Room implements DurableObject {
   private tail: Promise<unknown> = Promise.resolve();
@@ -421,11 +432,24 @@ export class Room implements DurableObject {
       ([key, at]): [string, number] => [key.slice(devicePrefix.length), at],
     );
     const drop = evictions(known, pubkey);
-    await this.forget(drop);
+    if (drop.length > 0) await this.state.storage.put(rosterKey, "unconfirmed" satisfies Roster);
+    await this.forget(drop, "cache");
     await this.state.storage.put(devicePrefix + pubkey, now);
   }
 
-  private async forget(pubkeys: readonly string[]): Promise<void> {
+  private async roster(): Promise<Roster> {
+    const storage = this.state.storage;
+    const roster = await storage.get<Roster>(rosterKey);
+    if (roster !== undefined) return roster;
+    // Migrate old rooms once; a missing attachment field meant this host had not announced.
+    const host = this.mac()?.deserializeAttachment() as Conn | undefined;
+    const migrated: Roster = (await storage.get(announcedKey)) !== undefined
+      && (!host || (host.role === "mac" && host.announced === true)) ? "host" : "unconfirmed";
+    await storage.put(rosterKey, migrated);
+    return migrated;
+  }
+
+  private async forget(pubkeys: readonly string[], cause: "host" | "cache" = "host"): Promise<void> {
     if (pubkeys.length === 0) return;
     await this.state.storage.delete(pubkeys.map((key) => devicePrefix + key));
     await this.state.storage.delete(pubkeys.map((key) => pushPrefix + key));
@@ -433,7 +457,10 @@ export class Room implements DurableObject {
     const gone = new Set(pubkeys);
     for (const phone of this.sockets("phone")) {
       const key = (phone.deserializeAttachment() as Conn | null)?.key;
-      if (key && gone.has(key)) this.drop(phone, CLOSE_PROTOCOL, "revoked");
+      if (key && gone.has(key)) {
+        this.drop(phone, cause === "host" ? CLOSE_PROTOCOL : CLOSE_HOST_OFFLINE,
+          cause === "host" ? "revoked" : HOST_OFFLINE_REASON);
+      }
     }
   }
 
@@ -646,6 +673,7 @@ export class Room implements DurableObject {
         }
         // The room id is this key's hash, so a wiped room accepts its host again like a new one.
         if (owner === null) await storage.put("owner", pubkey);
+        await storage.put(rosterKey, "unconfirmed" satisfies Roster);
         await this.touch(now);
         for (const stale of this.sockets("mac")) {
           if (stale !== ws) this.drop(stale, CLOSE_PROTOCOL, "replaced");
@@ -709,8 +737,6 @@ export class Room implements DurableObject {
         if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
         const announced = parseDevices(msg);
         if (!announced) return this.drop(ws, CLOSE_PROTOCOL, "bad devices");
-        await storage.put(announcedKey, true);
-        ws.serializeAttachment({ ...conn, announced: true } satisfies Conn);
         const keep = new Set(announced.devices);
         for (const phone of this.sockets("phone")) {
           const key = (phone.deserializeAttachment() as Conn | null)?.key;
@@ -724,7 +750,9 @@ export class Room implements DurableObject {
         for (const pubkey of keep) {
           if (!known.has(pubkey)) await storage.put(devicePrefix + pubkey, now);
         }
-        return await this.forget([...known].filter((pubkey) => !keep.has(pubkey)));
+        await this.forget([...known].filter((pubkey) => !keep.has(pubkey)));
+        await storage.put(rosterKey, "host" satisfies Roster);
+        return;
       }
 
       case "join": {
@@ -732,23 +760,18 @@ export class Room implements DurableObject {
         if (!join) return this.drop(ws, CLOSE_PROTOCOL, "bad join");
         const { roomId: id, token, phonePubkey, sig } = join;
         if (id !== conn.room) return this.drop(ws, CLOSE_PROTOCOL, "wrong room");
-        if (token === undefined) {
-          if ((await storage.get<number>(devicePrefix + phonePubkey)) === undefined) {
-            // Only the host's announce can say a device is unknown; until it has, the device retries.
-            // Older rooms get the key on the host's next announce (the plugin sends one after every register);
-            // until then an unknown device gets 4011 and retries.
-            const host = this.mac();
-            const unsure = (await storage.get(announcedKey)) === undefined
-              || (host !== null && !(host.deserializeAttachment() as Conn).announced);
-            if (unsure) return this.drop(ws, CLOSE_HOST_OFFLINE, HOST_OFFLINE_REASON);
-            return this.drop(ws, CLOSE_PROTOCOL, "unknown device");
-          }
+        const decision = joinDecision(token !== undefined,
+          (await storage.get<number>(devicePrefix + phonePubkey)) !== undefined, await this.roster());
+        if (decision === "waitForAnnounce") return this.drop(ws, CLOSE_HOST_OFFLINE, HOST_OFFLINE_REASON);
+        if (decision === "reject") return this.drop(ws, CLOSE_PROTOCOL, "unknown device");
+        if (decision === "rejoin") {
           if (!(await this.verify(conn.nonce, sig, phonePubkey))) {
             return this.drop(ws, CLOSE_BAD_SIGNATURE, "bad join signature");
           }
           await storage.put(devicePrefix + phonePubkey, now);
           await this.touch(now);
         } else {
+          if (token === undefined) return this.drop(ws, CLOSE_PROTOCOL, "unknown token");
           const expiresAt = await storage.get<number>(tokenPrefix + token);
           if (expiresAt === undefined) return this.drop(ws, CLOSE_PROTOCOL, "unknown token");
           if (now > expiresAt) {

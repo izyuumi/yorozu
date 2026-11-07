@@ -515,6 +515,42 @@ test("revoke forgets a host-registered push token", async () => {
   expect(calls).toHaveLength(0);
 });
 
+test("a token join that evicts a device the host still lists does not revoke it", async () => {
+  const { mac, phone, keys, room: name } = await paired();
+  const others = await Promise.all(Array.from({ length: MAX_DEVICES - 1 }, () => keypair()));
+  const devices = [keys.pub, ...others.map((device) => device.pub)];
+  mac.send({ type: "devices", devices });
+  await macSettled(mac);
+  await runInDurableObject(room(name), async (_instance, state) => {
+    for (const [at, pubkey] of devices.entries()) await state.storage.put(`p:${pubkey}`, at);
+  });
+
+  const next = await connectPhone(name, await mintToken(mac));
+  expect(await next.phone.next()).toMatchObject({ type: "joined" });
+  expect(await phone.closed()).toBe(CLOSE_HOST_OFFLINE);
+  expect(await phone.closedReason()).toBe("host offline");
+  const early = await rejoin(name, keys);
+  expect(await early.closed()).toBe(CLOSE_HOST_OFFLINE);
+  expect(await early.closedReason()).toBe("host offline");
+
+  mac.send({ type: "devices", devices });
+  await macSettled(mac);
+  expect(await (await rejoin(name, keys)).next()).toMatchObject({ type: "joined" });
+});
+
+test("an announce that omits a device still makes it unknown", async () => {
+  const { mac, phone, keys, room: name } = await paired();
+  mac.send({ type: "devices", devices: [keys.pub] });
+  await macSettled(mac);
+  phone.close();
+  await quiet(name, 1);
+  mac.send({ type: "devices", devices: [] });
+  await macSettled(mac);
+  const unknown = await rejoin(name, keys);
+  expect(await unknown.closed()).toBe(4001);
+  expect(await unknown.closedReason()).toBe("unknown device");
+});
+
 test("evicting the oldest device removes its push registration and socket", async () => {
   const { mac, phone, keys, room: name } = await paired();
   await runInDurableObject(room(name), async (_instance, state) => {
@@ -525,7 +561,8 @@ test("evicting the oldest device removes its push registration and socket", asyn
   const next = await connectPhone(name, await mintToken(mac));
   expect(await next.phone.next()).toMatchObject({ type: "joined" });
   expect(await record(name, keys.pub)).toBeUndefined();
-  expect(await phone.closed()).toBe(4001);
+  // Relay cache eviction must let the device retry without re-pairing.
+  expect(await phone.closed()).toBe(CLOSE_HOST_OFFLINE);
 });
 
 test("host push refresh keeps the oldest device when a new token join evicts the next oldest", async () => {
@@ -549,7 +586,8 @@ test("host push refresh keeps the oldest device when a new token join evicts the
     expect(devices.has(`p:${second.keys.pub}`)).toBe(false);
   });
   expect(await record(name, keys.pub)).toEqual({ deviceToken: DEVICE_TOKEN });
-  expect(await second.phone.closed()).toBe(4001);
+  // Relay cache eviction must let the device retry without re-pairing.
+  expect(await second.phone.closed()).toBe(CLOSE_HOST_OFFLINE);
   phone.send({ type: "ping" });
   expect(await phone.next()).toEqual({ type: "pong" });
 });
