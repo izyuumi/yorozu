@@ -28,8 +28,10 @@ export type Log = { info: (message: string) => void; warn: (message: string) => 
 export type Path = "relay" | "direct";
 /** Where a session's frames go: the one relay link every relay session shares, or one direct socket. */
 export type Link = { path: Path; send: (payloads: string[]) => void; close?: (code: number, reason: string) => void };
-export type Served = { session: Session; link: Link; peer?: PeerInfo; foreground?: string; active?: boolean };
-export type Opened = { deviceKey: string; entry: Served; plain: Buffer };
+export type DeviceSession =
+  | { phase: "awaitingPeer"; session: Session; link: Link }
+  | { phase: "live"; session: Session; link: Link; peer: PeerInfo; foreground?: string; active?: boolean };
+export type Opened = { deviceKey: string; entry: DeviceSession; plain: Buffer };
 export type Request = {
   deviceKey: string;
   event: Event;
@@ -78,7 +80,7 @@ export function downgrade(event: Event, peer: PeerInfo): Event {
 const seal = (session: Session, event: Event): string => session.seal(encodeEvent(event));
 
 export class Hub {
-  readonly served = new Map<string, Served>();
+  readonly served = new Map<string, DeviceSession>();
   private readonly bySid = new Map<string, string>();
   private readonly answered = new Map<string, number>();
   private readonly taken = new Map<string, number>();
@@ -126,7 +128,7 @@ export class Hub {
     this.answered.set(accepted.sid, accepted.payload.ts + HANDSHAKE_MAX_AGE_MS);
     const old = this.served.get(deviceKey);
     this.end(deviceKey, old && old.link !== link ? { code: CLOSE.replaced, reason: "replaced" } : undefined);
-    this.served.set(deviceKey, { session: accepted.session, link });
+    this.served.set(deviceKey, { phase: "awaitingPeer", session: accepted.session, link });
     this.bySid.set(accepted.sid, deviceKey);
     link.send([accepted.response, seal(accepted.session, { kind: "peer_info", data: this.opts.peerInfo() })]);
     this.opts.log?.info(`yorozu: session open over ${link.path} (${this.served.size} device${this.served.size === 1 ? "" : "s"})`);
@@ -153,7 +155,7 @@ export class Hub {
       const now = this.served.get(deviceKey);
       if (now) now.link.send([seal(now.session, { kind: "error", data })]);
     };
-    if (entry.peer && (event === null || event.kind === "invalid" || event.kind === "unknown")) {
+    if (entry.phase === "live" && (event === null || event.kind === "invalid" || event.kind === "unknown")) {
       return refuse(rejection(event));
     }
     if (event === null || event.kind === "invalid" || event.kind === "unknown") {
@@ -161,19 +163,20 @@ export class Hub {
     }
     const reply = (events: Event[]) => {
       const now = this.served.get(deviceKey);
-      if (now?.peer) now.link.send(events.map((answer) => seal(now.session, downgrade(answer, now.peer!))));
+      if (now?.phase === "live") now.link.send(events.map((answer) => seal(now.session, downgrade(answer, now.peer))));
     };
     const request: Request = { deviceKey, event, reply, refuse };
-    if (!entry.peer) {
+    if (entry.phase === "awaitingPeer") {
       if (event.kind !== "peer_info") return refuse({ code: "bad_request", message: "the session must start with peer_info" });
       if (negotiate(this.opts.peerInfo(), event.data) === null) {
         entry.link.send([seal(entry.session, { kind: "error", data: { code: "update_required", message: "no common protocol version" } })]);
         this.end(deviceKey);
         return log?.info("yorozu: session closed (update required)");
       }
-      entry.peer = event.data;
+      if (this.served.get(deviceKey) !== entry) return;
+      this.served.set(deviceKey, { phase: "live", session: entry.session, link: entry.link, peer: event.data });
       const hints = this.opts.directHints?.();
-      if (hints && entry.peer.capabilities.includes(DIRECT)) reply([{ kind: "direct_hints", data: hints }]);
+      if (hints && event.data.capabilities.includes(DIRECT)) reply([{ kind: "direct_hints", data: hints }]);
       await this.opts.onPeer?.(request);
       return log?.info(`yorozu: peer_info received (protocol ${PROTOCOL_VERSION})`);
     }
@@ -190,6 +193,7 @@ export class Hub {
       return this.opts.onMessage(event.data);
     }
     if (event.kind === "foreground") {
+      if (this.served.get(deviceKey) !== entry) return;
       entry.foreground = event.data.convId ?? undefined;
       entry.active = event.data.active === true;
       return;
@@ -200,16 +204,16 @@ export class Hub {
 
   /** Every device with a live session, each over its own path: the relay batch skips devices connected directly. */
   broadcast(events: Event[]): number {
-    const live = [...this.served.values()].filter((entry) => entry.peer);
+    const live = [...this.served.values()].filter((entry) => entry.phase === "live");
     const takes = (event: Event, peer: PeerInfo) =>
       event.kind === "direct_hints" ? !!this.opts.directHints?.() && peer.capabilities.includes(DIRECT) :
         event.kind !== "reaction" || peer.capabilities.includes(REACTIONS);
     const out = new Map<Link, string[]>();
     for (const event of events) {
       for (const entry of live) {
-        if (!takes(event, entry.peer!)) continue;
+        if (!takes(event, entry.peer)) continue;
         const payloads = out.get(entry.link) ?? [];
-        payloads.push(seal(entry.session, downgrade(event, entry.peer!)));
+        payloads.push(seal(entry.session, downgrade(event, entry.peer)));
         out.set(entry.link, payloads);
       }
     }
@@ -220,7 +224,7 @@ export class Hub {
   /** Devices whose live session, on either path, has the app active or this conversation in front. */
   watching(convId: string): Set<string> {
     return new Set(
-      [...this.served].filter(([, entry]) => entry.peer && (entry.active || entry.foreground === convId)).map(([key]) => key),
+      [...this.served].filter(([, entry]) => entry.phase === "live" && (entry.active || entry.foreground === convId)).map(([key]) => key),
     );
   }
 
@@ -232,7 +236,7 @@ export class Hub {
   /** The relay has no device sockets left: only relay sessions lose their foreground. */
   relayGone(): void {
     for (const entry of this.served.values()) {
-      if (entry.link.path !== "relay") continue;
+      if (entry.phase !== "live" || entry.link.path !== "relay") continue;
       entry.foreground = undefined;
       entry.active = undefined;
     }
