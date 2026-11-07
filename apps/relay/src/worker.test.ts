@@ -415,6 +415,84 @@ const record = async (room: string, pubkey: string): Promise<any> => {
   );
 };
 
+test("v0.13.0 app join shapes need no new fields", async () => {
+  const macKeys = await keypair();
+  const name = await roomId(macKeys.pub);
+  const mac = await connectMac(macKeys);
+  // These helpers send exactly the shipped token and nonce join fields.
+  const { phone, keys } = await connectPhone(name, await mintToken(mac));
+  const joined = { type: "joined", roomId: name, ownerOnline: true, flowControl: true };
+  expect(await phone.next()).toEqual(joined);
+
+  const checkPushAndFlow = async (peer: Client, deviceToken: string) => {
+    peer.send({ type: "push", deviceToken });
+    await settled(peer);
+    expect(await record(name, keys.pub)).toEqual({ deviceToken });
+    // Exceed the unacknowledged window: ignoring the old flowAck shape would close this peer.
+    const payload = "x".repeat(128 * 1024);
+    for (let i = 0; i < 18; i++) {
+      await frame(mac, payload, macKeys);
+      const received = await peer.next();
+      expect(received).toMatchObject({ type: "frame", payload, flowBytes: expect.any(Number) });
+      peer.send({ type: "flowAck", bytes: String(received.flowBytes) });
+      await settled(peer);
+    }
+    peer.send({ type: "ping" });
+    expect(await Promise.race([peer.next(), peer.closed()])).toEqual({ type: "pong" });
+  };
+
+  await checkPushAndFlow(phone, DEVICE_TOKEN);
+  phone.close();
+  await quiet(name, 1);
+  const back = await rejoin(name, keys);
+  expect(await back.next()).toEqual(joined);
+  await checkPushAndFlow(back, SECOND_DEVICE_TOKEN);
+});
+
+test.each([
+  { situation: "revoke", code: 4001, reason: "revoked" },
+  { situation: "nonce join after the host announced the device away", code: 4001, reason: "unknown device" },
+  { situation: "spent token", code: 4001, reason: "unknown token" },
+  { situation: "unknown token", code: 4001, reason: "unknown token" },
+  { situation: "expired token", code: 4001, reason: "expired token" },
+  { situation: "unknown nonce device before the host announced", code: 4011, reason: "host offline" },
+])("close reasons old apps act on are unchanged for unchanged situations ($situation)", async ({ situation, code, reason }) => {
+  const macKeys = await keypair();
+  const name = await roomId(macKeys.pub);
+  const mac = await connectMac(macKeys);
+  let refused: Client;
+  if (situation === "revoke" || situation === "nonce join after the host announced the device away") {
+    const { phone, keys } = await connectPhone(name, await mintToken(mac));
+    expect(await phone.next()).toMatchObject({ type: "joined" });
+    mac.send({ type: "devices", devices: [keys.pub] });
+    await macSettled(mac);
+    if (situation === "revoke") {
+      mac.send({ type: "revoke", pubkey: keys.pub });
+      refused = phone;
+    } else {
+      phone.close();
+      await quiet(name, 1);
+      mac.send({ type: "devices", devices: [] });
+      await macSettled(mac);
+      refused = await rejoin(name, keys);
+    }
+  } else if (situation === "unknown nonce device before the host announced") {
+    refused = await rejoin(name, await keypair());
+  } else {
+    const token = situation === "unknown token" ? "no-such-token" : await mintToken(mac);
+    if (situation === "spent token") {
+      expect(await (await connectPhone(name, token)).phone.next()).toMatchObject({ type: "joined" });
+    } else if (situation === "expired token") {
+      await runInDurableObject(room(name), (_instance, state) =>
+        state.storage.put(`t:${token}`, Date.now() - 1),
+      );
+    }
+    refused = (await connectPhone(name, token)).phone;
+  }
+  expect(await refused.closed()).toBe(code);
+  expect(await refused.closedReason()).toBe(reason);
+});
+
 const wake = (name: string) => runInDurableObject(room(name), (instance) =>
   (instance as unknown as { wake(notify: Notify, now: number): Promise<void> }).wake(
     { class: "reply", threadRef: "Ab3-_x9Z" }, Date.now(),
@@ -533,13 +611,14 @@ test("a full room keeps every device the host listed: the oldest rejoins without
   expect(await (await rejoin(name, keys)).next()).toMatchObject({ type: "joined" });
 });
 
-test("a token join beyond the pending bound is refused retryably and keeps its token", async () => {
+test("INTENDED CHANGE: at the pending bound a fresh token join waits instead of evicting", async () => {
+  // Roster fix, not equivalence: v0.13.0 evicted the oldest with "revoked", unpairing its app.
   const macKeys = await keypair();
   const name = await roomId(macKeys.pub);
   const mac = await connectMac(macKeys);
   mac.send({ type: "devices", devices: [] });
   const devices = [];
-  for (let i = 0; i < MAX_DEVICES; i++) {
+  for (let i = 0; i < 16; i++) {
     const device = await connectPhone(name, await mintToken(mac));
     expect(await device.phone.next()).toMatchObject({ type: "joined" });
     devices.push(device);
@@ -550,10 +629,12 @@ test("a token join beyond the pending bound is refused retryably and keeps its t
   mac.send({ type: "devices", devices: [] });
   const token = await mintToken(mac);
   const refused = await connectPhone(name, token);
-  expect(await Promise.race([refused.phone.next(), refused.phone.closed()])).toBe(CLOSE_HOST_OFFLINE);
+  expect(await Promise.race([refused.phone.next(), refused.phone.closed()])).toBe(4011);
   expect(await refused.phone.closedReason()).toBe("host offline");
-  oldest.phone.send({ type: "ping" });
-  expect(await oldest.phone.next()).toEqual({ type: "pong" });
+  for (const { phone } of devices) {
+    phone.send({ type: "ping" });
+    expect(await Promise.race([phone.next(), phone.closed()])).toEqual({ type: "pong" });
+  }
   const unknown = await rejoin(name, refused.keys);
   expect(await unknown.closed()).toBe(4001);
   expect(await unknown.closedReason()).toBe("unknown device");
