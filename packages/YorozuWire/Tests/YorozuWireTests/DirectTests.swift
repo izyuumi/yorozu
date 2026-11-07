@@ -1059,13 +1059,14 @@ struct RaceTests {
 
     @Test func aWipedRoomIsRetriedNotUnpaired() {
         for relayKnows in [true, false] {
-            #expect(RelayConnection.ended(by: "host offline", relayKnows: relayKnows) == nil)
-            #expect(RelayConnection.ended(by: "pairing expired", relayKnows: relayKnows) == nil, "an older relay's close")
-            #expect(RelayConnection.ended(by: "revoked", relayKnows: relayKnows) == .unpaired)
+            let standing: RelayConnection.Standing = relayKnows ? .knownToRelay : .pairedDirect(retriedAsKnown: false)
+            #expect(RelayConnection.afterClose(reason: "host offline", standing: standing) == .retry)
+            #expect(RelayConnection.afterClose(reason: "pairing expired", standing: standing) == .retry, "an older relay's close")
+            #expect(RelayConnection.afterClose(reason: "revoked", standing: standing) == .terminal(.unpaired))
         }
-        #expect(RelayConnection.ended(by: "unknown device", relayKnows: true) == .unpaired)
-        #expect(RelayConnection.ended(by: "unknown device", relayKnows: false) == nil)
-        #expect(RelayConnection.ended(by: "rate limit", relayKnows: true) == nil)
+        #expect(RelayConnection.afterClose(reason: "unknown device", standing: .knownToRelay) == .terminal(.unpaired))
+        #expect(RelayConnection.afterClose(reason: "unknown device", standing: .pairedDirect(retriedAsKnown: false)) == .retry)
+        #expect(RelayConnection.afterClose(reason: "rate limit", standing: .knownToRelay) == .retry)
     }
 
     @Test func raceAgainWhilePairingRacesAtOnce() async {

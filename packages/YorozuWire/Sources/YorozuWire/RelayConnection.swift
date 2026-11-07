@@ -33,6 +33,40 @@ public actor RelayConnection {
     /// A relay, or the plugin's direct listener (#532): a probe instead of `join`, no relay buffer, flow control or push.
     enum Path: Sendable { case relay, direct }
 
+    enum Standing: Equatable, Sendable {
+        case knownToRelay
+        case codeOnly(retriedAsKnown: Bool)
+        case pairedDirect(retriedAsKnown: Bool)
+
+        func afterJoined() -> Standing { .knownToRelay }
+
+        func afterRetryAsKnown() -> Standing {
+            switch self {
+            case .codeOnly(retriedAsKnown: false): .codeOnly(retriedAsKnown: true)
+            case .pairedDirect(retriedAsKnown: false): .pairedDirect(retriedAsKnown: true)
+            default: self
+            }
+        }
+
+        func afterSessionOpened() -> Standing {
+            switch self {
+            case .codeOnly(let retried): .pairedDirect(retriedAsKnown: retried)
+            default: self
+            }
+        }
+
+        var joinsAsKnown: Bool {
+            switch self {
+            case .knownToRelay: true
+            case .codeOnly(let retried), .pairedDirect(let retried): retried
+            }
+        }
+    }
+
+    enum CloseOutcome: Equatable, Sendable {
+        case retryAsKnown, retry, terminal(State)
+    }
+
     private enum Handshake {
         case idle
         case awaitingGrant
@@ -54,9 +88,8 @@ public actor RelayConnection {
     private let local: PeerInfo
     private let urlSession: URLSession
     private let dial: URL
-    private var relayKnows: Bool
+    private var standing: Standing
     private var wireFormat: Wire.Format
-    private var triedAsKnown = false
     private var probeNonce: String?
     private var ready: (@Sendable () -> Void)?
     private var hostCapabilities: [String] = []
@@ -103,7 +136,8 @@ public actor RelayConnection {
         self.path = path
         self.pairing = pairing
         self.identity = identity
-        self.relayKnows = relayKnows
+        standing = relayKnows ? .knownToRelay : pairing.secret == nil
+            ? .pairedDirect(retriedAsKnown: false) : .codeOnly(retriedAsKnown: false)
         self.local = local
         wireFormat = Wire.Format(unversionedWire: unversionedWire)
         self.urlSession = urlSession
@@ -272,34 +306,35 @@ public actor RelayConnection {
             running = false
             return set(.offline)
         }
-        if let final = Self.ended(by: reason, relayKnows: relayKnows) { return terminal(final) }
-        switch reason {
-        case "unknown token", "expired token", "unknown device":
-            // Paired over the direct path (#532 step 5): the token may be spent or expired, and the relay learns the
-            // device from the plugin's allowlist, maybe later; until then this leg retries.
-            let pairedDirect = pairing.secret == nil && !relayKnows
-            if !relayKnows && !triedAsKnown && (reason == "unknown token" || pairedDirect && reason == "expired token") {
-                triedAsKnown = true
-                return connect()
-            }
-            if pairedDirect {
-                set(.offline)
-                return scheduleRetry()
-            }
-            return terminal(.pairingFailed(reason))
-        default:
+        switch Self.afterClose(reason: reason, standing: standing) {
+        case .retryAsKnown:
+            standing = standing.afterRetryAsKnown()
+            connect()
+        case .retry:
             set(.offline)
             scheduleRetry()
+        case .terminal(let final):
+            terminal(final)
         }
     }
 
-    /// The state a relay close reason leaves for good, when it ends the pairing. Anything else retries, among them
-    /// "host offline" (a wiped room its host has not rebuilt yet) and an older relay's "pairing expired".
-    static func ended(by reason: String, relayKnows: Bool) -> State? {
+    /// A direct-paired device retries until the plugin's allowlist reaches the relay; token expiry cannot unpair it.
+    static func afterClose(reason: String, standing: Standing) -> CloseOutcome {
         switch reason {
-        case "revoked": .unpaired
-        case "unknown device" where relayKnows: .unpaired
-        default: nil
+        case "revoked": return .terminal(.unpaired)
+        case "unknown device" where standing == .knownToRelay: return .terminal(.unpaired)
+        case "unknown token", "expired token", "unknown device":
+            switch standing {
+            case .codeOnly(retriedAsKnown: false) where reason == "unknown token":
+                return .retryAsKnown
+            case .pairedDirect(retriedAsKnown: false) where reason != "unknown device":
+                return .retryAsKnown
+            case .pairedDirect:
+                return .retry
+            default:
+                return .terminal(.pairingFailed(reason))
+            }
+        default: return .retry
         }
     }
 
@@ -365,8 +400,8 @@ public actor RelayConnection {
             guard let nonce = message["nonce"] as? String else { return }
             join(nonce: nonce, on: socket)
         case "joined":
-            if !relayKnows {
-                relayKnows = true
+            if standing != .knownToRelay {
+                standing = standing.afterJoined()
                 continuation?.yield(.relayJoined)
             }
             attempt = 0
@@ -414,7 +449,7 @@ public actor RelayConnection {
     }
 
     private func join(nonce: String, on socket: URLSessionWebSocketTask) {
-        let known = relayKnows || triedAsKnown
+        let known = standing.joinsAsKnown
         let challenge = known ? nonce : pairing.token
         guard let room = pairing.roomId,
               let sig = try? YorozuCrypto.signFrame(priv: identity.signingPrivateKey, data: Data(challenge.utf8)) else { return }
@@ -516,6 +551,7 @@ public actor RelayConnection {
             handshake.cancelDeadline()
             handshake = .open
             pairing.secret = nil
+            standing = standing.afterSessionOpened()
             hostCapabilities = peer.capabilities
             connectionLog.info("\(self.label, privacy: .public): session open after \((ContinuousClock.now - self.dialed).ms, privacy: .public) ms")
             set(.ready)
