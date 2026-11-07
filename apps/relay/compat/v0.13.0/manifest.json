@@ -1,0 +1,10 @@
+{
+  "tag": "v0.13.0",
+  "commit": "6c09908c94c5638d154ae8a5d0e6d0ee848a0dae",
+  "files": {
+    "src/worker.ts": "0a8d177f703226653fb78f37e9a2b2a5a2dbd3ba7f5da2843b4fa2d46037d749",
+    "src/protocol.ts": "12359e176fa7eaa4b277f5986c0ef82375c87169504d3f8dedf869de3998b6e0",
+    "src/apns.ts": "ed075a884c7d05c9f3672e47751aefd331ef0d32ad1ca7bfa3075892005cc916",
+    "src/mailbox.ts": "d1a51e79a3e17c9c487583a07946315d9bbcc760a44152e127190d4b2129ffd4"
+  }
+}

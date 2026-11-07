@@ -11,7 +11,6 @@ import {
   BUFFER_CAP_BYTES,
   BUFFER_TTL_MS,
   dropCount,
-  evictions,
   FRAMES_PER_SEC,
   MAX_DEVICES,
   newBucket,
@@ -134,15 +133,6 @@ test("envelopes are accepted only when every field is a string", () => {
   expect(parseFrame({ payload: "p", sig: "s" })).toMatchObject({ payload: "p" });
   expect(parseFrame({ payload: "p" })).toBeNull();
   expect(parseFrame({ payload: null, sig: "s" })).toBeNull();
-});
-
-test("known devices are capped, and a device already known evicts nobody", () => {
-  const known = Array.from({ length: MAX_DEVICES }, (_, i): [string, number] => [`k${i}`, i]);
-  expect(evictions(known, "k3")).toEqual([]);
-  expect(evictions(known.slice(0, 3), "new")).toEqual([]);
-  expect(evictions(known, "new")).toEqual(["k0"]);
-  expect(evictions(known, "new", 3)).toEqual(["k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8",
-    "k9", "k10", "k11", "k12", "k13"]);
 });
 
 test("push registrations are accepted only in the shape the relay stores", () => {

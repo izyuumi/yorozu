@@ -17,6 +17,10 @@ Two implementations of one protocol, sharing limits, envelope parsing and close 
 
 Both read `RELAY_MAX_TOKENS_PER_ROOM` (default 8) and `RELAY_NOTIFY_PER_MINUTE` (default 60). The Worker also reads `RELAY_ACTIVITY_PER_MINUTE` (default 60), the separate budget for Live Activity pushes. The Worker's APNs secrets are listed in [docs/setup.md](../../docs/setup.md).
 
+The host owns the device roster. Its latest `devices` announce vouches for the listed rows and removes omitted rows, except a phone connected at that moment, which stays as a pending row; `revoke` also removes a row and closes its sockets with `4001 revoked`. Token joins add pending rows, capped at 16 independently of vouched rows. At that bound a fresh device gets `4011 host offline` without spending its token or evicting another device. Existing rows can still nonce-rejoin. Capacity never changes roster authority.
+
+The Worker keeps `p:` values as numeric timestamps for older readers and persists the vouched keys separately in `vouched`; other rows are pending. On migration, legacy rows count as vouched when roster authority is `host`, otherwise pending. This classification is saved before a new host registration resets authority to `unconfirmed`.
+
 ## Develop
 
 The package is in the repository's pnpm workspace.
