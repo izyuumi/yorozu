@@ -1,0 +1,68 @@
+{
+  "producer": "relay-roster-authority-6bfaab27",
+  "scenario": "unannounced",
+  "entries": [
+    [
+      "owner",
+      "v2H863bgQhglKM6sKKWfsNHJc36uz0raih67BER77xI"
+    ],
+    [
+      "p:_hHE-TyUy8ZHqIQKOQDV73CS-ouxSNFIbSpA9jXWqpc",
+      1794040865722
+    ],
+    [
+      "roster",
+      "unconfirmed"
+    ],
+    [
+      "seen",
+      1794040865722
+    ],
+    [
+      "t:GL--HbdbzWq4o02TiHBulC5d-nep7A9MaIHxNMYYsJg",
+      1794041465723
+    ],
+    [
+      "token-order",
+      [
+        "t:GL--HbdbzWq4o02TiHBulC5d-nep7A9MaIHxNMYYsJg"
+      ]
+    ],
+    [
+      "vouched",
+      []
+    ]
+  ],
+  "keys": {
+    "host": {
+      "pub": "v2H863bgQhglKM6sKKWfsNHJc36uz0raih67BER77xI",
+      "priv": {
+        "kty": "OKP",
+        "key_ops": [
+          "sign"
+        ],
+        "alg": "EdDSA",
+        "ext": true,
+        "crv": "Ed25519",
+        "x": "v2H863bgQhglKM6sKKWfsNHJc36uz0raih67BER77xI",
+        "d": "o-QmWg4cAzX2mfvma6N83PwKSe2lujkjpU-aCD7-8Lo"
+      }
+    },
+    "devices": [
+      {
+        "pub": "_hHE-TyUy8ZHqIQKOQDV73CS-ouxSNFIbSpA9jXWqpc",
+        "priv": {
+          "kty": "OKP",
+          "key_ops": [
+            "sign"
+          ],
+          "alg": "EdDSA",
+          "ext": true,
+          "crv": "Ed25519",
+          "x": "_hHE-TyUy8ZHqIQKOQDV73CS-ouxSNFIbSpA9jXWqpc",
+          "d": "L0iIt75l5spF0W5cfreyjUFzAj2r7q1YTp41BEioN0U"
+        }
+      }
+    ]
+  }
+}
