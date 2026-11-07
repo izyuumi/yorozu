@@ -270,6 +270,21 @@ test("an activity token names a device key and a hex token, or neither token to 
   expect(parseActivityToken({ device: "short", token: "ab" })).toBeNull();
 });
 
+test("an activity push uses the host timestamp when present and relay time when absent", () => {
+  const push = { device: DEVICE, event: "update", priority: 5, state: fixture };
+  const parsed = parseActivityPush(push)!;
+  expect(parsed).toEqual(push);
+  expect(activityPayload(parsed, 1_800_000_000_999)).toMatchObject({ aps: { timestamp: 1_800_000_000 } });
+  const timestamp = 9_000_000_000_000_000;
+  const stamped = parseActivityPush({ ...push, timestamp })!;
+  expect(stamped).toEqual({ ...push, timestamp });
+  expect(activityPayload(stamped, 1_800_000_000_999)).toMatchObject({ aps: { timestamp } });
+});
+
+test.each([0, -1, 1.5, "1", 2 ** 53])("an activity push rejects a malformed timestamp (%s)", (timestamp) => {
+  expect(parseActivityPush({ device: DEVICE, event: "update", priority: 5, state: fixture, timestamp })).toBeNull();
+});
+
 test("an activity push is an update or end at priority 5 or 10, and its payload has no alert", () => {
   const push = { device: DEVICE, event: "update", priority: 5, state: fixture, staleDate: 1_800_000_900 };
   const parsed = parseActivityPush(push)!;

@@ -335,7 +335,7 @@ test("presence survives hibernation: it is read off the live sockets, not rememb
 
 type Call = { url: string; headers: Headers; body: any };
 
-function fakeApns(status: (url: string) => number = () => 200): Call[] {
+function fakeApns(status: (url: string) => number | Promise<number> = () => 200): Call[] {
   apns.resetToken();
   const calls: Call[] = [];
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -344,7 +344,7 @@ function fakeApns(status: (url: string) => number = () => 200): Call[] {
       headers: new Headers(init?.headers),
       body: JSON.parse(String(init?.body)),
     });
-    const code = status(String(input));
+    const code = await status(String(input));
     return new Response(code === 400 ? JSON.stringify({ reason: "BadDeviceToken" }) : null, {
       status: code,
     });
@@ -1056,7 +1056,79 @@ test("a relay that can push says so when the host registers", async () => {
   const mac = await connect(await roomId(keys.pub));
   const { nonce } = await mac.next();
   mac.send({ type: "register", pubkey: keys.pub, nonceSig: await sign(nonce, keys) });
-  expect(await mac.next()).toMatchObject({ type: "registered", liveActivity: true });
+  expect(await mac.next()).toMatchObject({ type: "registered", liveActivity: true, activityTimestamp: true });
+});
+
+test("an activity push queued before a new activity token is never sent to the new token", async () => {
+  let release!: (status: number) => void;
+  const blocked = new Promise<number>((resolve) => { release = resolve; });
+  const calls = fakeApns(() => calls.length === 1 ? blocked : 200);
+  const { mac, keys, room: name } = await withActivity();
+  try {
+    mac.send(activityPush(keys.pub, { priority: 10 }));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    mac.send(activityPush(keys.pub));
+    mac.send({ type: "activityToken", device: keys.pub, token: REPLACEMENT_TOKEN });
+    await macSettled(mac);
+    expect(await activityRecord(name, keys.pub)).toEqual({ token: REPLACEMENT_TOKEN });
+  } finally {
+    release(200);
+  }
+  await runInDurableObject(room(name), async (instance) => {
+    await (instance as unknown as { activityTail: Promise<unknown> }).activityTail;
+  });
+  expect(calls).toHaveLength(1);
+
+  mac.send(activityPush(keys.pub, { priority: 10 }));
+  await vi.waitFor(() => expect(calls).toHaveLength(2));
+  expect(calls.map((call) => call.url)).toEqual([
+    `https://apns.test/3/device/${ACTIVITY_TOKEN}`,
+    `https://apns.test/3/device/${REPLACEMENT_TOKEN}`,
+  ]);
+});
+
+test.each(["revoked", "forgotten"])("a push queued before the device is revoked or the token forgotten is not sent (%s)", async (action) => {
+  let release!: (status: number) => void;
+  const blocked = new Promise<number>((resolve) => { release = resolve; });
+  const calls = fakeApns(() => calls.length === 1 ? blocked : 200);
+  const { mac, keys, room: name } = await withActivity();
+  try {
+    mac.send(activityPush(keys.pub));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    mac.send(activityPush(keys.pub));
+    mac.send(action === "revoked"
+      ? { type: "revoke", pubkey: keys.pub }
+      : { type: "activityToken", device: keys.pub });
+    await macSettled(mac);
+    expect(await activityRecord(name, keys.pub)).toBeUndefined();
+  } finally {
+    release(200);
+  }
+  await runInDurableObject(room(name), async (instance) => {
+    await (instance as unknown as { activityTail: Promise<unknown> }).activityTail;
+  });
+  expect(calls).toHaveLength(1);
+});
+
+test("an activity push passes the host timestamp unchanged or defaults to relay time", async () => {
+  const calls = fakeApns();
+  const { mac, keys, room: name } = await withActivity();
+  const now = 1_800_000_000_999;
+  const deliver = tightBudgets(name, now);
+  await deliver(JSON.stringify(activityPush(keys.pub, { timestamp: 9_000_000_000_000_000 })));
+  await vi.waitFor(() => expect(calls).toHaveLength(1));
+  await deliver(JSON.stringify(activityPush(keys.pub)));
+  await vi.waitFor(() => expect(calls).toHaveLength(2));
+  expect(calls.map((call) => call.body.aps.timestamp)).toEqual([9_000_000_000_000_000, 1_800_000_000]);
+});
+
+test.each([0, -1, 1.5, "1", 2 ** 53])("a malformed activity timestamp closes the host socket (%s)", async (timestamp) => {
+  const calls = fakeApns();
+  const { mac, keys } = await withActivity();
+  mac.send(activityPush(keys.pub, { timestamp }));
+  expect(await mac.closed()).toBe(4001);
+  expect(await mac.closedReason()).toBe("bad activity push");
+  expect(calls).toHaveLength(0);
 });
 
 test("a live activity push carries counts only, to the activity topic, with no alert", async () => {

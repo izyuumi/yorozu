@@ -579,11 +579,11 @@ export class Room implements DurableObject {
     await this.state.storage.put(key, { token, ...(sandbox ? { sandbox } : {}) } satisfies ActivityRecord);
   }
 
-  private async pushActivity(push: ActivityPush, now: number): Promise<void> {
+  private async pushActivity(push: ActivityPush, record: ActivityRecord, now: number): Promise<void> {
     if (!apns.configured(this.env)) return;
     const key = activityPrefix + push.device;
-    const record = await this.state.storage.get<ActivityRecord>(key);
-    if (!record) return;
+    const current = await this.state.storage.get<ActivityRecord>(key);
+    if (current?.token !== record.token) return;
     const result = await this.push({
       token: record.token,
       payload: activityPayload(push, now),
@@ -656,7 +656,7 @@ export class Room implements DurableObject {
           roomId: id,
           phones: this.phoneCount(),
           pushProxy: true,
-          ...(apns.configured(this.env) ? { liveActivity: true } : {}),
+          ...(apns.configured(this.env) ? { liveActivity: true, activityTimestamp: true } : {}),
         }));
         log("registered", { phones: this.sockets("phone").length });
         this.notifyOwner(true);
@@ -817,8 +817,10 @@ export class Room implements DurableObject {
           ws.send(JSON.stringify({ type: "state", state: "activity rate limit" }));
           return;
         }
+        const record = await this.state.storage.get<ActivityRecord>(activityPrefix + push.device);
+        if (!record) return;
         const pushed = this.activityTail
-          .then(() => this.pushActivity(push, now))
+          .then(() => this.pushActivity(push, record, now))
           .catch((error: unknown) => log("error", { role: "mac", error: String(error) }));
         this.activityTail = pushed;
         this.state.waitUntil(pushed);
