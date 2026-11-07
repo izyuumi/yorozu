@@ -19,6 +19,7 @@ let appGroup = "group.to.yumi.yorozu"
 // llama.cpp's xcframework (voice input) has no iOS Simulator slice: `TUIST_VOICE_INPUT=0 tuist generate` leaves
 // it out, for simulator builds.
 let voiceInput = Environment.voiceInput.getBoolean(default: true)
+let testHomeName = "YorozuTests-\(UUID().uuidString)"
 func signing(_ extra: SettingsDictionary = [:]) -> Settings {
     .settings(base: [
         "DEVELOPMENT_TEAM": "AN5KM8QGEF",
@@ -233,7 +234,7 @@ let project = Project(
             entitlements: .dictionary(["com.apple.security.application-groups": [.string(appGroup)]]),
             settings: signing()
         ),
-        // The snapshot's encoding, redaction and unread math, and the Live Activity's job math, on the Mac without the app.
+        // Snapshot, Live Activity and client lifecycle tests on the Mac without hosting the app.
         .target(
             name: "YorozuTests",
             destinations: [.mac],
@@ -245,11 +246,41 @@ let project = Project(
                 "Sources/Client/Store.swift", "Sources/Client/SupportDirectory.swift", "Sources/Client/StoredNamesMigration.swift",
                 "Sources/Client/WidgetPublisher.swift", "Sources/Client/ActivityReports.swift", "Sources/Client/CronSchedule.swift",
                 "Sources/Client/ConnectionRoute.swift", "Sources/Client/LocalPairingFile.swift", "Sources/Client/PairingEntry.swift",
+                "Sources/Client/SceneLifecycle.swift",
                 "Sources/WidgetShared/Model/**", "Sources/WidgetShared/Interface/WidgetLink.swift",
                 "Sources/WidgetShared/Interface/Launcher.swift", "Sources/YorozuIOS/LaunchColumns.swift",
+                "Sources/Client/AppModel.swift", "Sources/Client/ClientTransport.swift", "Sources/Client/DemoData.swift",
+                "Sources/Client/DeviceCodePairing.swift", "Sources/Client/Transfers.swift",
+                "Sources/ShareInbox/DeviceModel.swift", "Sources/ShareInbox/ShareInbox.swift",
+                "Sources/WidgetShared/Interface/Palette.swift", "Sources/YorozuIOS/Push.swift", "Sources/YorozuIOS/YorozuIntents.swift",
             ],
             dependencies: [.package(product: "YorozuWire")],
             settings: .settings(base: ["DEVELOPMENT_TEAM": "AN5KM8QGEF", "CODE_SIGN_STYLE": "Automatic"])
+        ),
+    ],
+    schemes: [
+        .scheme(
+            name: "YorozuTests",
+            buildAction: .buildAction(targets: ["YorozuTests"]),
+            testAction: .targets(
+                ["YorozuTests"],
+                arguments: .arguments(
+                    environmentVariables: [
+                        "HOME": .environmentVariable(value: "$(TMPDIR)/\(testHomeName)", isEnabled: true),
+                        "CFFIXED_USER_HOME": .environmentVariable(value: "$(TMPDIR)/\(testHomeName)", isEnabled: true),
+                    ],
+                    launchArguments: [.launchArgument(name: "--demo", isEnabled: true)]
+                ),
+                configuration: .debug,
+                expandVariableFromTarget: "YorozuTests",
+                preActions: [.executionAction(
+                    scriptText: """
+                    test_home="${TMPDIR%/}/\(testHomeName)"
+                    mkdir -p -m 700 "$test_home"
+                    """,
+                    target: "YorozuTests"
+                )]
+            )
         ),
     ]
 )
