@@ -6,11 +6,13 @@ import { afterEach, expect, test, vi } from "vitest";
 // Vite supplies this transform; Vite itself is not a direct relay dependency.
 declare global {
   interface ImportMeta {
+    readonly env: { VITE_COMPAT_CAPTURE?: string; VITE_COMPAT_PRODUCER?: string };
     glob(pattern: string, options: { eager: true; import: "default" }): Record<string, unknown>;
   }
 }
 
 const ED25519 = { name: "Ed25519" } as const;
+const rollback = (env as unknown as { COMPAT_RELAY: string }).COMPAT_RELAY === "v0.13.0";
 const DEVICE_TOKEN = "a".repeat(64);
 const ACTIVITY_TOKEN = "e".repeat(64);
 const ACTIVITY_STATE = {
@@ -155,7 +157,7 @@ function activityPush(device: string) {
   return { type: "activityPush", device, event: "update", priority: 5, state: ACTIVITY_STATE };
 }
 
-test.skipIf(import.meta.env.VITE_COMPAT_CAPTURE !== "1").each(["announced", "unannounced", "sixteen"] as const)("capture compatibility fixture: %s", async (scenario) => {
+test.skipIf(rollback || import.meta.env.VITE_COMPAT_CAPTURE !== "1" || !import.meta.env.VITE_COMPAT_PRODUCER).each(["announced", "unannounced", "sixteen"] as const)("capture compatibility fixture: %s", async (scenario) => {
   const hostKeys = await keypair();
   const name = await roomId(hostKeys.pub);
   const host = await register(hostKeys);
@@ -180,7 +182,7 @@ test.skipIf(import.meta.env.VITE_COMPAT_CAPTURE !== "1").each(["announced", "una
   // Capture persistent storage before cleanup; socket attachments do not survive deploys.
   const entries = await runInDurableObject(room(name), async (_instance, state) => [...await state.storage.list()]);
   const keys = { host: await save(hostKeys), devices: await Promise.all(devices.map(save)) };
-  const fixture = { producer: import.meta.env.VITE_COMPAT_PRODUCER ?? "unknown", scenario, entries, keys };
+  const fixture = { producer: import.meta.env.VITE_COMPAT_PRODUCER, scenario, entries, keys };
   await expect(JSON.stringify(fixture, null, 2) + "\n").toMatchFileSnapshot(`./compat-fixtures/captured/${scenario}.json`);
   console.log("COMPAT_FIXTURE " + JSON.stringify(fixture));
 }, 30_000);
@@ -188,6 +190,8 @@ test.skipIf(import.meta.env.VITE_COMPAT_CAPTURE !== "1").each(["announced", "una
 const fixtures = import.meta.glob("./compat-fixtures/*.json", { eager: true, import: "default" });
 const cases = (scenario: Fixture["scenario"]) => Object.entries(fixtures)
   .map(([file, value]) => ({ file, ...value as Fixture }))
+  // The shipped relay proves rollback by reading newer storage; current replays every producer.
+  .filter((fixture) => !rollback || !fixture.producer.startsWith("v0.13.0"))
   .filter((fixture) => fixture.scenario === scenario);
 
 async function load(fixture: Fixture) {

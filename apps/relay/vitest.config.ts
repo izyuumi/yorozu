@@ -29,19 +29,28 @@ export default defineConfig({
       {
         // direct.test.ts imports the plugin's pure files, whose tsconfig extends an OpenClaw checkout CI does not have.
         oxc: { tsconfig: false },
-        test: { name: "node", include: ["src/index.test.ts", "src/protocol.test.ts", "src/direct.test.ts"] },
+        test: { name: "node", include: ["src/index.test.ts", "src/protocol.test.ts", "src/direct.test.ts", "src/compat-source.test.ts"] },
       },
       {
         plugins: [
           cloudflareTest({
             wrangler: { configPath: "./wrangler.toml" },
-            miniflare: { bindings: apns },
+            miniflare: { bindings: { ...apns, COMPAT_RELAY: "current" } },
           }),
         ],
         test: {
           name: "worker",
           include: ["src/worker.test.ts", "src/apns.test.ts", "src/mailbox.test.ts", "src/compat.test.ts"],
         },
+      },
+      {
+        plugins: [
+          cloudflareTest({
+            wrangler: { configPath: "./compat/v0.13.0/wrangler.toml" },
+            miniflare: { bindings: { ...apns, COMPAT_RELAY: "v0.13.0" } },
+          }),
+        ],
+        test: { name: "worker-v0.13.0", include: ["src/compat.test.ts"] },
       },
     ],
   },
