@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.14.0
+
+### Features
+
+- **plugin:** sanitize OpenClaw message presentations into read-only blocks (#673)
+
+### Fixes
+
+- **wire:** ask the race again when the host returns on a relay leg (#679)
+- **relay:** pin the Live Activity target at admission and pass the host timestamp through (#675)
+- **wire:** hand a stalled direct grant on when the relay leg is gone (#678)
+- **ios:** keep a stale background drain from suspending the app after a quick return (#677)
+- **relay:** never evict a host-vouched device (#676)
+
 ## 0.13.0
 
 ### Features
