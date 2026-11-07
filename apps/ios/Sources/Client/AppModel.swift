@@ -70,7 +70,8 @@ final class AppModel {
     @ObservationIgnored private var outboxAgain = false
     @ObservationIgnored private var outboxResend = false
     @ObservationIgnored private var visible: String?
-    @ObservationIgnored private(set) var active = false
+    @ObservationIgnored private var lifecycle = SceneLifecycle()
+    var active: Bool { lifecycle.isActive }
     @ObservationIgnored private var activeSent = false
     @ObservationIgnored private var pushToken: String?
     @ObservationIgnored private var cronWaiters: [CheckedContinuation<Void, Never>] = []
@@ -417,6 +418,7 @@ final class AppModel {
 
     /// #532 item 8: the race starts on the way back to the foreground, before the scene is active; `resume` then joins it.
     func prewarm() {
+        lifecycle.becomeInactive()
         guard !isDemo else { return }
         guard let connection else { return connect() }
         Task { await connection.reconnect() }
@@ -440,18 +442,27 @@ final class AppModel {
         return true
     }
 
-    func suspend() {
-        setActive(false)
+    func enterBackground() -> SceneLifecycle.Visit {
+        let visit = lifecycle.enterBackground()
+        updateForeground()
+        publishWidgets()
+        return visit
+    }
+
+    func suspend(visit: SceneLifecycle.Visit) {
+        guard lifecycle.suspend(visit: visit) else { return }
+        updateForeground()
+        publishWidgets()
         guard !isDemo, let connection else { return }
         Task {
             try? await Task.sleep(for: .milliseconds(500))
-            guard !active else { return }
+            guard lifecycle.stillSuspended(visit: visit) else { return }
             await connection.stop()
         }
     }
 
     func setActive(_ active: Bool) {
-        self.active = active
+        if active { lifecycle.becomeActive() } else { lifecycle.becomeInactive() }
         updateForeground()
         publishWidgets()
     }
@@ -481,14 +492,15 @@ final class AppModel {
 
     func backgroundWake() async {
         guard !isDemo, paired, !active else { return }
+        let lifecycle = self.lifecycle
         let generation = connectionGeneration
         if let connection { await connection.reconnect() } else { connect() }
         for _ in 0..<40 where state != .ready {
-            guard generation == connectionGeneration, !isDemo else { return }
+            guard generation == connectionGeneration, !isDemo, self.lifecycle == lifecycle else { return }
             try? await Task.sleep(for: .milliseconds(250))
         }
         try? await Task.sleep(for: .seconds(2))
-        guard generation == connectionGeneration, !isDemo, !active, let connection else { return }
+        guard generation == connectionGeneration, !isDemo, self.lifecycle == lifecycle, !active, let connection else { return }
         await connection.stop()
     }
 
