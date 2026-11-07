@@ -31,26 +31,29 @@ function host(options: Partial<Pick<HubOptions, "onPeer" | "dispatch">> = {}) {
   const keys = { static: x25519Keypair(), room: roomId(ed25519Keypair().publicKey) };
   const device = { signing: ed25519Keypair(), static: x25519Keypair() };
   const deviceKey = b64u(device.signing.publicKey);
+  const allowed = new Map([[deviceKey, b64u(device.static.publicKey)]]);
   const messages: Message[] = [];
   const hub = new Hub({
     keys, peerInfo: () => peer,
-    staticKeyOf: async (key) => key === deviceKey ? b64u(device.static.publicKey) : undefined,
+    staticKeyOf: async (key) => allowed.get(key),
     onMessage: (message) => { messages.push(message); },
     dispatch: async () => false,
     ...options,
   });
 
-  async function connect() {
-    const sent: string[] = [];
-    const closed: { code: number; reason: string }[] = [];
-    const link: Link = {
+  async function connect(deviceKeys = device, via?: { link: Link; sent: string[]; closed: { code: number; reason: string }[] }) {
+    const deviceKey = b64u(deviceKeys.signing.publicKey);
+    allowed.set(deviceKey, b64u(deviceKeys.static.publicKey));
+    const sent: string[] = via?.sent ?? [];
+    const closed: { code: number; reason: string }[] = via?.closed ?? [];
+    const link: Link = via?.link ?? {
       path: "direct", send: (payloads) => { sent.push(...payloads); },
       close: (code, reason) => { closed.push({ code, reason }); },
     };
-    const ik = new NoiseIK("initiator", device.static, keys.static.publicKey, prologue(keys.room, device.signing.publicKey));
+    const ik = new NoiseIK("initiator", deviceKeys.static, keys.static.publicKey, prologue(keys.room, deviceKeys.signing.publicKey));
     const message = ik.writeMessage(Buffer.from(JSON.stringify({ ts: Date.now() })));
-    const payload = encodeFrame({ type: "init", deviceSigningKey: device.signing.publicKey, message });
-    assert.equal(await hub.handshake(payload, signFrame(device.signing.privateKey, payload), link), deviceKey);
+    const payload = encodeFrame({ type: "init", deviceSigningKey: deviceKeys.signing.publicKey, message });
+    assert.equal(await hub.handshake(payload, signFrame(deviceKeys.signing.privateKey, payload), link), deviceKey);
     const response = decodeFrame(sent.shift()!);
     assert.ok(response?.type === "response");
     ik.readMessage(response.message);
@@ -68,14 +71,18 @@ function host(options: Partial<Pick<HubOptions, "onPeer" | "dispatch">> = {}) {
       });
     }
     assert.deepEqual(drain(), [hello]);
-    function open(event: Event) {
+    function seal(event: Event) {
       const frame = decodeFrame(session.seal(encodeEvent(event)));
       assert.ok(frame?.type === "box");
+      return frame;
+    }
+    function open(event: Event) {
+      const frame = seal(event);
       const opened = hub.open(frame, link);
       assert.ok(opened, "the original link opens its session's frame before replacement/end");
       return opened;
     }
-    return { link, sent, closed, drain, open, send: (event: Event) => hub.handle(open(event)) };
+    return { deviceKey, link, sent, closed, drain, seal, open, send: (event: Event) => hub.handle(open(event)) };
   }
   return { hub, deviceKey, messages, connect };
 }
@@ -200,6 +207,96 @@ test("a box before peer_info is refused and does not end the session", async () 
   assert.deepEqual([...h.hub.watching(convId)], [h.deviceKey]);
   assert.equal(h.hub.broadcast([answer]), 1);
   assert.deepEqual(a.drain(), [answer]);
+});
+
+test("an incompatible first peer_info ends the session and allows a fresh handshake", async () => {
+  let peers = 0;
+  const h = host({ onPeer: async () => { peers++; } });
+  const a = await h.connect();
+  assert.equal(h.hub.served.get(h.deviceKey)?.phase, "awaitingPeer");
+  await a.send({ kind: "peer_info", data: { ...peer, protocolMin: 99, protocolMax: 99 } });
+  assert.deepEqual(a.drain(), [{ kind: "error", data: { code: "update_required", message: "no common protocol version" } }]);
+  assert.equal(h.hub.served.has(h.deviceKey), false);
+  const message: Event = { kind: "message", data: { convId, messageId, text: "ended session probe" } };
+  for (const event of [hello, message]) {
+    const opened = h.hub.open(a.seal(event), a.link);
+    if (opened) await h.hub.handle(opened);
+    assert.equal(opened, null, "the ended session cannot open another frame");
+  }
+  assert.equal(peers, 0);
+  assert.deepEqual(h.messages, []);
+  assert.deepEqual(a.drain(), []);
+  const b = await h.connect();
+  pendingState(h);
+  assert.equal(h.hub.served.get(h.deviceKey)?.phase, "awaitingPeer");
+  await b.send(hello);
+  assert.equal(peers, 1);
+  assert.equal(h.hub.served.get(h.deviceKey)?.phase, "live");
+  assert.equal(h.hub.broadcast([answer]), 1);
+  assert.deepEqual(b.drain(), [answer]);
+  assert.deepEqual(a.drain(), []);
+});
+
+test("detach ends pending and live sessions only on its link without closing it", async () => {
+  const h = host();
+  const pending = await h.connect();
+  pending.link.path = "relay";
+  const live = await h.connect({ signing: ed25519Keypair(), static: x25519Keypair() }, pending);
+  const other = await h.connect({ signing: ed25519Keypair(), static: x25519Keypair() });
+  await live.send(hello);
+  await live.send(foreground);
+  await other.send(hello);
+  await other.send(foreground);
+  assert.equal(h.hub.served.get(pending.deviceKey)?.phase, "awaitingPeer");
+  assert.equal(h.hub.served.get(live.deviceKey)?.phase, "live");
+  assert.deepEqual([...h.hub.watching(convId)], [live.deviceKey, other.deviceKey]);
+  assert.equal(h.hub.broadcast([answer]), 2);
+  assert.deepEqual(live.drain(), [answer]);
+  assert.deepEqual(other.drain(), [answer]);
+  const otherEntry = h.hub.served.get(other.deviceKey);
+  h.hub.detach(pending.link);
+  assert.equal(h.hub.served.has(pending.deviceKey), false);
+  assert.equal(h.hub.served.has(live.deviceKey), false);
+  assert.equal(h.hub.served.get(other.deviceKey), otherEntry);
+  assert.deepEqual([...h.hub.watching(convId)], [other.deviceKey]);
+  assert.equal(h.hub.broadcast([answer]), 1);
+  assert.deepEqual(pending.drain(), [], "neither detached session receives a broadcast");
+  assert.deepEqual(other.drain(), [answer]);
+  assert.deepEqual(pending.closed, [], "detach does not close the shared link");
+  assert.deepEqual(other.closed, []);
+});
+
+test("relayGone clears live relay presence and leaves direct and pending sessions alone", async () => {
+  const h = host();
+  const relay = await h.connect();
+  relay.link.path = "relay";
+  const direct = await h.connect({ signing: ed25519Keypair(), static: x25519Keypair() });
+  const pending = await h.connect({ signing: ed25519Keypair(), static: x25519Keypair() }, relay);
+  await relay.send(hello);
+  await relay.send(foreground);
+  await direct.send(hello);
+  await direct.send(foreground);
+  assert.deepEqual([...h.hub.watching(convId)], [relay.deviceKey, direct.deviceKey]);
+  const pendingEntry = h.hub.served.get(pending.deviceKey);
+  assert.equal(pendingEntry?.phase, "awaitingPeer");
+  h.hub.relayGone();
+  const relayEntry = h.hub.served.get(relay.deviceKey);
+  assert.ok(relayEntry?.phase === "live");
+  assert.equal(relayEntry.foreground, undefined);
+  assert.equal(relayEntry.active, undefined);
+  const directEntry = h.hub.served.get(direct.deviceKey);
+  assert.ok(directEntry?.phase === "live");
+  assert.equal(directEntry.foreground, convId);
+  assert.equal(directEntry.active, true);
+  assert.deepEqual([...h.hub.watching(convId)], [direct.deviceKey]);
+  assert.equal(h.hub.served.get(pending.deviceKey), pendingEntry);
+  assert.equal(h.hub.served.get(pending.deviceKey)?.phase, "awaitingPeer");
+  await pending.send(hello);
+  assert.equal(h.hub.served.get(pending.deviceKey)?.phase, "live");
+  await pending.send(foreground);
+  assert.deepEqual([...h.hub.watching(convId)], [direct.deviceKey, pending.deviceKey]);
+  assert.deepEqual(relay.drain(), []);
+  assert.deepEqual(direct.drain(), []);
 });
 
 test("a second peer_info does not reset the phase", async () => {
