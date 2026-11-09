@@ -6,14 +6,15 @@ export type JobKind = "turn" | "recording" | "transcribing" | "needsYou";
 export type JobState = "running" | "done" | "failed";
 /** One row as the app reports it; times are epoch milliseconds like the rest of the wire. */
 export type WireJob = { token: string; kind: JobKind; state: JobState; steps?: number; startedAt: number; finishedAt?: number };
-/** `live_activity`, client → plugin. No `pushToken`: the activity ended. `turns`: job token → convId of its running turns. */
-export type ActivityReport = { pushToken?: string; jobs: WireJob[]; turns: Record<string, string> };
+/** `live_activity`, client → plugin. With activityId but no pushToken: pending. Legacy without pushToken: ended. `turns`: job token → convId of its running turns. */
+export type ActivityReport = { pushToken?: string; activityId?: string; requestedAtMs?: number; jobs: WireJob[]; turns: Record<string, string> };
 
 /** `YorozuActivityState` as Swift's default `JSONDecoder` reads it: dates are seconds since 2001-01-01. */
 export type ContentJob = { token: string; kind: JobKind; state: JobState; steps?: number; startedAt: number; finishedAt?: number };
 export type ContentState = { jobs: ContentJob[] };
 
 export type TurnChange = { kind: "step"; steps: number } | { kind: "done" } | { kind: "failed" } | { kind: "gone" };
+export type OwnerTurnChange = TurnChange | { kind: "settled" };
 
 export type Plan = {
   event: "update" | "end";
@@ -36,6 +37,10 @@ const REFERENCE_MS = 978_307_200_000;
 const KINDS: readonly string[] = ["turn", "recording", "transcribing", "needsYou"];
 const STATES: readonly string[] = ["running", "done", "failed"];
 const JOB_TOKEN = /^[A-Za-z0-9_-]{16}$/;
+export const ENDED_LIMIT = 1024;
+export const validEnded = (v: unknown): v is string[] =>
+  Array.isArray(v) && v.length <= ENDED_LIMIT && new Set(v).size === v.length &&
+  v.every((token) => typeof token === "string" && JOB_TOKEN.test(token));
 const CONV_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PUSH_TOKEN = /^(?:[0-9a-f]{2}){1,512}$/i;
 
@@ -43,7 +48,7 @@ type Fields = Record<string, unknown>;
 const object = (v: unknown): v is Fields => typeof v === "object" && v !== null && !Array.isArray(v);
 const nat = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
 
-const validJob = (v: unknown): boolean =>
+export const validJob = (v: unknown): boolean =>
   object(v) &&
   typeof v.token === "string" &&
   JOB_TOKEN.test(v.token) &&
@@ -53,14 +58,19 @@ const validJob = (v: unknown): boolean =>
   nat(v.startedAt) &&
   (v.finishedAt === undefined || nat(v.finishedAt));
 
+export const validTurns = (v: unknown): v is Record<string, string> =>
+  object(v) && Object.keys(v).length <= LIMIT &&
+  Object.entries(v).every(([token, convId]) => JOB_TOKEN.test(token) && typeof convId === "string" && CONV_ID.test(convId));
+
 export const validReport = (d: Fields): boolean =>
   (d.pushToken === undefined || (typeof d.pushToken === "string" && PUSH_TOKEN.test(d.pushToken))) &&
+  ((d.activityId === undefined) === (d.requestedAtMs === undefined)) &&
+  (d.activityId === undefined || (typeof d.activityId === "string" && d.activityId.length === 36 && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(d.activityId))) &&
+  (d.requestedAtMs === undefined || (nat(d.requestedAtMs) && d.requestedAtMs >= 1e11)) &&
   Array.isArray(d.jobs) &&
   d.jobs.length <= LIMIT &&
   d.jobs.every(validJob) &&
-  object(d.turns) &&
-  Object.keys(d.turns).length <= LIMIT &&
-  Object.entries(d.turns).every(([token, convId]) => JOB_TOKEN.test(token) && typeof convId === "string" && CONV_ID.test(convId));
+  validTurns(d.turns);
 
 /** A report's jobs with only the known fields, so nothing else can reach the relay; a job of an unknown kind or state is dropped. */
 export const cleanJobs = (jobs: readonly WireJob[]): WireJob[] =>

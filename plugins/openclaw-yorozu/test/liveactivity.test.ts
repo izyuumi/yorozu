@@ -12,6 +12,7 @@ import {
   STEP_INTERVAL_MS,
   tidy,
   validReport,
+  type TurnChange,
   type WireJob,
 } from "../src/liveactivity.ts";
 
@@ -47,6 +48,49 @@ test("only the conversation's running turn changes; local jobs pass through unch
   assert.equal(failed?.state, "failed");
   assert.equal(failed?.finishedAt, T0 + 8);
   assert.deepEqual(applyTurn([turn()], {}, CONV, { kind: "done" }, T0 + 9), [turn()]);
+});
+
+test("host push is a full snapshot", () => {
+  const needsYou: WireJob = { token: "DDDDDDDDDDDDDDDD", kind: "needsYou", state: "running", startedAt: T0 - 100 };
+  const finished = turn({ token: "CCCCCCCCCCCCCCCC", state: "done", finishedAt: T0 });
+  const before = cleanJobs([turn(), needsYou, finished]);
+  const map = { ...turns, [needsYou.token]: OTHER };
+  const now = T0 + 1_000;
+  const after = applyTurn(before, map, CONV, { kind: "done" }, now);
+  const push = plan(before, after, now);
+
+  assert.ok(push);
+  assert.equal(push.state.jobs.length, 3);
+  assert.deepEqual(push.state.jobs.find((job) => job.token === needsYou.token), {
+    token: needsYou.token, kind: "needsYou", state: "running", startedAt: 821_692_799.9,
+  });
+  assert.equal(push.state.jobs.find((job) => job.token === TURN)?.state, "done");
+  assert.equal(push.state.jobs.find((job) => job.token === finished.token)?.state, "done");
+  assert.equal(push.priority, 10);
+});
+
+test("the host never creates a needsYou row", () => {
+  const needsYou: WireJob = { token: "DDDDDDDDDDDDDDDD", kind: "needsYou", state: "running", startedAt: T0 - 100 };
+  const changes: TurnChange[] = [{ kind: "step", steps: 2 }, { kind: "done" }, { kind: "failed" }, { kind: "gone" }];
+  for (const before of [cleanJobs([turn()]), cleanJobs([turn(), needsYou])]) {
+    const tokens = new Set(before.filter((job) => job.kind === "needsYou").map((job) => job.token));
+    for (const change of changes) {
+      const after = applyTurn(before, turns, CONV, change, T0 + 1_000);
+      assert.ok(after.filter((job) => job.kind === "needsYou").every((job) => tokens.has(job.token)), change.kind);
+    }
+  }
+});
+
+test("a needsYou row the host has not been told about is absent from its push", () => {
+  const before = cleanJobs([turn()]);
+  const now = T0 + 1_000;
+  const after = applyTurn(before, turns, CONV, { kind: "step", steps: 2 }, now);
+  const push = plan(before, after, now);
+
+  assert.ok(push);
+  assert.equal(push.state.jobs.find((job) => job.token === TURN)?.steps, 2);
+  // Removing the extension writer now would lose needs-you rows absent from the app's report.
+  assert.equal(push.state.jobs.some((job) => job.kind === "needsYou"), false);
 });
 
 test("finished rows linger, then go, and the order matches the app's", () => {
@@ -109,4 +153,27 @@ test("step counts above the relay's cap go out as the cap, normal counts unchang
   assert.deepEqual(cleanJobs([turn({ steps: 250_000 })]), [turn({ steps: 100_000 })]);
   assert.equal(contentState([turn({ steps: 250_000 })]).jobs[0]!.steps, 100_000);
   assert.equal(contentState([turn({ steps: 42 })]).jobs[0]!.steps, 42);
+});
+
+test("validReport accepts safe epoch-millisecond requestedAtMs only", () => {
+  const report = { activityId: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", pushToken: "ab".repeat(32), jobs: [turn()], turns };
+  for (const requestedAtMs of [100_000_000_000, 1_800_000_000_500, Number.MAX_SAFE_INTEGER]) {
+    assert.equal(validReport({ ...report, requestedAtMs }), true);
+  }
+  for (const requestedAtMs of [1.5e12 + 0.5, 1_800_000_000, -1, "1800000000500", 2 ** 53, null, 99_999_999_999]) {
+    assert.equal(validReport({ ...report, requestedAtMs }), false, String(requestedAtMs));
+  }
+});
+
+test("validReport requires paired Mode H fields and strict UUIDs; legacy stays valid", () => {
+  const old = { jobs: [], turns: {} };
+  const activityId = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA";
+  const requestedAtMs = 1_800_000_000_000;
+  assert.equal(validReport(old), true);
+  assert.equal(validReport({ ...old, activityId }), false);
+  assert.equal(validReport({ ...old, requestedAtMs }), false);
+  assert.equal(validReport({ ...old, activityId, requestedAtMs }), true);
+  for (const bad of ["bad", " " + activityId, activityId + " ", activityId + "\n", activityId.replaceAll("-", ""), 123, null]) {
+    assert.equal(validReport({ ...old, activityId: bad, requestedAtMs }), false);
+  }
 });

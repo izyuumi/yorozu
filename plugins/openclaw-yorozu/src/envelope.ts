@@ -19,6 +19,8 @@ export const REPLIES = "replies";
 export const REACTIONS = "reactions";
 /** Counts-only Live Activity pushes through the relay; listed only while the relay can send them. */
 export const LIVE_ACTIVITY_PUSH = "liveActivityPush";
+/** Lifetime host writer; requires durable reservations and both relay ActivityKit flags. */
+export const LIVE_ACTIVITY_HOST_WRITER = "liveActivityHostWriter";
 export const RESUME = "resume";
 /** #532: listed only while the plugin's direct listener is listening. */
 export const DIRECT = "direct";
