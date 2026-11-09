@@ -1888,3 +1888,202 @@ test("G2 kLast is a reservation, never the generation replacement gate", async (
   assert.equal((await f.rows())[0].activityId, OTHER, "newer generation must replace even below previous kLast");
   assert.equal((await f.rows())[0].requestedAtMs, T0 + 1_000, "generation must persist independently of kLast");
 });
+
+// END counterpart of "same activity rotation invalidates an old-token reservation in flight".
+test("LA-2i M1 [behaviour] held END uses rotated token and keeps terminal reservation", async (t) => {
+  const f = await diskFixture(t);
+  f.watch.report(DEVICE, seededReport());
+  await f.idle();
+  const k = (await f.rows())[0].kLast + 1;
+  const save = f.store.save.bind(f.store);
+  let held: import("../src/activitystore.ts").ActivityRecord[] | undefined;
+  f.store.save = async (rows) => {
+    if (!held && rows.some((row) => row.device === DEVICE && row.terminal)) {
+      held = structuredClone(rows);
+      f.store.hold = true;
+    }
+    await save(rows);
+  };
+  f.watch.turn(CONV, { kind: "done" });
+  for (let i = 0; i < 100 && !f.store.entered; i++) await delay(10);
+  assert.ok(f.store.entered, "END reservation must enter held save");
+  assert.equal(held![0].kLast, k);
+  f.watch.report(DEVICE, { ...seededReport(), pushToken: "cd".repeat(32) });
+  f.store.unblock!();
+  await f.idle();
+  const tombstone = { device: DEVICE, activityId: CONV, requestedAtMs: seededReport().requestedAtMs, kLast: k, terminal: true };
+  assert.deepEqual(await f.rows(), [tombstone], "held END must retain five-field terminal tombstone");
+  const after = f.sent.length;
+  f.watch.report(DEVICE, { ...seededReport(), pushToken: "ef".repeat(32) });
+  f.watch.report(DEVICE, { ...seededReport(), pushToken: undefined });
+  f.watch.turn(CONV, { kind: "gone" });
+  await f.idle();
+  assert.equal(f.sent.length, after, "terminal re-reports must send neither token nor push");
+  assert.deepEqual(await f.rows(), [tombstone]);
+  assert.equal(pushes(f).length, 1, "held END must send exactly one push after token rotation");
+  assert.equal(pushes(f)[0].event, "end");
+  assert.equal(pushes(f)[0].timestamp, k, "END must use held reservation, never reserve a second k");
+  const messages = f.sent.map((raw) => JSON.parse(raw));
+  assert.ok(messages.findIndex((m) => m.type === "activityPush") > messages.findIndex((m) => m.type === "activityToken" && m.token === "cd".repeat(32)), "END must follow activityToken T2");
+});
+
+test("LA-2i L3a [behaviour] disabled relay rejects legacy report despite terminal record", async (t) => {
+  const f = await diskFixture(t);
+  f.watch.report(DEVICE, seededReport());
+  f.watch.turn(CONV, { kind: "done" });
+  await f.idle();
+  const terminal = await f.rows();
+  await f.watch.relayRegistered({ liveActivity: false });
+  f.sent.length = 0;
+  f.watch.report(DEVICE, report());
+  f.clock.now += STEP_INTERVAL_MS;
+  f.watch.turn(CONV, { kind: "step", steps: 3 });
+  await f.idle();
+  assert.deepEqual(f.sent, [], "legacy report with liveActivity false must create no watch or activityToken");
+  assert.deepEqual(await f.rows(), terminal);
+});
+
+test("LA-2i L3b [behaviour] seeded save failure preserves legacy held step", async () => {
+  const f = await running();
+  f.watch.report("legacy-device", { ...report(), turns: { [TOKEN]: OTHER } });
+  f.watch.turn(OTHER, { kind: "step", steps: 2 });
+  f.clock.now += 1_000;
+  f.watch.turn(OTHER, { kind: "step", steps: 3 });
+  assert.equal(f.timers.size, 1, "legacy step must be held");
+  f.store.fail = true;
+  f.watch.turn(CONV, { kind: "step", steps: 2 });
+  await settle();
+  assert.equal(f.watch.hostWriterReady, false, "seeded reservation save must fail");
+  f.clock.now += STEP_INTERVAL_MS;
+  for (const [id, callback] of f.timers) { f.timers.delete(id); callback(); }
+  await settle();
+  assert.deepEqual(pushes(f).filter((m) => m.device === "legacy-device").map((m) => m.state.jobs[0].steps), [2, 3], "legacy held timer must still send after seeded save failure");
+});
+
+for (const variant of ["pending", "replacement", "revoke"] as const) {
+  test(`LA-2i M1-${variant} [behaviour] held END cannot leak into changed transport or generation`, async (t) => {
+    const f = await diskFixture(t);
+    const initial = seededReport();
+    f.watch.report(DEVICE, initial);
+    await f.idle();
+    const k = (await f.rows())[0].kLast + 1;
+    const save = f.store.save.bind(f.store);
+    let held = false;
+    f.store.save = async (rows) => {
+      if (!held && rows.some((row) => row.terminal)) { held = true; f.store.hold = true; }
+      await save(rows);
+    };
+    f.watch.turn(CONV, { kind: "gone" });
+    for (let i = 0; i < 100 && !f.store.entered; i++) await delay(10);
+    assert.ok(f.store.entered, "END reservation must enter held save");
+    const replacement = { ...initial, activityId: OTHER, requestedAtMs: initial.requestedAtMs! + 2_000, jobs: [], turns: {} };
+    if (variant === "revoke") f.watch.forget(DEVICE, true);
+    else f.watch.report(DEVICE, variant === "pending" ? { ...initial, pushToken: undefined } : replacement);
+    f.store.unblock!();
+    await f.idle();
+    assert.deepEqual(pushes(f), [], "old END must not send");
+    const rows = await f.rows();
+    if (variant === "replacement") {
+      assert.equal(rows[0].activityId, OTHER);
+      assert.equal(rows[0].requestedAtMs, replacement.requestedAtMs);
+      assert.equal(rows[0].kLast, Math.ceil(replacement.requestedAtMs / 1000));
+      assert.equal(rows[0].terminal, false);
+    } else {
+      assert.deepEqual(rows, [{ device: DEVICE, activityId: initial.activityId, requestedAtMs: initial.requestedAtMs, kLast: k, terminal: true }]);
+      const after = f.sent.length;
+      f.watch.report(DEVICE, initial);
+      await f.idle();
+      assert.equal(f.sent.length, after, "burned END cannot be reserved or replayed again");
+      assert.deepEqual(await f.rows(), rows);
+    }
+  });
+}
+
+for (const kind of ["legacy", "terminal", "absent"] as const) {
+  test(`LA-2i M2-${kind} [control] tokenGone preserves main behaviour`, async (t) => {
+    const f = await diskFixture(t);
+    if (kind === "legacy") f.watch.report(DEVICE, report());
+    if (kind === "terminal") {
+      f.watch.report(DEVICE, seededReport());
+      f.watch.turn(CONV, { kind: "gone" });
+      await f.idle();
+    }
+    const before = existsSync(f.file) ? await readFile(f.file, "utf8") : undefined;
+    const attempts = f.store.attempts;
+    f.sent.length = 0;
+    f.watch.tokenGone(DEVICE);
+    f.watch.turn(CONV, { kind: "step", steps: 2 });
+    await f.idle();
+    assert.deepEqual(f.sent, []);
+    assert.equal(f.store.attempts, attempts, "tokenGone control must not write");
+    assert.equal(existsSync(f.file) ? await readFile(f.file, "utf8") : undefined, before, "bytes unchanged");
+  });
+}
+
+for (const mode of ["reconnect", "stop"] as const) {
+  test(`LA-2i L1/L2-${mode} [behaviour] held restore is single-flight and cannot revive stale registration`, async () => {
+    const store = memoryStore();
+    const f = durableFixture(store);
+    let calls = 0;
+    let acquired = false;
+    let unblock!: () => void;
+    const gate = new Promise<void>((resolve) => { unblock = resolve; });
+    store.acquire = async () => {
+      calls++;
+      if (calls === 1) return false;
+      await gate;
+      acquired = true;
+      return true;
+    };
+    store.release = async () => { acquired = false; };
+    await f.watch.start();
+    const stale = f.watch.relayRegistered({ liveActivity: true, activityTimestamp: true });
+    await settle();
+    assert.equal(calls, 2);
+    f.watch.relayDown();
+    const errors: unknown[] = [];
+    const unhandled = (error: unknown) => errors.push(error);
+    process.on("unhandledRejection", unhandled);
+    try {
+      const next = mode === "stop" ? f.watch.stop() : f.watch.relayRegistered({ liveActivity: true, activityTimestamp: true });
+      await settle();
+      const observedCalls = calls;
+      unblock();
+      await Promise.all([stale, next]);
+      assert.equal(observedCalls, 2, "only one restore acquire may be in flight");
+      assert.equal(f.watch.hostWriterReady, mode === "reconnect");
+      assert.equal(acquired, mode === "reconnect", "stop releases a lock acquired after stop");
+      assert.deepEqual(f.sent, []);
+      await settle();
+      assert.deepEqual(errors, []);
+    } finally { process.off("unhandledRejection", unhandled); await f.watch.stop(); }
+  });
+}
+
+test("LA-2i M2-seeded [behaviour] tokenGone retains content and resumes above durable k", async () => {
+  const f = await running();
+  f.watch.turn(CONV, { kind: "step", steps: 2 });
+  await settle();
+  f.clock.now += 1_000;
+  f.watch.turn(CONV, { kind: "step", steps: 3 });
+  await settle();
+  assert.equal(f.timers.size, 1);
+  const before = structuredClone(f.store.saves.at(-1)![0]!);
+  // Token loss must persist the held snapshot too.
+  before.rows = [{ ...seededReport().jobs[0]!, steps: 3 }];
+  delete before.token;
+  f.sent.length = 0;
+  f.watch.tokenGone(DEVICE);
+  await settle();
+  assert.equal(f.timers.size, 0);
+  assert.deepEqual(f.store.saves.at(-1), [before]);
+  assert.deepEqual(f.sent, []);
+  f.clock.now += STEP_INTERVAL_MS;
+  f.watch.report(DEVICE, { ...seededReport(), pushToken: "cd".repeat(32) });
+  await settle();
+  assert.equal(pushes(f).length, 1);
+  assert.equal(pushes(f)[0].timestamp, Math.max(before.kLast, Math.ceil(before.requestedAtMs / 1000)) + 1);
+  assert.equal(pushes(f)[0].state.jobs[0].steps, 3);
+  assert.equal(f.store.saves.at(-1)![0]!.activityId, before.activityId);
+  assert.equal(f.store.saves.at(-1)![0]!.requestedAtMs, before.requestedAtMs);
+});

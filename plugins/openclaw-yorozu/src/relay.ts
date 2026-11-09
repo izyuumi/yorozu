@@ -447,9 +447,9 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
             );
           case "registered": {
             registered = true;
+            const generation = activities.relayConnecting({ liveActivity: msg.liveActivity, activityTimestamp: msg.activityTimestamp });
             relaySend = send;
             relayFrames = sendFrames;
-            await activities.relayRegistered({ liveActivity: msg.liveActivity, activityTimestamp: msg.activityTimestamp });
             relayPushProxy = msg.pushProxy === true;
             me.notify = notifyHere;
             me.mint = () =>
@@ -468,7 +468,11 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
             opts.onStatus({ connected: true });
             // The allowlist is the only record of who is paired: this announce rebuilds a room the relay wiped.
             const devices = (await listDevices()).map((d) => d.signingPub);
-            return send(JSON.stringify({ type: "devices", devices }));
+            if (signal.aborted || ws.readyState !== WebSocket.OPEN) return;
+            send(JSON.stringify({ type: "devices", devices }));
+            void activities.relayRegistered(generation)
+              .catch((error: unknown) => log?.warn(`yorozu: Live Activity registration failed: ${String(error)}`));
+            return;
           }
           case "pong":
             pongDue = false;
@@ -495,7 +499,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           case "state":
             return log?.info(`yorozu: relay state: ${String(msg.state).slice(0, 64)}`);
           case "activityGone":
-            if (typeof msg.device === "string") activities.forget(msg.device, false);
+            if (typeof msg.device === "string") activities.tokenGone(msg.device);
             return;
           case "phones":
             if (msg.count === 0) hub.relayGone();

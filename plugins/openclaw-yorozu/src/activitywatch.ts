@@ -26,14 +26,22 @@ export class ActivityWatch<Timer> {
   private failures = 0;
   private options: Options<Timer>;
   private registered = false;
+  private relayUp = false;
   private generation = 0;
   private lockBlocked = false;
+  private restore?: Promise<void>;
+  private stopped = false;
   private activityTimestamp = false;
   liveActivity = false;
 
   constructor(options: Options<Timer>) { this.options = options; }
 
-  async start(): Promise<void> {
+  start(): Promise<void> {
+    this.stopped = false;
+    return this.restore ??= this.restoreState().finally(() => { this.restore = undefined; });
+  }
+
+  private async restoreState(): Promise<void> {
     try {
       if (!await this.options.store.acquire()) {
         this.health = { kind: "unavailable", reason: this.options.store.lockReason ?? LOCKED };
@@ -41,8 +49,10 @@ export class ActivityWatch<Timer> {
         this.options.warn(this.health.reason);
         return;
       }
+      if (this.stopped) { await this.options.store.release(); return; }
       this.lockBlocked = false;
       const loaded = await this.options.store.load();
+      if (this.stopped) { await this.options.store.release(); return; }
       if (!loaded.ok) {
         this.health = { kind: "unavailable", reason: loaded.reason };
         this.options.warn(loaded.reason);
@@ -87,8 +97,10 @@ export class ActivityWatch<Timer> {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
     this.relayDown();
     for (const watch of this.activities.values()) this.options.clearTimer(watch.timer);
+    await this.restore;
     await Promise.all(this.queues.values());
     await this.writes;
     await this.options.store.release();
@@ -100,21 +112,32 @@ export class ActivityWatch<Timer> {
   }
 
   get hostWriterReady(): boolean {
-    return this.health.kind === "ready" && this.registered && this.liveActivity && this.activityTimestamp;
+    return !this.stopped && this.health.kind === "ready" && this.registered && this.liveActivity && this.activityTimestamp;
   }
 
-  async relayRegistered({ liveActivity, activityTimestamp }: { liveActivity?: unknown; activityTimestamp?: unknown }): Promise<void> {
+  relayConnecting({ liveActivity, activityTimestamp }: { liveActivity?: unknown; activityTimestamp?: unknown }): number {
     const generation = ++this.generation;
+    this.relayUp = true;
     this.registered = false;
     this.liveActivity = liveActivity === true;
     this.activityTimestamp = activityTimestamp === true;
-    if (this.health.kind === "unavailable" && this.lockBlocked) await this.start();
-    if (generation !== this.generation) return;
+    return generation;
+  }
+
+  async relayRegistered(registration: number | { liveActivity?: unknown; activityTimestamp?: unknown }): Promise<void> {
+    // Standalone callers can still register in one step; relay sockets announce devices between these steps.
+    const generation = typeof registration === "number" ? registration : this.relayConnecting(registration);
+    if (this.stopped || generation !== this.generation) return;
+    if (this.restore) await this.restore;
+    else if (this.health.kind === "unavailable" && this.lockBlocked) await this.start();
+    if (this.stopped || generation !== this.generation) return;
     for (const [device, watch] of this.activities) {
+      if (this.stopped || generation !== this.generation) return;
       if (watch.lifetime.kind === "seeded" && !watch.lifetime.record.terminal && watch.lifetime.record.token) {
         this.options.send(JSON.stringify({ type: "activityToken", device, token: watch.lifetime.record.token }));
       }
     }
+    if (this.stopped || generation !== this.generation) return;
     this.registered = true;
     for (const [device, watch] of this.activities) {
       if (watch.lifetime.kind === "seeded" && !watch.lifetime.record.terminal) {
@@ -125,6 +148,7 @@ export class ActivityWatch<Timer> {
 
   relayDown(): void {
     this.generation++;
+    this.relayUp = false;
     this.registered = false;
     // Closing the relay leaves its last liveActivity gate and watches intact, as before.
   }
@@ -136,6 +160,7 @@ export class ActivityWatch<Timer> {
       this.health = { kind: "degraded", reason };
       this.failures++;
       for (const watch of this.activities.values()) {
+        if (watch.lifetime.kind !== "seeded") continue;
         this.options.clearTimer(watch.timer);
         watch.timer = undefined;
       }
@@ -229,9 +254,20 @@ export class ActivityWatch<Timer> {
     if (tellRelay) this.options.send(JSON.stringify({ type: "activityToken", device: deviceKey }));
   }
 
+  tokenGone(deviceKey: string): void {
+    const watch = this.activities.get(deviceKey);
+    if (watch?.lifetime.kind === "legacy") return this.forget(deviceKey, false);
+    const record = this.records.get(deviceKey);
+    if (!record || record.terminal) return;
+    delete record.token;
+    this.options.clearTimer(watch?.timer);
+    if (watch) watch.timer = undefined;
+    this.persist("(clear expired activity token); nothing sent");
+  }
+
   private push(deviceKey: string, fresh = true): void {
     const watch = this.activities.get(deviceKey);
-    if (!watch || !this.registered || watch.lifetime.kind === "ended") return;
+    if (!watch || !this.relayUp || watch.lifetime.kind === "ended") return;
     if (watch.lifetime.kind === "seeded") {
       if (!this.canReserve() || !watch.lifetime.record.token || (!fresh && this.health.kind !== "ready")) return;
       const failures = this.failures;
@@ -274,6 +310,7 @@ export class ActivityWatch<Timer> {
     const next = plan(watch.sent, jobs, now);
     if (!next || this.hold(deviceKey, watch, next.priority, now)) return;
     let saved = false;
+    let endToken = false;
     let k = 0;
     const failures = this.failures;
     await this.write(async () => {
@@ -286,6 +323,7 @@ export class ActivityWatch<Timer> {
       // Burn before awaiting: a throw may happen after the file's rename.
       record.kLast = k;
       await this.options.store.save([...this.records.values()].map((row) => ({ ...(row === record ? reserved : row) })));
+      endToken = !!record.token;
       record.terminal = reserved.terminal;
       if (record.terminal) {
         delete record.token;
@@ -301,7 +339,7 @@ export class ActivityWatch<Timer> {
       saved = true;
     }, "(reserve k for push); push not sent");
     if (!saved || this.records.get(deviceKey) !== record) return;
-    // A saved end remains terminal even if token rotation invalidated this send.
+    // END belongs to the record generation, even when token rotation replaced its watch.
     const current = this.activities.get(deviceKey);
     if (record.terminal && current) {
       current.lifetime = { kind: "ended", record };
@@ -311,13 +349,14 @@ export class ActivityWatch<Timer> {
       current.ended = [];
       current.replied = [];
     }
-    if (current !== watch || (!record.terminal && record.token !== token) || !this.hostWriterReady) return;
+    if ((record.terminal ? !endToken : current !== watch || record.token !== token) || !this.hostWriterReady) return;
     this.options.send(JSON.stringify({ type: "activityPush", device: deviceKey, ...next, timestamp: k }));
     if (!record.terminal) watch.sent = jobs;
     watch.pushedAt = now;
   }
 
   report(deviceKey: string, report: ActivityReport): void {
+    if (this.stopped) return;
     const stored = this.records.get(deviceKey);
     if (!this.liveActivity && !stored) return;
     const old = this.activities.get(deviceKey);
@@ -354,6 +393,7 @@ export class ActivityWatch<Timer> {
       return;
     }
     // Legacy reports retain their original token clearing and snapshot behavior.
+    if (!this.liveActivity) return;
     if (!report.pushToken) return this.forget(deviceKey, true);
     this.forget(deviceKey, false);
     const jobs = cleanJobs(report.jobs);

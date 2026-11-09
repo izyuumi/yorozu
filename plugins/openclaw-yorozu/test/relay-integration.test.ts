@@ -113,7 +113,7 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
       else current.run.exit.resolve();
     }
   }
-  async function fixture(t: TestContext, flags: { liveActivity?: boolean; activityTimestamp?: boolean }, state?: "corrupt" | "locked", setupFailure = false) {
+  async function fixture(t: TestContext, flags: { liveActivity?: boolean; activityTimestamp?: boolean }, state?: "corrupt" | "locked", setupFailure = false, wipedRoom = false) {
     await rm(file, { force: true });
     await rm(`${file}.lock`, { force: true });
     if (state) {
@@ -138,6 +138,10 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     stores.set("devices", new Map([[deviceKey, {
       signingPub: deviceKey, staticPub: b64u(device.static.publicKey), pairedAt: REQUESTED_AT_MS,
     }]]));
+    // Opt-in worker storage semantics; existing fixtures retain their original behaviour.
+    const pairedRows = new Set<string>();
+    const activityTokens = new Map<string, string>();
+    const delivered: HostMessage[] = [];
     const connections: Connection[] = [];
     const failures: Error[] = [];
     const receipts: { timestamp: number; persisted: boolean }[] = [];
@@ -170,10 +174,16 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
           if (message.type === "register") {
             socket.send(JSON.stringify({ type: "registered", ...flags }));
             socket.send(JSON.stringify({ type: "phones", count: 1 }));
+          } else if (message.type === "devices" && wipedRoom) {
+            for (const device of message.devices as string[]) pairedRows.add(device);
+          } else if (message.type === "activityToken" && wipedRoom && message.device) {
+            if (message.token === undefined) activityTokens.delete(message.device);
+            else if (pairedRows.has(message.device)) activityTokens.set(message.device, message.token);
           } else if (message.type === "ping") socket.send(JSON.stringify({ type: "pong" }));
           else if (message.type === "frame") {
             connection.frames.push(...(message.frames?.map((frame) => frame.payload) ?? (message.payload ? [message.payload] : [])));
           } else if (message.type === "activityPush" && typeof message.timestamp === "number") {
+            if (wipedRoom && message.device && activityTokens.has(message.device)) delivered.push(message);
             // Capture at arrival, before any later save could make the assertion pass.
             const data = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : [];
             const rows = Array.isArray(data) ? data : data.records;
@@ -258,8 +268,95 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
       activityTurn(CONV, { kind: "step", steps: 2 });
       return until(() => pushes(c)[0], "bound turn activityPush");
     }
-    return { ownerRun: run, ownerDispatch: dispatch, connection, phone, pushes, sendReport, turn, stop, start, connect, registered, receipts, failures, deviceKey };
+    return { pairedRows, activityTokens, delivered, ownerRun: run, ownerDispatch: dispatch, connection, phone, pushes, sendReport, turn, stop, start, connect, registered, receipts, failures, deviceKey };
   }
+
+  for (const order of ["A", "B"] as const) {
+    await t.test(`LA-2i M2-${order} [behaviour] activityGone permits same-generation token recovery across restart`, async (t) => {
+      const f = await fixture(t, { liveActivity: true, activityTimestamp: true });
+      await f.sendReport(true);
+      const first = await f.turn();
+      const rotated = { ...report(true), pushToken: "cd".repeat(32) };
+      async function rotate() {
+        await f.phone.event({ kind: "live_activity", data: rotated });
+      }
+      if (order === "B") {
+        await rotate();
+        assert.ok(f.connection.messages.some((m) => m.type === "activityToken" && m.token === rotated.pushToken), "T2 must reach relay before delayed T1 invalidation");
+      }
+      // Worker has already deleted T1 before emitting this notice. In B its notice
+      // was queued before the host's T2 registration, then delivered afterwards.
+      f.connection.socket.send(JSON.stringify({ type: "activityGone", device: f.deviceKey }));
+      await f.phone.event({ kind: "device_list", data: {} }); // Noise/ack barrier after notice.
+      await rotate();
+      await delay(100);
+      const row = JSON.parse(readFileSync(file, "utf8")).records[0];
+      assert.equal(row.terminal, false, "activityGone is recoverable token invalidation, not revoke");
+      assert.equal(row.kLast, first.timestamp, "token recovery must retain last reservation");
+      const originalNow = Date.now;
+      const nextTime = originalNow() + 15_000;
+      Date.now = () => nextTime;
+      try {
+        activityTurn(CONV, { kind: "step", steps: 3 });
+        await delay(200);
+      } finally { Date.now = originalNow; }
+      assert.equal(f.pushes().length, 2, "next in-session host change after recovery must push");
+      assert.equal(f.pushes()[1].timestamp, first.timestamp! + 1);
+      // Restart clears only throttle time; the same live owner and disk remain.
+      await f.stop();
+      const restarted = await f.start();
+      activityTurn(CONV, { kind: "step", steps: 4 });
+      await delay(200);
+      assert.equal(f.pushes(restarted).length, 1, "next host change after recovery/restart must push");
+      assert.equal(f.pushes(restarted)[0].timestamp, first.timestamp! + 2);
+      await f.stop();
+      const again = await f.start();
+      activityTurn(CONV, { kind: "step", steps: 5 });
+      await delay(200);
+      assert.equal(f.pushes(again).length, 1, "second restart must keep recovered watch");
+      const ks = [first.timestamp, f.pushes()[1].timestamp, ...f.pushes(restarted).map((m) => m.timestamp), ...f.pushes(again).map((m) => m.timestamp)];
+      assert.deepEqual(ks, [first.timestamp, first.timestamp! + 1, first.timestamp! + 2, first.timestamp! + 3], "timestamps strictly increase across restarts; no k reused");
+      assert.ok(f.receipts.every((r) => r.persisted));
+    });
+  }
+
+  await t.test("LA-2i M2-revoke [behaviour] unpair retains five-field terminal tombstone", async (t) => {
+    const f = await fixture(t, { liveActivity: true, activityTimestamp: true });
+    await f.sendReport(true);
+    const first = await f.turn();
+    await f.phone.event({ kind: "device_patch", data: { id: f.deviceKey, removed: true } });
+    await delay(100);
+    assert.ok(f.connection.messages.some((m) => m.type === "revoke"), "unpair must revoke relay device");
+    assert.deepEqual(JSON.parse(readFileSync(file, "utf8")).records, [{ device: f.deviceKey,
+      activityId: report(true).activityId, requestedAtMs: REQUESTED_AT_MS, kLast: first.timestamp, terminal: true }]);
+  });
+
+  await t.test("LA-2i L2 [behaviour] wiped room restores token after devices announce", async (t) => {
+    const f = await fixture(t, { liveActivity: true, activityTimestamp: true }, undefined, false, true);
+    await f.sendReport(true);
+    await f.turn();
+    await f.stop();
+    f.pairedRows.clear();
+    f.activityTokens.clear();
+    const restarted = await f.start(); // Restores real v3 file, no app re-report.
+    assert.ok(f.pairedRows.has(f.deviceKey), "devices announce must rebuild p: rows");
+    activityTurn(CONV, { kind: "step", steps: 3 });
+    await delay(200);
+    assert.equal(f.activityTokens.get(f.deviceKey), report(true).pushToken, "wiped relay must retain restored token after devices announce");
+    assert.equal(f.delivered.filter((m) => restarted.messages.includes(m)).length, 1, "next Mode H push must be delivered by wiped relay");
+  });
+
+  await t.test("LA-2i L4 [design-todo] restored old token cannot overwrite rollback token", {
+    todo: "relay protocol has no generation compare; needs design",
+  }, async (t) => {
+    const f = await fixture(t, { liveActivity: true, activityTimestamp: true }, undefined, false, true);
+    await f.sendReport(true);
+    await f.stop();
+    const newToken = "ef".repeat(32);
+    f.activityTokens.set(f.deviceKey, newToken);
+    await f.start();
+    assert.equal(f.activityTokens.get(f.deviceKey), newToken, "restored T_old must not overwrite relay T_new");
+  });
 
   for (const flags of [{}, { liveActivity: true }, { liveActivity: true, activityTimestamp: true }, { activityTimestamp: true }]) {
     await t.test(`(a) peer_info truthfulness ${JSON.stringify(flags)}`, async (t) => {
@@ -321,10 +418,13 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     f.connection.socket.close();
     // Production backoff starts at roughly 1 s; keep real time and allow 5 s to reconnect.
     const reconnected = await f.registered(1);
-    const first = reconnected.messages[1];
+    const first = reconnected.messages[2];
     assert.equal(reconnected.messages[0]?.type, "register");
+    // Real relay (apps/relay/src/worker.ts registerActivity) ignores activityToken without a p: row;
+    // only the devices announce restores that row in a wiped room.
+    assert.equal(reconnected.messages[1]?.type, "devices");
     assert.ok(first?.type === "activityToken" && first.device === f.deviceKey && first.token === report(true).pushToken,
-      "the first message after register must replay the token");
+      "the first message after devices must replay the token");
     const phone = await f.connect(reconnected);
     await phone.event({ kind: "device_list", data: {} });
     activityTurn(CONV, { kind: "done" }); // urgent: exercises replay ordering without a 15 s throttle wait
@@ -391,7 +491,9 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
   }
   function replay(f: Awaited<ReturnType<typeof fixture>>, connection: Connection, token: string) {
     assert.equal(connection.messages[0]?.type, "register");
-    assert.deepEqual(connection.messages[1], { type: "activityToken", device: f.deviceKey, token });
+    // Real relay registerActivity ignores a device without a p: row; the devices announce restores it.
+    assert.equal(connection.messages[1]?.type, "devices");
+    assert.deepEqual(connection.messages[2], { type: "activityToken", device: f.deviceKey, token });
     assert.deepEqual(connection.messages.filter((m) => m.type === "activityToken"),
       [{ type: "activityToken", device: f.deviceKey, token }]);
   }
