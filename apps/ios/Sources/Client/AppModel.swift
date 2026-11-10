@@ -53,6 +53,7 @@ final class AppModel {
     @ObservationIgnored private let migration: PairingMigration.State
     @ObservationIgnored private let makeTransport: Transport
     @ObservationIgnored private let pendingShares: () -> [(share: ShareInbox.Share, folder: URL)]
+    @ObservationIgnored private let authorizeNotifications: NotificationAuthorizer
     /// Mirrors its `loadingOlder` into the observed property, so queue churn alone redraws nothing.
     @ObservationIgnored private var queue = RequestQueue() {
         didSet { if loadingOlder != queue.loadingOlder { loadingOlder = queue.loadingOlder } }
@@ -102,16 +103,21 @@ final class AppModel {
     static let requestTimeout: Duration = .seconds(30)
 
     typealias Transport = @MainActor (Pairing, PeerInfo) throws -> any ClientTransport
+    typealias NotificationAuthorizer = @MainActor () async -> Void
 
     init(demo: Bool = ProcessInfo.processInfo.arguments.contains("--demo"), storage: any PairingStorage = KeychainPairingStorage(),
         migration: PairingMigration.State = .shared, cache: ConversationCache = ConversationCache(),
         transport: @escaping Transport = AppModel.race,
-        shares: @escaping () -> [(share: ShareInbox.Share, folder: URL)] = { ShareInbox.pending() }) {
+        shares: @escaping () -> [(share: ShareInbox.Share, folder: URL)] = { ShareInbox.pending() },
+        notifications: @escaping NotificationAuthorizer = {
+            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+        }) {
         self.storage = storage
         self.migration = migration
         self.cache = cache
         makeTransport = transport
         pendingShares = shares
+        authorizeNotifications = notifications
         transfers.send = { [weak self] event in
             guard let self, !self.isDemo, let connection = self.connection else { return false }
             return await connection.send(event)
@@ -577,10 +583,8 @@ final class AppModel {
 
     func requestNotifications() {
         guard !isDemo, paired else { return }
-        // YorozuTests has no notification bundle proxy; requesting authorization would abort the process.
-        guard Bundle.main.bundleIdentifier?.hasPrefix("to.yumi.yorozu") == true else { return }
         Task {
-            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+            await authorizeNotifications()
             guard !isDemo else { return }
             badge = nil
             updateBadge()

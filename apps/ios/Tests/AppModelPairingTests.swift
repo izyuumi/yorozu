@@ -84,7 +84,7 @@ private actor ScriptedTransport: ClientTransport {
 
     private func makeModel() -> AppModel {
         AppModel(demo: false, storage: storage, migration: migration, cache: cache,
-            transport: { [transports] _, _ in try transports.make() }, shares: { [] })
+            transport: { [transports] _, _ in try transports.make() }, shares: { [] }, notifications: {})
     }
 
     @Test(arguments: [true, false]) func aFailedConnectKeepsTheStoredPairing(paired: Bool) throws {
