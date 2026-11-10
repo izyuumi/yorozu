@@ -770,7 +770,8 @@ final class AppModel {
         case .error(let error) where error.attachmentId != nil:
             transfers.receive(event)
         case .error(let error):
-            if ["internal", "bad_request", "unsupported"].contains(error.code), queue.fail() { settle() }
+            if ["internal", "bad_request", "unsupported"].contains(error.code),
+                error.messageId.map({ queue.fail(messageId: $0) }) ?? queue.fail() { settle() }
             guard let convId = error.convId, WireEvent.isId(convId), let messageId = error.messageId else { return }
             reject(messageId, in: convId, error.message)
             let id = "error:\(messageId)"

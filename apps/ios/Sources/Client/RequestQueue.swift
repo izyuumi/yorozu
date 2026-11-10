@@ -39,6 +39,15 @@ struct RequestQueue: Equatable {
         return true
     }
 
+
+    /// A host error about one message fails the in-flight request only when that request is the message itself.
+    /// History and conversation-list requests carry no message id, so such an error leaves them in flight.
+    @discardableResult
+    mutating func fail(messageId: String) -> Bool {
+        guard case .message(let message) = inFlight, message.messageId == messageId else { return false }
+        return fail()
+    }
+
     mutating func loadedOlder(_ convId: String) {
         loadingOlder.remove(convId)
     }
