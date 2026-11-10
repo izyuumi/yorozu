@@ -27,3 +27,5 @@ apps/preview/**/*.wav
 apps/relay/dist/
 .wrangler/
 dist/
+# EGM Goldfish review output
+.egm/
