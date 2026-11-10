@@ -41,8 +41,7 @@ export function previewPlaintext(preview: Preview): Buffer | null {
   }
 }
 
-export function sealPreview(key: Uint8Array, plaintext: Uint8Array): { n: string; c: string } {
-  const nonce = randomBytes(12);
+export function sealPreview(key: Uint8Array, plaintext: Uint8Array, nonce: Uint8Array = randomBytes(12)): { n: string; c: string } {
   const cipher = createCipheriv("chacha20-poly1305", key, nonce, { authTagLength: 16 });
   const sealed = Buffer.concat([cipher.update(plaintext), cipher.final(), cipher.getAuthTag()]);
   return { n: b64u(nonce), c: b64u(sealed) };
