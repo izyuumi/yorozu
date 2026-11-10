@@ -75,7 +75,7 @@ test("a proof of the wrong length or one character off is refused without throwi
 
 const peer = { app: "test", protocolMin: 3, protocolMax: 3, capabilities: [] as string[] };
 
-function host(relayConnected: boolean, readable = true) {
+function host(relayConnected: boolean, readable = true, legacy = false) {
   const signing = ed25519Keypair();
   const keys = { static: x25519Keypair(), room: roomId(signing.publicKey) };
   const allowlist = new Map<string, string>();
@@ -87,6 +87,7 @@ function host(relayConnected: boolean, readable = true) {
   const hub = new Hub({
     keys, peerInfo: () => peer, onMessage: () => {}, dispatch: async () => false,
     staticKeyOf: async (key) => {
+      if (legacy) return allowlist.get(key);
       if (!readable) return { unread: true };
       const staticPub = allowlist.get(key);
       return staticPub ? { staticPub } : { absent: true };
@@ -169,4 +170,15 @@ test("an allowlist read failure over the relay does not revoke a paired device",
   h.allowlist.set(key, b64u(paired.device.static.publicKey));
   assert.equal(await h.hub.handshake(paired.payload, paired.sig, link("relay")), null);
   assert.deepEqual(h.refused, [], "a store miss is not an unpair");
+});
+
+test("a legacy staticKeyOf returning the key or undefined still allowlists a match and revokes a stranger over the relay", async () => {
+  const h = host(true, true, true);
+  const paired = init(h);
+  const key = b64u(paired.device.signing.publicKey);
+  h.allowlist.set(key, b64u(paired.device.static.publicKey));
+  assert.equal(await h.hub.handshake(paired.payload, paired.sig, link("relay")), key);
+  const stranger = init(h);
+  assert.equal(await h.hub.handshake(stranger.payload, stranger.sig, link("relay")), null);
+  assert.deepEqual(h.refused, [b64u(stranger.device.signing.publicKey)]);
 });
