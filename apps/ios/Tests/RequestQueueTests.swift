@@ -23,6 +23,36 @@ import YorozuWire
         #expect(queue.take() == next)
     }
 
+    @Test func aHostErrorAboutAMessageLeavesTheHistoryRequestInFlightUntilItTimesOut() {
+        var queue = loadingOlderInFlight()
+
+        let failed = queue.fail(messageId: "message-1")
+        #expect(!failed)
+        #expect(queue.inFlight == older)
+        #expect(queue.loadingOlder == ["conv-a"])
+        #expect(queue.take() == nil)
+
+        let timedOut = queue.fail(older)
+        #expect(timedOut)
+        #expect(queue.loadingOlder.isEmpty)
+        #expect(queue.take() == next)
+    }
+
+    @Test func aHostErrorAboutTheInFlightMessageFailsIt() {
+        let message = WireEvent.message(Message(convId: "conv-a", messageId: "message-1", text: "hello"))
+        var queue = RequestQueue()
+        queue.enqueue(message)
+        #expect(queue.take() == message)
+
+        let other = queue.fail(messageId: "message-2")
+        #expect(!other)
+        #expect(queue.inFlight == message)
+
+        let failed = queue.fail(messageId: "message-1")
+        #expect(failed)
+        #expect(queue.inFlight == nil)
+    }
+
     @Test func anErrorWithNothingInFlightFailsNothing() {
         var queue = RequestQueue()
         queue.loadOlder("conv-a", before: 40)
