@@ -1,21 +1,31 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import type { AddressInfo } from "node:net";
+import { connect, type AddressInfo } from "node:net";
 import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Handler } from "../src/fetch.ts";
 import { clientIp, createHttpServer, defaults, optionsFromEnv, rateLimiter, type HttpOptions } from "../src/http.ts";
 import { callEveryTool, toolNames } from "./calls.ts";
 
 const rpc = (id: number, method: string, params: object = {}) => JSON.stringify({ jsonrpc: "2.0", id, method, params });
 const mcpHeaders = { "Content-Type": "application/json", Accept: "application/json, text/event-stream", "Mcp-Protocol-Version": "2025-06-18" };
 
-async function listen(options: Partial<HttpOptions>) {
-  const server = createHttpServer({ ...defaults, port: 0, ...options });
+async function listen(options: Partial<HttpOptions>, handle?: Handler) {
+  const server = createHttpServer({ ...defaults, port: 0, ...options }, handle);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   return { url, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+}
+
+/** Sends raw bytes on a fresh socket and resolves with everything the server answers before it closes. */
+function raw(url: string, bytes: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    const socket = connect(Number(new URL(url).port), "127.0.0.1", () => socket.write(bytes));
+    socket.setEncoding("utf8").on("data", (chunk) => (data += chunk)).on("close", () => resolve(data)).on("error", reject);
+  });
 }
 
 describe("http behind a proxy at /yorozu", () => {
@@ -99,6 +109,34 @@ test("CORS with an origin allow-list", async () => {
   const other = await fetch(`${url}/healthz`, { headers: { Origin: "https://other.example" } });
   assert.equal(other.headers.get("access-control-allow-origin"), null);
   await close();
+});
+
+test("an unparseable request target answers 400 and the server keeps serving", async () => {
+  const { url, close } = await listen({ basePath: "/yorozu" });
+  try {
+    // Node's HTTP parser accepts this target; the WHATWG URL parser rejects it.
+    assert.match(await raw(url, "GET //% HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"), /^HTTP\/1\.1 400 /);
+    assert.equal((await fetch(`${url}/yorozu/healthz`)).status, 200);
+  } finally {
+    await close();
+  }
+});
+
+test("a failing handler or response body answers 500 and the server keeps serving", async (t) => {
+  t.mock.method(console, "error", () => {});
+  const { url, close } = await listen({}, async (request) => {
+    const path = new URL(request.url).pathname;
+    if (path === "/throw") throw new Error("handler");
+    if (path === "/body") return new Response(new ReadableStream({ start: (c) => c.error(new Error("body")) }));
+    return new Response("ok");
+  });
+  try {
+    assert.equal((await fetch(`${url}/throw`)).status, 500);
+    assert.equal((await fetch(`${url}/body`)).status, 500);
+    assert.equal((await fetch(`${url}/`)).status, 200);
+  } finally {
+    await close();
+  }
 });
 
 test("without TRUST_PROXY, X-Forwarded-For is ignored", () => {
