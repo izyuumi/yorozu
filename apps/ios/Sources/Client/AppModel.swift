@@ -25,6 +25,8 @@ final class AppModel {
         set { pairingEntry.pendingPairing = newValue }
     }
     var pairingError: String?
+    /// The save error while storage lags the in-memory pairing; `resume` retries the save.
+    private var pairingSaveError: String?
     var requestedConversation: String?
     /// What a widget or control asked the opened conversation's composer to do.
     var composeRequest: ComposeRequest?
@@ -51,6 +53,7 @@ final class AppModel {
     @ObservationIgnored private let migration: PairingMigration.State
     @ObservationIgnored private let makeTransport: Transport
     @ObservationIgnored private let pendingShares: () -> [(share: ShareInbox.Share, folder: URL)]
+    @ObservationIgnored private let authorizeNotifications: NotificationAuthorizer
     /// Mirrors its `loadingOlder` into the observed property, so queue churn alone redraws nothing.
     @ObservationIgnored private var queue = RequestQueue() {
         didSet { if loadingOlder != queue.loadingOlder { loadingOlder = queue.loadingOlder } }
@@ -100,16 +103,21 @@ final class AppModel {
     static let requestTimeout: Duration = .seconds(30)
 
     typealias Transport = @MainActor (Pairing, PeerInfo) throws -> any ClientTransport
+    typealias NotificationAuthorizer = @MainActor () async -> Void
 
     init(demo: Bool = ProcessInfo.processInfo.arguments.contains("--demo"), storage: any PairingStorage = KeychainPairingStorage(),
         migration: PairingMigration.State = .shared, cache: ConversationCache = ConversationCache(),
         transport: @escaping Transport = AppModel.race,
-        shares: @escaping () -> [(share: ShareInbox.Share, folder: URL)] = { ShareInbox.pending() }) {
+        shares: @escaping () -> [(share: ShareInbox.Share, folder: URL)] = { ShareInbox.pending() },
+        notifications: @escaping NotificationAuthorizer = {
+            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+        }) {
         self.storage = storage
         self.migration = migration
         self.cache = cache
         makeTransport = transport
         pendingShares = shares
+        authorizeNotifications = notifications
         transfers.send = { [weak self] event in
             guard let self, !self.isDemo, let connection = self.connection else { return false }
             return await connection.send(event)
@@ -248,6 +256,7 @@ final class AppModel {
         if let hints, let room = payload.roomId { DirectHintStore().save(hints, room: room) }
         pairingRelayUnreachable = false
         pairing = new
+        pairingSaveError = nil
         publishWidgets()
         connect()
     }
@@ -276,6 +285,7 @@ final class AppModel {
         ShareInbox.clear()
         WidgetPublisher.clear()
         pairing = nil
+        pairingSaveError = nil
         conversations = [:]
         typing = []
         unplacedReads = [:]
@@ -444,6 +454,7 @@ final class AppModel {
         }
         setActive(true)
         takeShares()
+        if pairingSaveError != nil { updatePairing { _ in } }
         guard let connection else { return connect() }
         Task { await connection.reconnect() }
     }
@@ -573,7 +584,7 @@ final class AppModel {
     func requestNotifications() {
         guard !isDemo, paired else { return }
         Task {
-            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+            await authorizeNotifications()
             guard !isDemo else { return }
             badge = nil
             updateBadge()
@@ -646,7 +657,16 @@ final class AppModel {
         guard !isDemo, var pairing else { return }
         change(&pairing)
         self.pairing = pairing
-        try? pairing.save(storage: storage)
+        do {
+            try pairing.save(storage: storage)
+            if pairingSaveError != nil, pairingError == pairingSaveError { pairingError = nil }
+            pairingSaveError = nil
+        } catch {
+            // Kept in memory: a pairing whose first session completed is not dropped over a failed write.
+            Self.connectionLog.error("pairing save failed: \(String(describing: error), privacy: .public)")
+            pairingSaveError = String(localized: "Couldn’t save the pairing: \(error.localizedDescription)")
+            pairingError = pairingSaveError
+        }
     }
 
     func send(_ text: String, attachments: [ChatAttachment] = [], in convId: String, messageId: String = WireEvent.newId(),
