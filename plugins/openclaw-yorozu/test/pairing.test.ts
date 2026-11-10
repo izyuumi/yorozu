@@ -13,7 +13,7 @@ registerHooks({ resolve(specifier, context, next) {
 } });
 const { mintCode, OFFLINE_MS, pairer, pairingQuery, PendingPairings } = await import("../src/pairing.ts");
 const { Hub } = await import("../src/hub.ts");
-const { b64u, decodeFrame, ed25519Keypair, encodeFrame, fromB64u, helloProof, NoiseIK, prologue, roomId, signFrame, x25519Keypair } =
+const { b64u, decodeFrame, ed25519Keypair, encodeFrame, fromB64u, HANDSHAKE_MAX_AGE_MS, helloProof, NoiseIK, prologue, roomId, signFrame, x25519Keypair } =
   await import("../src/wire.ts");
 
 const hints: DirectHints = {
@@ -107,10 +107,10 @@ function host(relayConnected: boolean, readable = true, legacy = false) {
 }
 
 /** A device's init frame, signed, with a hello proof over `secret` when given. */
-function init(h: ReturnType<typeof host>, secret?: string, device = { signing: ed25519Keypair(), static: x25519Keypair() }) {
+function init(h: ReturnType<typeof host>, secret?: string, device = { signing: ed25519Keypair(), static: x25519Keypair() }, ts = Date.now()) {
   const proof = secret && helloProof(secret, b64u(device.static.publicKey), b64u(device.signing.publicKey));
   const ik = new NoiseIK("initiator", device.static, h.keys.static.publicKey, prologue(h.keys.room, device.signing.publicKey));
-  const message = ik.writeMessage(Buffer.from(JSON.stringify({ ts: Date.now(), ...(proof && { proof }) })));
+  const message = ik.writeMessage(Buffer.from(JSON.stringify({ ts, ...(proof && { proof }) })));
   const payload = encodeFrame({ type: "init", deviceSigningKey: device.signing.publicKey, message });
   return { device, payload, sig: signFrame(device.signing.privateKey, payload) };
 }
@@ -181,4 +181,34 @@ test("a legacy staticKeyOf returning the key or undefined still allowlists a mat
   const stranger = init(h);
   assert.equal(await h.hub.handshake(stranger.payload, stranger.sig, link("relay")), null);
   assert.deepEqual(h.refused, [b64u(stranger.device.signing.publicKey)]);
+});
+
+// Preventive: no failing baseline. A stale init is dropped before the allowlist check, so it cannot revoke.
+test("a stale init gets no answer and revokes nobody, paired device or stranger, on either path", async () => {
+  const h = host(true);
+  const paired = { signing: ed25519Keypair(), static: x25519Keypair() };
+  const key = b64u(paired.signing.publicKey);
+  h.allowlist.set(key, b64u(paired.static.publicKey));
+  const secret = h.pending.add(Date.now() + OFFLINE_MS);
+  const skew = HANDSHAKE_MAX_AGE_MS + 60_000;
+  for (const path of ["relay", "direct"] as const) {
+    for (const ts of [Date.now() - skew, Date.now() + skew]) {
+      for (const stale of [init(h, undefined, paired, ts), init(h, undefined, undefined, ts), init(h, secret, undefined, ts)]) {
+        const via = link(path);
+        assert.equal(await h.hub.handshake(stale.payload, stale.sig, via), null);
+        assert.deepEqual(via.sent, [], "no handshake answer");
+      }
+    }
+  }
+  assert.deepEqual(h.refused, [], "a stale init is not a refusal: the relay is told to revoke nobody");
+  assert.deepEqual(h.relay, []);
+  assert.deepEqual([...h.allowlist], [[key, b64u(paired.static.publicKey)]], "the paired device stays, nobody is added");
+  assert.equal(h.hub.served.size, 0);
+  assert.ok(h.logs.includes("yorozu: handshake dropped (invalid or stale)"));
+  assert.ok(!h.logs.includes("yorozu: handshake dropped (device not allowlisted)"));
+  const fresh = init(h, undefined, paired);
+  assert.equal(await h.hub.handshake(fresh.payload, fresh.sig, link("relay")), key, "the same device connects once its clock is right");
+  const pairing = init(h, secret);
+  assert.ok(await h.hub.handshake(pairing.payload, pairing.sig, link("relay")), "a stale init did not spend the pairing secret");
+  assert.deepEqual(h.refused, []);
 });

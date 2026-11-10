@@ -47,8 +47,10 @@ final class AppModel {
     @ObservationIgnored private var typingTimers: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var stallTimers: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private let cache = ConversationCache()
-    @ObservationIgnored private var requests: [WireEvent] = []
-    @ObservationIgnored private var inFlight: WireEvent?
+    /// Mirrors its `loadingOlder` into the observed property, so queue churn alone redraws nothing.
+    @ObservationIgnored private var queue = RequestQueue() {
+        didSet { if loadingOlder != queue.loadingOlder { loadingOlder = queue.loadingOlder } }
+    }
     @ObservationIgnored private var inFlightTimer: Task<Void, Never>?
     @ObservationIgnored private var unplacedReads: [String: ReadCursor] = [:]
     @ObservationIgnored private var badge: Int?
@@ -330,9 +332,7 @@ final class AppModel {
         stalled = []
         inFlightTimer?.cancel()
         inFlightTimer = nil
-        inFlight = nil
-        requests = []
-        loadingOlder = []
+        queue = RequestQueue()
         unplacedReads = [:]
         transfers.sessionLost()
         finishCronWait()
@@ -770,7 +770,7 @@ final class AppModel {
         case .error(let error) where error.attachmentId != nil:
             transfers.receive(event)
         case .error(let error):
-            if ["internal", "bad_request", "unsupported"].contains(error.code), inFlight != nil { settle() }
+            if ["internal", "bad_request", "unsupported"].contains(error.code), queue.fail() { settle() }
             guard let convId = error.convId, WireEvent.isId(convId), let messageId = error.messageId else { return }
             reject(messageId, in: convId, error.message)
             let id = "error:\(messageId)"
@@ -838,8 +838,8 @@ final class AppModel {
     func loadOlder(_ convId: String) {
         guard let conversation = conversations[convId], conversation.complete != true, !loadingOlder.contains(convId) else { return }
         guard let oldest = conversation.oldestSeq else { return enqueue(catchUp(conversation), first: true) }
-        loadingOlder.insert(convId)
-        enqueue(.historyRequest(HistoryRequest(convId: convId, before: oldest)), first: true)
+        queue.loadOlder(convId, before: oldest)
+        pump()
     }
 
     private func catchUp(_ conversation: Conversation) -> WireEvent {
@@ -847,42 +847,32 @@ final class AppModel {
     }
 
     private func startSync() {
-        requests = [.convList(ConvList())]
-        loadingOlder = []
+        queue.restart()
         settle()
     }
 
     private func enqueue(_ request: WireEvent, first: Bool = false) {
-        guard request != inFlight else { return }
-        requests.removeAll { $0 == request }
-        if first { requests.insert(request, at: 0) } else { requests.append(request) }
+        queue.enqueue(request, first: first)
         pump()
     }
 
     private func settle() {
-        inFlight = nil
+        queue.finish()
         inFlightTimer?.cancel()
         inFlightTimer = nil
         pump()
     }
 
     private func pump() {
-        guard inFlight == nil, state == .ready, let connection, !requests.isEmpty else { return }
-        let request = requests.removeFirst()
-        inFlight = request
+        guard state == .ready, let connection, let request = queue.take() else { return }
         inFlightTimer = Task { [weak self] in
             try? await Task.sleep(for: Self.requestTimeout)
-            guard !Task.isCancelled, let self, self.inFlight == request else { return }
-            if case .historyRequest(let r) = request { self.loadingOlder.remove(r.convId) }
+            guard !Task.isCancelled, let self, self.queue.fail(request) else { return }
             self.settle()
         }
         Task {
             let sent = await connection.send(request)
-            if !sent, inFlight == request {
-                inFlight = nil
-                inFlightTimer?.cancel()
-                if case .historyRequest(let r) = request { loadingOlder.remove(r.convId) }
-            }
+            if !sent, queue.fail(request) { inFlightTimer?.cancel() }
         }
     }
 
@@ -946,7 +936,7 @@ final class AppModel {
         if let high = seqs.max(), page.before == nil { conversation.newestSeq = max(conversation.newestSeq ?? high, high) }
         if page.before != nil || page.after == nil {
             conversation.complete = !page.more
-            loadingOlder.remove(page.convId)
+            queue.loadedOlder(page.convId)
         }
         if page.before == nil {
             if page.after != nil && page.more {
