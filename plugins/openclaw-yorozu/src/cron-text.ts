@@ -9,7 +9,7 @@ export function describeSchedule(schedule: ScheduleLike): string {
       return "Once";
     case "every": {
       const ms = schedule.everyMs;
-      return typeof ms === "number" && ms > 0 ? `Every ${duration(ms)}` : "Custom";
+      return typeof ms === "number" && Number.isSafeInteger(ms) && ms > 0 ? `Every ${duration(ms)}` : "Custom";
     }
     case "cron": {
       const tz = schedule.tz ? ` (${schedule.tz})` : "";

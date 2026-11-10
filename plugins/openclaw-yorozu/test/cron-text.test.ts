@@ -64,6 +64,21 @@ test("an interval that is not positive is Custom", () => {
   assert.equal(describeSchedule({ kind: "every" }), "Custom");
 });
 
+test("an interval that is not a whole number of milliseconds is Custom", () => {
+  assert.equal(every(Number.POSITIVE_INFINITY), "Custom");
+  assert.equal(every(Number.NEGATIVE_INFINITY), "Custom");
+  assert.equal(every(0.5), "Custom");
+  assert.equal(every(1_500.5), "Custom");
+});
+
+test("a huge interval is named up to the largest safe integer, and Custom past it", () => {
+  assert.equal(every(Number.MAX_SAFE_INTEGER), "Every 9007199254740991 ms");
+  assert.equal(every(104_249_991 * 86_400_000), "Every 104249991 days");
+  assert.equal(every(Number.MAX_SAFE_INTEGER + 1), "Custom");
+  assert.equal(every(1e21), "Custom");
+  assert.equal(every(Number.MAX_VALUE), "Custom");
+});
+
 test("the other kinds", () => {
   assert.equal(describeSchedule({ kind: "at" }), "Once");
   assert.equal(describeSchedule({ kind: "on-exit" }), "When a command exits");
