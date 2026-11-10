@@ -20,12 +20,33 @@ struct RelayLegTests {
             ("host offline", Array(repeating: .retry, count: 5)),
             ("pairing expired", Array(repeating: .retry, count: 5)),
             ("", Array(repeating: .retry, count: 5)),
+            // A reason this client does not recognize never ends the pairing: it retries.
+            ("unauthorized", Array(repeating: .retry, count: 5)),
+            ("internal error", Array(repeating: .retry, count: 5)),
+            ("some future reason", Array(repeating: .retry, count: 5)),
         ]
         for (reason, outcomes) in rows {
             for (standing, expected) in zip(standings, outcomes) {
                 let actual = RelayConnection.afterClose(reason: reason, standing: standing)
                 #expect(actual == expected, "reason: \(reason), standing: \(standing)")
             }
+        }
+    }
+
+    // Preventive: no failing baseline. Only `revoked`, and `unknown device` once the relay knew this device, unpair.
+    @Test func onlyRevocationUnpairsAKnownDevice() {
+        let reasons = ["revoked", "unknown device", "unknown token", "expired token", "host offline",
+            "pairing expired", "", "unauthorized", "internal error", "some future reason"]
+        let unpairing = reasons.filter {
+            RelayConnection.afterClose(reason: $0, standing: .knownToRelay) == .terminal(.unpaired)
+        }
+        #expect(unpairing == ["revoked", "unknown device"])
+        for standing: RelayConnection.Standing in [.codeOnly(retriedAsKnown: false), .codeOnly(retriedAsKnown: true),
+            .pairedDirect(retriedAsKnown: false), .pairedDirect(retriedAsKnown: true)] {
+            let unpairing = reasons.filter {
+                RelayConnection.afterClose(reason: $0, standing: standing) == .terminal(.unpaired)
+            }
+            #expect(unpairing == ["revoked"], "standing: \(standing)")
         }
     }
 
