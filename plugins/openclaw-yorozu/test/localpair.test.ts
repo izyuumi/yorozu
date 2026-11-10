@@ -93,7 +93,7 @@ async function host(addresses = ["127.0.0.1", "192.168.1.5"]) {
     peerInfo: () => ({ app: "test", protocolMin: 3, protocolMax: 3, capabilities: [] }),
     onMessage: () => {},
     dispatch: async () => false,
-    staticKeyOf: async (key) => allowlist.get(key),
+    staticKeyOf: async (key) => { const staticPub = allowlist.get(key); return staticPub ? { staticPub } : { absent: true }; },
     pair: pairer({
       pending,
       put: async (device) => {

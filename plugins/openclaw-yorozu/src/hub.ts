@@ -40,11 +40,13 @@ export type Request = {
   refuse: (data: ErrorInfo) => void;
 };
 
+export type StaticKey = { staticPub: string } | { absent: true } | { unread: true };
+
 export type HubOptions = {
   keys: { static: Keypair; room: string };
   peerInfo: () => PeerInfo;
-  /** The allowlisted device's X25519 key, base64url. */
-  staticKeyOf: (deviceKey: string) => Promise<string | undefined>;
+  /** The allowlist lookup: the device's X25519 key (base64url), known absent, or the store could not be read. Legacy callers return the key itself, or nothing for absent. */
+  staticKeyOf: (deviceKey: string) => Promise<StaticKey | string | null | undefined>;
   /** Stores a device whose proof matches a pending pairing, on either path (offline pairing, #532 step 5). */
   pair?: (proof: string | undefined, staticPub: string, deviceKey: string, now: number, path: Path) => Promise<boolean>;
   /** A relay handshake from a device that is not allowlisted. */
@@ -118,7 +120,11 @@ export class Hub {
     const staticPub = b64u(accepted.deviceStatic);
     for (const [sid, until] of this.answered) if (until < now) this.answered.delete(sid);
     if (this.answered.has(accepted.sid)) return this.drop("replayed");
-    const known = (await this.opts.staticKeyOf(deviceKey)) === staticPub;
+    const found = await this.opts.staticKeyOf(deviceKey).catch((): StaticKey => ({ unread: true }));
+    const listed: StaticKey = typeof found === "string" ? { staticPub: found } : found ?? { absent: true };
+    // A store miss says nothing about the device: no session, no pairing, and no revoke.
+    if ("unread" in listed) return this.drop("device allowlist unreadable");
+    const known = "staticPub" in listed && listed.staticPub === staticPub;
     const paired = !known && (await this.opts.pair?.(accepted.payload.proof, staticPub, deviceKey, now, link.path));
     if (!known && !paired) {
       if (link.path === "relay") this.opts.refused?.(deviceKey);
