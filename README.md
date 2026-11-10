@@ -44,7 +44,6 @@ Compile checks, releases and CI: [docs/release.md](docs/release.md).
 - [Wire contract](docs/ios-relay-contract.md)
 - [Owner decisions](OWNER_DECISIONS.md)
 - [Working rules](AGENTS.md)
-- [Example personal-ops vault (PAIOS)](examples/paios/README.md): an optional vault layout that works well with Yorozu and AI agents
 
 ## License
 

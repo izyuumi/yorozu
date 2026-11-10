@@ -1,6 +1,8 @@
 """Secret-looking strings that must never sit in a shared file. Used by paios-log.py and handoff.py."""
 import re
 
+# Starter list, meant to be extended: add patterns for other languages (the Japanese labels below are one
+# example) and for any field names or identifier formats your own sources use.
 PATTERNS = [
     ("private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     ("AWS key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),

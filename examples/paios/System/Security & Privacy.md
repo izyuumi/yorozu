@@ -9,14 +9,14 @@
 | Sensitive | health, finances, relationship details | minimize, restrict exposure, store only when useful |
 | Password | account and transaction passwords | never store the value; access only through the credential broker the owner configured (password-manager autofill, passkeys, or a scoped agent session) |
 | Secret | API keys, private keys, recovery codes, tokens, one-time authentication codes | never store the value |
-| High-risk identifier | government ID, full card or bank number, precise home address | government IDs and full financial numbers are never stored; a precise home address may be stored only in the dedicated private address-book record after explicit user instruction, and is redacted elsewhere by default |
+| High-risk identifier | government ID, full card or bank number, precise home address | government IDs and full financial numbers are never stored; a precise home address may be stored only in a private contacts store the owner designates, after explicit owner instruction, and is redacted elsewhere by default |
 | Derived | inferences and mental models | separate from facts; require evidence and confidence |
 
 ## Redaction behavior
 
 Replace detected values with typed placeholders such as `[REDACTED:API_TOKEN]`, `[REDACTED:PAYMENT_CARD]`, or `[REDACTED:PRECISE_ADDRESS]`. Preserve only the minimal context needed to understand that a credential or record exists and, if the user states it, its external secure-storage location.
 
-The dedicated private address book is the sole precise-address retention exception. Do not copy its values into sessions, action logs, purchases, deliveries, reports, imports, generated indexes, or other knowledge records. Retrieval is purpose-bound to the owner's requested address selection or verification.
+A private contacts store the owner designates is the sole precise-address retention exception. Do not copy its values into sessions, action logs, purchases, deliveries, reports, imports, generated indexes, or other knowledge records. Retrieval is purpose-bound to the owner's requested address selection or verification.
 
 Do not echo a secret back while explaining redaction. Avoid including raw values in tool arguments, filenames, logs, reports, test fixtures, or error messages.
 
