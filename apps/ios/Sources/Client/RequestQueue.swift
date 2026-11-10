@@ -1,7 +1,7 @@
 import YorozuWire
 
 /// The host requests that go out one at a time, and the conversations waiting for an older history page.
-struct RequestQueue {
+struct RequestQueue: Equatable {
     private(set) var pending: [WireEvent] = []
     private(set) var inFlight: WireEvent?
     private(set) var loadingOlder: Set<String> = []
@@ -38,6 +38,7 @@ struct RequestQueue {
         if case .historyRequest(let history) = failed { loadingOlder.remove(history.convId) }
         return true
     }
+
 
     /// A host error about one message fails the in-flight request only when that request is the message itself.
     /// History and conversation-list requests carry no message id, so such an error leaves them in flight.

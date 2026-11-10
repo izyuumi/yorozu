@@ -3,7 +3,7 @@
 import { createServer as createHttp, type IncomingMessage, type Server } from "node:http";
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
-import { createHandler, handlerDefaults, type HandlerOptions } from "./fetch.ts";
+import { createHandler, handlerDefaults, type Handler, type HandlerOptions } from "./fetch.ts";
 
 export { rateLimiter } from "./fetch.ts";
 
@@ -64,12 +64,29 @@ function toRequest(req: IncomingMessage): Request {
   } as RequestInit);
 }
 
-export function createHttpServer(options: HttpOptions): Server {
-  const handle = createHandler(options);
+/** `handle` defaults to the handler for `options`; tests pass their own. */
+export function createHttpServer(options: HttpOptions, handle: Handler = createHandler(options)): Server {
   return createHttp(async (req, res) => {
-    const response = await handle(toRequest(req), clientIp(req, options.trustProxy));
-    res.writeHead(response.status, Object.fromEntries(response.headers));
-    res.end(req.method === "HEAD" ? undefined : Buffer.from(await response.arrayBuffer()));
+    const fail = (status: number, error: string) =>
+      res.writeHead(status, { "Content-Type": "application/json", Connection: "close" }).end(JSON.stringify({ error }));
+    let request: Request;
+    try {
+      request = toRequest(req);
+    } catch {
+      // A target the URL parser rejects (`//%`) or a method Request refuses (TRACE).
+      return fail(400, "bad request");
+    }
+    try {
+      const response = await handle(request, clientIp(req, options.trustProxy));
+      // Read the body before the status line goes out, so a failed read can still answer 500.
+      const body = Buffer.from(await response.arrayBuffer());
+      res.writeHead(response.status, Object.fromEntries(response.headers));
+      res.end(req.method === "HEAD" ? undefined : body);
+    } catch (error) {
+      console.error("yorozu-help: request failed:", error);
+      if (res.headersSent) res.destroy();
+      else fail(500, "internal error");
+    }
   });
 }
 
