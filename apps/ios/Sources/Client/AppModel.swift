@@ -25,6 +25,8 @@ final class AppModel {
         set { pairingEntry.pendingPairing = newValue }
     }
     var pairingError: String?
+    /// The save error while storage lags the in-memory pairing; `resume` retries the save.
+    private var pairingSaveError: String?
     var requestedConversation: String?
     /// What a widget or control asked the opened conversation's composer to do.
     var composeRequest: ComposeRequest?
@@ -248,6 +250,7 @@ final class AppModel {
         if let hints, let room = payload.roomId { DirectHintStore().save(hints, room: room) }
         pairingRelayUnreachable = false
         pairing = new
+        pairingSaveError = nil
         publishWidgets()
         connect()
     }
@@ -276,6 +279,7 @@ final class AppModel {
         ShareInbox.clear()
         WidgetPublisher.clear()
         pairing = nil
+        pairingSaveError = nil
         conversations = [:]
         typing = []
         unplacedReads = [:]
@@ -444,6 +448,7 @@ final class AppModel {
         }
         setActive(true)
         takeShares()
+        if pairingSaveError != nil { updatePairing { _ in } }
         guard let connection else { return connect() }
         Task { await connection.reconnect() }
     }
@@ -572,6 +577,8 @@ final class AppModel {
 
     func requestNotifications() {
         guard !isDemo, paired else { return }
+        // YorozuTests has no notification bundle proxy; requesting authorization would abort the process.
+        guard Bundle.main.bundleIdentifier?.hasPrefix("to.yumi.yorozu") == true else { return }
         Task {
             _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
             guard !isDemo else { return }
@@ -646,7 +653,16 @@ final class AppModel {
         guard !isDemo, var pairing else { return }
         change(&pairing)
         self.pairing = pairing
-        try? pairing.save(storage: storage)
+        do {
+            try pairing.save(storage: storage)
+            if pairingSaveError != nil, pairingError == pairingSaveError { pairingError = nil }
+            pairingSaveError = nil
+        } catch {
+            // Kept in memory: a pairing whose first session completed is not dropped over a failed write.
+            Self.connectionLog.error("pairing save failed: \(String(describing: error), privacy: .public)")
+            pairingSaveError = String(localized: "Couldn’t save the pairing: \(error.localizedDescription)")
+            pairingError = pairingSaveError
+        }
     }
 
     func send(_ text: String, attachments: [ChatAttachment] = [], in convId: String, messageId: String = WireEvent.newId(),

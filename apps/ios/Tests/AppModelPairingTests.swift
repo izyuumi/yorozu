@@ -13,16 +13,43 @@ private actor IdleTransport: ClientTransport {
     func raceAgain() {}
 }
 
+/// Yields what a test scripts; updates yielded before `updates()` is subscribed wait for it.
+private actor ScriptedTransport: ClientTransport {
+    private var continuation: AsyncStream<RelayConnection.Update>.Continuation?
+    private var waiting: [RelayConnection.Update] = []
+
+    func emit(_ update: RelayConnection.Update) {
+        if let continuation { continuation.yield(update) } else { waiting.append(update) }
+    }
+
+    func updates() -> AsyncStream<RelayConnection.Update> {
+        let (stream, continuation) = AsyncStream<RelayConnection.Update>.makeStream()
+        for update in waiting { continuation.yield(update) }
+        waiting = []
+        self.continuation = continuation
+        return stream
+    }
+
+    func start() {}
+    func reconnect() {}
+    func stop() {}
+    func registerPush(deviceToken: String) {}
+    func send(_ event: WireEvent) -> Bool { false }
+    func send(_ message: Message) -> Bool { false }
+    func raceAgain() {}
+}
+
 @MainActor
 @Suite struct AppModelPairingTests {
     @MainActor private final class Transports {
         var asked = 0
         var fails = true
+        var scripted: ScriptedTransport?
 
         func make() throws -> any ClientTransport {
             asked += 1
             if fails { throw CocoaError(.featureUnsupported) }
-            return IdleTransport()
+            return scripted ?? IdleTransport()
         }
     }
 
@@ -99,5 +126,63 @@ private actor IdleTransport: ClientTransport {
         #expect(model.pairingError == nil)
         #expect(model.conversations[convId] != nil)
         #expect(transports.asked == 1)
+    }
+
+    /// The listen task applies updates on its own turns of the main actor.
+    private func settled(_ condition: () -> Bool) async -> Bool {
+        for _ in 0..<100 where !condition() { try? await Task.sleep(for: .milliseconds(10)) }
+        return condition()
+    }
+
+    /// A model over the stored pairing whose transport is ready and has opened its first session.
+    private func openFirstSession() async throws -> AppModel {
+        let transport = ScriptedTransport()
+        await transport.emit(.state(.ready))
+        await transport.emit(.sessionOpen(PeerInfo(app: "test")))
+        transports.fails = false
+        transports.scripted = transport
+        let model = makeModel()
+        let opened = await settled { model.hostInfo != nil }
+        try #require(opened)
+        return model
+    }
+
+    private func stored() -> Pairing? { try? Pairing.load(storage: storage, state: migration) }
+
+    @Test func aFailedPairedSaveIsSurfacedAndRetried() async throws {
+        let pairing = try store(paired: false)
+        storage.failSave = true
+        let model = try await openFirstSession()
+        #expect(model.pairing?.paired == true)
+        #expect(try Pairing.load(storage: storage, state: migration) == pairing)
+        #expect(model.pairingError != nil)
+
+        storage.failSave = false
+        model.resume()
+        let retried = await settled { stored()?.paired == true }
+        #expect(retried)
+        #expect(stored() == model.pairing)
+        #expect(model.pairingError == nil)
+    }
+
+    @Test(arguments: [RelayConnection.State.unpaired, .pairingFailed("refused")])
+    func aHostRefusalAfterARetriedPairedSaveKeepsThePairing(refusal: RelayConnection.State) async throws {
+        _ = try store(paired: false)
+        storage.failSave = true
+        let first = try await openFirstSession()
+        storage.failSave = false
+        first.resume()
+        _ = await settled { stored()?.paired == true }
+
+        // The next launch reads what storage holds, and the host refuses it.
+        let transport = ScriptedTransport()
+        await transport.emit(.state(refusal))
+        transports.scripted = transport
+        let relaunched = makeModel()
+        _ = await settled { relaunched.state == refusal || relaunched.pairing == nil }
+        #expect(relaunched.state == refusal)
+        #expect(relaunched.pairing?.paired == true)
+        #expect(stored()?.paired == true)
+        #expect(cache.loadAll().map(\.id) == [convId])
     }
 }
