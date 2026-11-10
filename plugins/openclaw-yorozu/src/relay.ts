@@ -301,7 +301,10 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
       ],
     }),
     directHints: () => direct?.listening ? hints : undefined,
-    staticKeyOf: async (deviceKey) => (await getDevice(deviceKey))?.staticPub,
+    staticKeyOf: (deviceKey) => getDevice(deviceKey).then(
+      (device) => device ? { staticPub: device.staticPub } : { absent: true },
+      () => ({ unread: true }),
+    ),
     pair: pairer({
       pending,
       put: putDevice,

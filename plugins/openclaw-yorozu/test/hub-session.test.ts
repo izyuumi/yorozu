@@ -35,7 +35,7 @@ function host(options: Partial<Pick<HubOptions, "onPeer" | "dispatch">> = {}) {
   const messages: Message[] = [];
   const hub = new Hub({
     keys, peerInfo: () => peer,
-    staticKeyOf: async (key) => allowed.get(key),
+    staticKeyOf: async (key) => { const staticPub = allowed.get(key); return staticPub ? { staticPub } : { absent: true }; },
     onMessage: (message) => { messages.push(message); },
     dispatch: async () => false,
     ...options,

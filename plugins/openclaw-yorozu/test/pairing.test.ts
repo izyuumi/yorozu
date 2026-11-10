@@ -75,7 +75,7 @@ test("a proof of the wrong length or one character off is refused without throwi
 
 const peer = { app: "test", protocolMin: 3, protocolMax: 3, capabilities: [] as string[] };
 
-function host(relayConnected: boolean) {
+function host(relayConnected: boolean, readable = true) {
   const signing = ed25519Keypair();
   const keys = { static: x25519Keypair(), room: roomId(signing.publicKey) };
   const allowlist = new Map<string, string>();
@@ -86,7 +86,11 @@ function host(relayConnected: boolean) {
   const log = { info: (s: string) => logs.push(s), warn: (s: string) => logs.push(s) };
   const hub = new Hub({
     keys, peerInfo: () => peer, onMessage: () => {}, dispatch: async () => false,
-    staticKeyOf: async (key) => allowlist.get(key),
+    staticKeyOf: async (key) => {
+      if (!readable) return { unread: true };
+      const staticPub = allowlist.get(key);
+      return staticPub ? { staticPub } : { absent: true };
+    },
     refused: (key) => refused.push(key),
     log,
     pair: pairer({
@@ -156,4 +160,13 @@ test("over the relay, a pairing doesn't resend the allowlist and a refusal revok
   const stranger = init(h);
   assert.equal(await h.hub.handshake(stranger.payload, stranger.sig, link("relay")), null);
   assert.deepEqual(h.refused, [b64u(stranger.device.signing.publicKey)]);
+});
+
+test("an allowlist read failure over the relay does not revoke a paired device", async () => {
+  const h = host(true, false);
+  const paired = init(h);
+  const key = b64u(paired.device.signing.publicKey);
+  h.allowlist.set(key, b64u(paired.device.static.publicKey));
+  assert.equal(await h.hub.handshake(paired.payload, paired.sig, link("relay")), null);
+  assert.deepEqual(h.refused, [], "a store miss is not an unpair");
 });
