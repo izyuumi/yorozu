@@ -4,10 +4,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "== snow transport mode"
-if grep -rnE 'into_transport_mode|into_stateless_transport_mode' core/src; then
-  echo "the core uses snow only for the handshake (spec section 4)" >&2
-  exit 1
-fi
+code=0
+grep -rnE 'into_transport_mode|into_stateless_transport_mode' core/src || code=$?
+case $code in
+  0) echo "the core must use snow only for the Noise handshake, never its transport mode" >&2; exit 1 ;;
+  1) ;;
+  *) echo "grep failed" >&2; exit 1 ;;
+esac
 
 echo "== no aws-lc-rs"
 # cargo exits non-zero when no package matches; any other failure must not pass silently.
@@ -27,12 +30,12 @@ cargo clippy --workspace --exclude yorozu-windows --all-targets --features yoroz
 
 echo "== test"
 # The Tauri crate (yorozu-windows) needs WebView2; app.ps1 builds it on Windows from W1.
-# Until then cargo only warns that the excluded package doesn't exist.
+# cargo warns that the excluded package does not exist, only until W1 adds it.
 cargo test --workspace --exclude yorozu-windows --features yorozu-core/insecure-plaintext-store
 
 echo "== conformance"
 # The client's expectations of the real Node relay (pnpm install --filter @yorozu/relay first).
-node --test conformance/host/*.test.ts
+node --test --test-timeout=60000 conformance/host/*.test.ts
 
 echo "== commit-type tests"
 bash ci/commit-type.test.sh
