@@ -1230,3 +1230,7 @@ Replaces "Attachments both ways (`sendMedia`), 8 MB limit (OpenClaw's `mediaMaxM
 The owner's request: "Make the default thread item swipe to be archive first instead of delete. Deletion can only happen to archived chats. Also, implement shake to undo for both archive and delete."
 
 This change covers the first two sentences. On a conversation that is not archived, the trailing swipe offers Archive only, and a full swipe archives it. Delete is offered only on archived conversations, from the trailing swipe or the context menu, behind the confirmation dialog. Undo is out of scope for this change.
+
+## 2026-11-11 — Windows client (Tauri exception, cut-down v1)
+
+The owner allowed Tauri and a web view for the Windows client only (2026-11-11 10:48 JST): "Yes, allow Tauri and a webview for the Windows client only; keep Swift everywhere else". Asked "OK with Windows' built-in key encryption and an unsigned test installer?" (11:47 JST): "Yes: DPAPI key storage and an unsigned test installer are fine". Asked "How should we get Windows out?" (12:20 JST): "Cut it down: relay-only chat with paste-link pairing first, add the rest after I test". The client lives in `apps/windows`, which Release Mac excludes; its pull requests use `chore|build|ci|test|docs(windows):` titles so they never raise the app's minor or major version or reach the release notes.

@@ -4,3 +4,7 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish = false
+
+[features]
+# Gates the test-only plaintext key store (later PRs). Stays off in the app.
+insecure-plaintext-store = []

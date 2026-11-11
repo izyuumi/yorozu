@@ -1,6 +1,6 @@
 # Yorozu for Windows
 
-The Windows client for Yorozu, built with Tauri 2. It is in progress: so far this directory holds only the Rust workspace (`core`, the platform-neutral crate that will carry the wire, pairing and state machines) and the CI isolation check.
+The Windows client for Yorozu: a Tauri 2 app with a Rust core (`core`) that owns sockets, crypto and keys. Its v1 is cut down to pairing by pasted link and chat over the relay. So far this directory holds only the CI frame: an empty core crate and the scripts in `ci/`.
 
 ## Docs live here
 
@@ -11,14 +11,34 @@ Windows documentation belongs in this directory, not in `docs/` or the root `REA
 From the repository root:
 
 ```sh
-cargo test --manifest-path apps/windows/Cargo.toml --workspace
-node apps/windows/scripts/filter-dry-run.mjs
+pnpm install --frozen-lockfile --filter @yorozu/relay
+bash apps/windows/ci/core.sh
 ```
 
-The pull request check (`windows` in `.github/workflows/checks.yml`) runs both on `windows-latest`, then builds the workspace.
+The install is for the conformance test (`conformance/host/`), which runs the real Node relay from `apps/relay` under Node 24 or later. The script also needs the toolchain pinned in `rust-toolchain.toml`, which rustup installs on first use. The pull request job `windows-core` in `.github/workflows/checks.yml` runs the same script.
 
 ## CI isolation
 
-Nothing under `apps/windows/` triggers a release or a deploy. Release Mac covers `apps/**`, so it excludes this directory with `'!apps/windows/**'`; the other push workflows never matched it.
+Nothing under `apps/windows/` triggers a release or a deploy. Release Mac covers `apps/**`, so it excludes this directory with `'!apps/windows/**'`; no other push workflow matches it. Nothing for Windows goes under `scripts/`, because a push there starts Release Mac.
 
-`scripts/filter-dry-run.mjs` enforces the rule. It reads the `on: push` filters of every workflow in `.github/workflows/`, applies GitHub's path matching to sample files, and fails if a Windows path would start a push workflow, or if `apps/ios` would stop starting Release iOS and Release Mac. Run it after changing any workflow's `paths`.
+## Commit and PR titles
+
+A pull request that is scoped `(windows)`, or that changes only `apps/windows/**` and `.github/workflows/windows-installer.yml`, must not move the app's version or its release notes. Its title and every commit subject must be one of:
+
+- `chore(windows): …`, `build(windows): …`, `ci(windows): …`, `test(windows): …` or `docs(windows): …`;
+- any `Revert "…"` title: a revert subject only bumps the patch in `scripts/version.sh`, like a chore.
+
+Dependabot's pull requests are skipped by the workflow step (`user.login != 'dependabot[bot]'`), not by the script.
+
+Otherwise no `feat`, `fix` or `perf`, no `!`, and no line starting `BREAKING CHANGE: ` in the pull request body or a commit message. `feat` bumps the minor version and `!` or `BREAKING CHANGE` the major in `scripts/version.sh`; `feat`, `fix` and `perf` reach `scripts/release_notes.sh`.
+
+The `release-guards` job enforces this on every pull request with `ci/commit-type.sh`; `ci/commit-type.test.sh` tests it.
+
+## Rollback
+
+1. Revert W3, then W2, then W1, one PR each, titled `Revert "<original title>"`.
+2. One PR removes the `windows-core` job, the `windows_core` output and the `commit-type.sh` step from `checks.yml`, and deletes `.github/workflows/windows-installer.yml` if W1 was not reverted.
+3. One PR deletes `apps/windows/**`. The directory is still excluded from Release Mac, so there is no release.
+4. One PR removes the `'!apps/windows/**'` exclusion from `release-mac.yml` and W0's `OWNER_DECISIONS.md` and `docs/history/decisions-log.md` edits.
+
+Never revert W0 as one commit: that would delete `apps/windows/**` in the same push that removes the exclusion and start Release Mac.
