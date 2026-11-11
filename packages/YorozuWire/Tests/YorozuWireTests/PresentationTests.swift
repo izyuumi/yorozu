@@ -5,11 +5,7 @@ import Testing
 /// Cards (capability `presentation`): the plugin's exact output from the shared fixture, and the tolerant reader's
 /// rules for what it can't check.
 struct PresentationTests {
-    private func fixture(_ name: String) throws -> WireEvent {
-        let url = try #require(Bundle.module.url(forResource: "genui-wire", withExtension: "json", subdirectory: "Fixtures"))
-        let fixture = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: url))
-        return try JSONDecoder().decode(WireEvent.self, from: Data(try #require(fixture[name]).utf8))
-    }
+    private func fixture(_ name: String) throws -> WireEvent { try GenUIFixture.event(name) }
 
     private let ids = #""convId":"00000000-0000-4000-8000-000000003000","messageId":"00000000-0000-4000-8000-000000003001""#
 

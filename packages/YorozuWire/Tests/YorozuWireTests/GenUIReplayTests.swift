@@ -4,15 +4,10 @@ import Testing
 
 /// The plugin's card replies (capability `presentation`), replayed through the decoders: the card rides along and
 /// the text and every other field decode as they do without it. The fixture is the exact JSON the plugin puts in a
-/// sealed box, read from the plugin's tree so there is one copy (`plugins/openclaw-yorozu/test/presentations.test.ts`
+/// sealed box (`GenUIFixture`; `plugins/openclaw-yorozu/test/presentations.test.ts`
 /// pins it). `PresentationTests` covers the card.
 struct GenUIReplayTests {
-    private func event(_ name: String) throws -> WireEvent {
-        let repo = (0..<5).reduce(URL(fileURLWithPath: #filePath)) { url, _ in url.deletingLastPathComponent() }
-        let url = repo.appending(path: "plugins/openclaw-yorozu/test/fixtures/genui-wire.json")
-        let fixture = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: url))
-        return try JSONDecoder().decode(WireEvent.self, from: Data(try #require(fixture[name]).utf8))
-    }
+    private func event(_ name: String) throws -> WireEvent { try GenUIFixture.event(name) }
 
     private let convId = "00000000-0000-4000-8000-000000003000"
     private let agentId = "00000000-0000-4000-8000-000000003001"
