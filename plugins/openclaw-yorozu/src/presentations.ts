@@ -7,7 +7,8 @@ const store = cardStore(
   () => state().openKeyedStore<string[]>(CARD_INDEX),
 );
 
-// Each operation has `CARD_WAIT_MS` once it starts (writes queue first); callers decide what a failure costs.
+// Each operation has `CARD_WAIT_MS` from the call, its wait in the write queue included; callers decide what a
+// failure costs.
 
 /** Keeps a reply's card for history under `key` (`cardKey` or `turnCardKey`), listed under the conversation. */
 export const storeCard = (convId: string, key: string, card: StoredCard): Promise<void> => store.put(convId, key, card);

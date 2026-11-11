@@ -15,7 +15,7 @@ const { applyPatch } = await import("../src/sessions.ts");
 const { downgrade } = await import("../src/hub.ts");
 const { encodeEvent, PEER_INFO, PRESENTATION } = await import("../src/envelope.ts");
 const {
-  CARD_INDEX, CARD_WAIT_MS, CARDS, CONV_CARDS_MAX, cardKey, cardStore, channelCard, MESSAGE_TOOL, MESSAGE_TOOL_HINTS, PRESENTATION_CAPABILITIES,
+  CARD_INDEX, CARD_WAIT_MS, CARDS, CONV_CARDS_MAX, cardKey, FORGOTTEN_MAX, cardStore, channelCard, MESSAGE_TOOL, MESSAGE_TOOL_HINTS, PRESENTATION_CAPABILITIES,
   renderedPayload, STORE_KEY_MAX_BYTES, STORE_VALUE_MAX_BYTES, turnCardKey,
 } = await import("../src/cards.ts");
 const { MAX_PRESENTATION_BYTES, sanitizePresentation } = await import("../src/presentation.ts");
@@ -69,7 +69,7 @@ const log = { info() {}, warn: (line: string) => void warnings.push(line), error
 /** The card store's work is not awaited by `deliver`; the fake store answers within this. */
 const stored = () => new Promise((done) => setImmediate(done));
 /** One turn: OpenClaw hands `payloads` to the plugin's `deliver`; the replies every device would get. */
-async function turn(convId: string, payloads: { text?: string; mediaUrl?: string; presentation?: unknown }[], cfg: object = {}): Promise<Reply[]> {
+async function turn(convId: string, payloads: { text?: string; mediaUrl?: string; presentation?: unknown; replyToId?: string }[], cfg: object = {}): Promise<Reply[]> {
   host.sent.length = 0;
   warnings.length = 0;
   host.run = async (deliver: (payload: unknown, info: { kind: string }) => Promise<void>) => {
@@ -91,6 +91,11 @@ async function payloadSend(params: { threadId: string; text?: string; mediaUrls?
 const shape = (events: Event[]) => JSON.stringify(events.map((event) => ({ ...event, data: { ...event.data, messageId: "id", ts: 0 } })));
 const rows = (namespace: string): Map<string, unknown> => host.stores.get(namespace) ?? new Map();
 const page = async (convId: string, cfg: object = {}) => (await historyPage(cfg as never, "main", { convId })).items;
+/** Live replies as history items under the same ids. */
+const asItems = (live: Reply[], seq: number) => live.map((reply) => ({
+  kind: "agent", id: reply.messageId, seq, ts: reply.ts, text: reply.text,
+  ...(reply.replyTo && { replyTo: reply.replyTo }), ...(reply.presentation && { presentation: reply.presentation }),
+}));
 
 const peer = { app: "test", protocolMin: 3, protocolMax: 3 };
 /** The capabilities of the app before cards, and the same app with them. */
@@ -325,7 +330,8 @@ test("card store: a conversation keeps its newest 500 cards; the oldest key and 
   assert.equal(cards.size, CONV_CARDS_MAX + 1);
 });
 
-test("card store: a write that never finishes fails after the wait and holds the next one for that long only; a failed one not at all", async () => {
+test("card store: a write that never finishes fails after the wait and holds the next one for that long only; a failed one not at all", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const cards = new Map<string, unknown>();
   const index = new Map<string, unknown>();
   let mode: "ok" | "hang" | "reject" = "ok";
@@ -349,10 +355,13 @@ test("card store: a write that never finishes fails after the wait and holds the
   stuck.catch(() => (settled = true));
   await stored();
   mode = "ok";
+  t.mock.timers.tick(10);
   const forgotten = store.forget("conv-1");
+  await stored();
   assert.equal(settled, false, "the stuck put has its wait left");
-  await forgotten;
+  t.mock.timers.tick(10);
   await assert.rejects(stuck, { name: "CardStoreTimeout" });
+  await forgotten;
   assert.deepEqual([cards.size, index.size], [0, 0]);
   await store.put("conv-2", "t:e1", one);
   assert.deepEqual([...cards.keys()], ["t:e1"]);
@@ -453,8 +462,11 @@ test("a store that fails or never answers costs the history card only: the text 
   const deleted = applyPatch("main", { convId: hung.convId, deleted: true }).then((result) => ((done = true), result));
   await stored();
   assert.equal(done, false, "the delete waits its turn behind the stuck write");
+  // Its 5 s ran while it waited: it fails with the stuck write, and the conversation stays to be deleted again.
   t.mock.timers.tick(CARD_WAIT_MS);
-  assert.equal(await deleted, undefined);
+  assert.equal(((await deleted) as { data: { code: string } } | undefined)?.data.code, "internal");
+  assert.equal(host.sessions.has(sessionKey(hung.convId)), true);
+  assert.equal(await applyPatch("main", { convId: hung.convId, deleted: true }), undefined);
   assert.equal(host.sessions.has(sessionKey(hung.convId)), false);
   assert.equal(rows("presentations").has(hung.key), false);
   assert.equal(rows("presentation-index").has(hung.convId), false);
@@ -484,7 +496,7 @@ test("attachment failure lines go in the text alongside a card, which stays on t
   }
 });
 
-test("renderPresentation: a card that can be shown rides in channelData.yorozu with its text; nothing to show is null", () => {
+test("renderPresentation: a card that can be shown rides in channelData.yorozu with its text; a dropped one leaves the payload's own text", () => {
   const clean = sanitizePresentation(card(), sdk);
   const payload = { text, replyToId: "r", channelData: { other: { kept: true } } };
   const rendered = renderedPayload(payload, card(), sdk);
@@ -492,8 +504,13 @@ test("renderPresentation: a card that can be shown rides in channelData.yorozu w
   assert.deepEqual(channelCard(rendered!), clean.presentation);
   assert.deepEqual(renderedPayload({}, card(), sdk), { text: clean.fallbackText, channelData: { yorozu: { presentation: clean.presentation } } });
   assert.doesNotMatch(JSON.stringify(rendered), /cb:|approv|command|callback|buttons|select|Pick/i);
-  for (const nothing of [undefined, null, 42, "not json", { title: "Secret title" }, { blocks: [{ type: "divider" }] }, { blocks: [{ type: "buttons", buttons: [{ label: "x", value: "cb" }] }] }]) {
-    assert.equal(renderedPayload({ text }, nothing, sdk), null);
+  for (const nothing of [undefined, null]) assert.equal(renderedPayload({ text }, nothing, sdk), null);
+  for (const nothing of [42, "not json", { title: "Secret title" }, { blocks: [{ type: "divider" }] }, { blocks: [{ type: "buttons", buttons: [{ label: "x", value: "cb" }] }] }]) {
+    warnings.length = 0;
+    const own = { text };
+    assert.equal(renderedPayload(own, nothing, sdk, log), own);
+    assert.equal(renderedPayload({ presentationTextMode: "fallback" }, nothing, sdk, log), null);
+    assert.deepEqual(warnings, [DROPPED, DROPPED]);
   }
   assert.equal(channelCard({ text }), undefined);
   assert.equal(channelCard({ channelData: { yorozu: "x", other: { presentation: card() } } }), undefined);
@@ -540,7 +557,7 @@ test("sendPayload: the full text always, the card on the last chunk, an invalid 
   assert.equal(rows("presentation-index").has(threadId), false, "an explicit-target card is not stored");
 });
 
-test("sendPayload during a turn stores the last card reply and restores it after a tool-only transcript message", async () => {
+test("sendPayload during a turn stores every chunk of the card reply and restores them after a tool-only transcript message", async () => {
   const { convId, sessionId } = conversation(60);
   host.transcripts.get(sessionId)![1].message.content = [{ type: "toolCall", id: "send", name: "message" }];
   let live: Reply[] = [];
@@ -558,13 +575,11 @@ test("sendPayload during a turn stores the last card reply and restores it after
   assert.deepEqual(rows("presentation-index").get(convId), [key]);
   assert.deepEqual(rows("presentations").get(key), {
     presentation: carrier.presentation,
-    reply: { messageId: carrier.messageId, ts: carrier.ts, text: carrier.text },
+    reply: live.map(({ messageId, ts, text }) => ({ messageId, ts, text })),
   });
   const items = await page(convId);
   assert.equal(items[0]?.kind, "user");
-  assert.deepEqual(items.filter((item) => item.kind === "agent"), [{
-    kind: "agent", id: carrier.messageId, seq: 1, ts: carrier.ts, text: carrier.text, presentation: carrier.presentation,
-  }]);
+  assert.deepEqual(items.filter((item) => item.kind === "agent"), asItems(live, 1));
 });
 
 test("sendPayload stores no card for another conversation or after the turn ends", async () => {
@@ -586,34 +601,48 @@ test("sendPayload stores no card for another conversation or after the turn ends
   assert.equal(rows("presentations").size, before);
 });
 
-test("an older turn ending keeps the replacement turn's outbound card association", async () => {
+test("a message queued behind a running turn takes the turn's cards only once its own run starts", async () => {
   const { convId, sessionId } = conversation(63);
   const first = Promise.withResolvers<void>();
   const second = Promise.withResolvers<void>();
   const entered = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
   let calls = 0;
-  host.run = async () => {
+  const keyOf = (sent: { events: Event[] }) => (sent.events[0]!.data as Reply).messageId;
+  let secondKey = "";
+  host.queued = true;
+  host.run = async (_deliver: unknown, start: () => void) => {
     const n = calls++;
+    if (n === 0) start();
     entered[n]!.resolve();
     await (n === 0 ? first.promise : second.promise);
+    if (n === 1) {
+      start();
+      secondKey = keyOf(await payloadSend({ threadId: convId, text, presentation: card() }));
+    }
   };
   const ctx = { cfg: {}, agent: "main", presentationSdk: sdk, log } as never;
-  const oldTurn = handleMessage(ctx, { convId, messageId: userId, text: "First turn" });
-  await entered[0]!.promise;
   const newUserId = uuid(6302);
-  const newTurn = handleMessage(ctx, { convId, messageId: newUserId, text: "Second turn" });
-  await entered[1]!.promise;
   try {
+    const oldTurn = handleMessage(ctx, { convId, messageId: userId, text: "First turn" });
+    await entered[0]!.promise;
+    const newTurn = handleMessage(ctx, { convId, messageId: newUserId, text: "Second turn" });
+    await entered[1]!.promise;
+    // The first turn is still the one running: its card is its own, not the queued message's.
+    const firstKey = keyOf(await payloadSend({ threadId: convId, text, presentation: card() }));
+    await stored();
+    assert.deepEqual(warnings, []);
+    assert.deepEqual(rows("presentation-index").get(convId), [turnCardKey(sessionId, userId, firstKey)]);
     first.resolve();
     await oldTurn;
-    const sent = await payloadSend({ threadId: convId, text, presentation: card() });
-    await stored();
-    const reply = sent.events[0]!.data as Reply;
-    assert.deepEqual(warnings, []);
-    assert.deepEqual(rows("presentation-index").get(convId), [turnCardKey(sessionId, newUserId, reply.messageId)]);
-  } finally {
     second.resolve();
     await newTurn;
+    await stored();
+    assert.deepEqual(warnings, []);
+    assert.deepEqual(rows("presentation-index").get(convId), [turnCardKey(sessionId, userId, firstKey), turnCardKey(sessionId, newUserId, secondKey)]);
+  } finally {
+    host.queued = false;
+    first.resolve();
+    second.resolve();
   }
 });
 
@@ -695,7 +724,7 @@ test("a toolCall-only card turn restores a separate bubble with its live id, tex
   const key = turnCardKey(sessionId, userId, live!.messageId);
   assert.deepEqual(rows("presentation-index").get(convId), [key]);
   assert.deepEqual(rows("presentations").get(key), {
-    presentation: live!.presentation, reply: { messageId: live!.messageId, ts: live!.ts, text: live!.text },
+    presentation: live!.presentation, reply: [{ messageId: live!.messageId, ts: live!.ts, text: live!.text }],
   });
   const items = await page(convId);
   assert.deepEqual(items.map((item) => item.kind), ["user", "tools", "agent"]);
@@ -799,7 +828,7 @@ test("a stored card counts toward PAGE_BYTES when selecting history groups", asy
   // Turn-keyed cards are new history items; their whole stored reply also counts.
   const reply = { messageId: uuid(5499), ts: 1_700_000_003_000, text: "Separate card" };
   const turnKey = turnCardKey(sessionId, userId, reply.messageId);
-  rows("presentations").set(turnKey, { presentation, reply });
+  rows("presentations").set(turnKey, { presentation, reply: [reply] });
   rows("presentation-index").set(convId, [turnKey]);
   const synthesized = await historyPage(cfg as never, "main", { convId });
   assert.equal(synthesized.more, true);
@@ -856,4 +885,162 @@ test("the wire fixture for the apps' decoders is what the plugin sends", async (
   assert.match(built.reply, /"presentation":\{"title":"Trip costs","tone":"info","blocks":\[/);
   assert.doesNotMatch(built.replyOldApp, /presentation/);
   assert.match(built.history, /"kind":"agent".*"presentation":\{/);
+});
+
+const agents = (items: Awaited<ReturnType<typeof page>>) => items.filter((item) => item.kind === "agent");
+type Outbound = Record<"renderPresentation" | "sendPayload" | "sendText", (...args: never[]) => unknown>;
+/** The plugin as OpenClaw sees it, with the running account's log (`startAccount` against the fake host). */
+async function channel() {
+  const { yorozuPlugin } = await import("../src/channel.ts");
+  const plugin = yorozuPlugin as unknown as { base: { gateway: { startAccount(ctx: unknown): Promise<void> } }; outbound: Outbound };
+  const account = { accountId: "default", agent: "main", relayUrl: "wss://relay.invalid", directPort: null, directBonjour: false };
+  await plugin.base.gateway.startAccount({ account, abortSignal: new AbortController().signal, cfg: {}, log, setStatus() {} });
+  warnings.length = 0;
+  host.sent.length = 0;
+  return plugin.outbound as unknown as Record<keyof Outbound, (params: object) => Promise<{ messageId: string }> | object | null>;
+}
+
+test("a turn-keyed card reply comes back in history as every chunk it went out as: ids, full text and replyTo", async () => {
+  const { convId, sessionId } = conversation(64);
+  host.transcripts.get(sessionId)![1].message.content = [{ type: "toolCall", id: "send", name: "message" }];
+  const live = await turn(convId, [{ text, presentation: card(), replyToId: userId }], { limit: 8 });
+  assert.equal(live.length, 3);
+  assert.deepEqual(live[0]!.replyTo, { messageId: userId, text: "Show me the costs" });
+  const items = agents(await page(convId, { limit: 8 }));
+  assert.deepEqual(items, asItems(live, 1));
+  assert.equal(items.map((item) => "text" in item && item.text).join(""), text);
+});
+
+test("a card with text goes on the transcript message that says its text, never on an earlier one", async () => {
+  const { convId, sessionId, eventId } = conversation(65);
+  const preamble = uuid(6599);
+  host.transcripts.get(sessionId)!.splice(1, 0, {
+    type: "message", id: preamble,
+    message: { role: "assistant", content: [{ type: "text", text: "Let me check." }, { type: "toolCall", id: "look", name: "search" }], timestamp: 1_700_000_000_500 },
+  });
+  const [reply] = await turn(convId, [{ text, presentation: card() }]);
+  assert.equal(reply!.messageId, eventId);
+  assert.deepEqual(agents(await page(convId)).map((item) => [item.id, "text" in item && item.text, "presentation" in item]), [
+    [preamble, "Let me check.", false], [eventId, text, true],
+  ]);
+
+  // Text no message says: random ids, kept by the turn, and the message stays for the reply that says it.
+  const other = conversation(66);
+  const [carded, plain] = await turn(other.convId, [{ text: "Something else.", presentation: card() }, { text }]);
+  assert.notEqual(carded!.messageId, other.eventId);
+  assert.equal(plain!.messageId, other.eventId);
+  assert.deepEqual(agents(await page(other.convId)).map((item) => [item.id, "text" in item && item.text, "presentation" in item]), [
+    [other.eventId, text, false], [carded!.messageId, "Something else.", true],
+  ]);
+});
+
+test("a sendPayload card goes on the message core mirrored into the transcript, with no second copy; unmirrored it comes back on its own", async () => {
+  for (const mirrored of [true, false]) {
+    const { convId, sessionId } = conversation(mirrored ? 67 : 68);
+    const transcript = host.transcripts.get(sessionId)!;
+    transcript[1].message.content = [{ type: "toolCall", id: "send", name: "message" }];
+    const mirror = uuid(mirrored ? 6702 : 6802);
+    let live: Reply[] = [];
+    host.run = async () => {
+      live = (await payloadSend({ threadId: convId, text, presentation: card(), cfg: { limit: 8 } })).events.map((event) => event.data as Reply);
+      // What `mirrorDeliveredPayloads` appends after the send; without a mirror, an unrelated reply.
+      const said = mirrored ? `${text}\n` : "Done.";
+      transcript.push({ type: "message", id: mirror, message: { role: "assistant", content: [{ type: "text", text: said }], timestamp: 1_700_000_002_000 } });
+    };
+    await handleMessage({ cfg: {}, agent: "main", presentationSdk: sdk, log } as never, { convId, messageId: userId, text: "Show me the costs" });
+    await stored();
+    const items = agents(await page(convId, { limit: 8 }));
+    if (mirrored) {
+      assert.deepEqual(items.map((item) => ["text" in item && item.text, "presentation" in item]), [["Here are", false], [" the cos", false], ["ts.", true]]);
+      assert.equal(items[0]!.id, mirror);
+      assert.deepEqual(items[2]!.presentation, live.at(-1)!.presentation);
+    } else {
+      assert.deepEqual(items, [{ kind: "agent", id: mirror, seq: 2, ts: 1_700_000_002_000, text: "Done." }, ...asItems(live, 2)]);
+    }
+  }
+});
+
+test("card store: a write after its conversation was forgotten is not written; the newest 1,000 forgotten are remembered", async () => {
+  const cards = new Map<string, never>();
+  const index = new Map<string, never>();
+  const keyed = (map: Map<string, never>) => () => ({
+    register: async (key: string, value: never) => void map.set(key, value),
+    lookup: async (key: string) => map.get(key),
+    delete: async (key: string) => map.delete(key),
+  });
+  const store = cardStore(keyed(cards), keyed(index));
+  await store.put("conv-1", "s:e1", smallCard());
+  await store.forget("conv-1");
+  await assert.rejects(store.put("conv-1", "s:e2", smallCard()), { name: "CardForgotten" });
+  assert.deepEqual([cards.size, index.size], [0, 0]);
+  assert.equal(FORGOTTEN_MAX, 1_000);
+  for (let k = 0; k < FORGOTTEN_MAX; k++) await store.forget(`other-${k}`);
+  await store.put("conv-1", "s:e3", smallCard());
+  assert.deepEqual([...cards.keys()], ["s:e3"]);
+
+  // The plugin's own store: a card of a turn that outlives its conversation's delete.
+  const { forgetCards, storeCard } = await import("../src/presentations.ts");
+  const gone = conversation(69);
+  await forgetCards(gone.convId);
+  await assert.rejects(storeCard(gone.convId, gone.key, smallCard()), { name: "CardForgotten" });
+  assert.equal(rows("presentation-index").has(gone.convId), false);
+  assert.equal(rows("presentations").has(gone.key), false);
+});
+
+test("card store: a deadline counts from the call: writes and a delete queued behind a stalled one fail within it, without running", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const calls: string[] = [];
+  const keyed = (name: string) => () => ({
+    register: async () => {
+      calls.push(`${name}.register`);
+      await new Promise(() => {});
+    },
+    lookup: async () => void calls.push(`${name}.lookup`),
+    delete: async () => (calls.push(`${name}.delete`), true),
+  });
+  const store = cardStore(keyed("cards") as never, keyed("index") as never);
+  const settled: string[] = [];
+  const ops = [store.put("conv-1", "s:e1", smallCard()), store.put("conv-1", "s:e2", smallCard()), store.forget("conv-1")];
+  ops.forEach((op, k) => op.then(() => settled.push(`${k} ok`), (error: Error) => settled.push(`${k} ${error.name}`)));
+  await stored();
+  assert.deepEqual(calls, ["index.lookup", "index.register"]);
+  t.mock.timers.tick(CARD_WAIT_MS);
+  await stored();
+  await stored();
+  assert.deepEqual(settled.sort(), ["0 CardStoreTimeout", "1 CardStoreTimeout", "2 CardStoreTimeout"]);
+  assert.deepEqual(calls, ["index.lookup", "index.register"], "the queued ops never ran");
+});
+
+test("through the channel's outbound adapter, a dropped card logs one line and the payload keeps its own text, not core's flattening", async () => {
+  const outbound = await channel();
+  const bad = { title: "Secret title" };
+  const kept = outbound.renderPresentation({ payload: { text, presentation: bad }, presentation: bad }) as Record<string, unknown>;
+  const { presentation: _, ...sent } = kept; // core strips `presentation` from what this returns
+  assert.deepEqual(sent, { text });
+  assert.deepEqual(warnings, [DROPPED]);
+  warnings.length = 0;
+  // `presentationTextMode: "fallback"`: core blanked the text and sends the authored text for null.
+  assert.equal(outbound.renderPresentation({ payload: { presentationTextMode: "fallback", presentation: bad }, presentation: bad }), null);
+  assert.deepEqual(warnings, [DROPPED]);
+
+  const threadId = uuid(6900);
+  const rendered = outbound.renderPresentation({ payload: { text, presentation: card() }, presentation: card() });
+  const { messageId } = await (outbound.sendPayload({ cfg: {}, threadId, payload: rendered }) as Promise<{ messageId: string }>);
+  const [reply] = host.sent.splice(0).map((event: Event) => event.data as Reply);
+  assert.deepEqual([reply?.messageId, reply?.text, reply?.presentation?.title], [messageId, text, "Trip costs"]);
+});
+
+test("sendPayload without a card quotes on every chunk, as sendText does for each chunk core sends with an explicit replyTo", async () => {
+  const outbound = await channel();
+  const { chunkMarkdownText } = await import("./genui-host.js");
+  const threadId = uuid(7000);
+  const quote = uuid(7001);
+  const cfg = { limit: 8 };
+  for (const chunk of chunkMarkdownText(text, 8)) await outbound.sendText({ cfg, threadId, text: chunk, replyToId: quote });
+  const viaText = host.sent.splice(0) as Event[];
+  await outbound.sendPayload({ cfg, threadId, payload: { text, channelData: { other: true } }, replyToId: quote });
+  const viaPayload = host.sent.splice(0) as Event[];
+  assert.equal(viaPayload.length, 3);
+  assert.equal(shape(viaPayload), shape(viaText));
+  assert.ok(viaPayload.every((event) => (event.data as Reply).replyTo?.messageId === quote));
 });

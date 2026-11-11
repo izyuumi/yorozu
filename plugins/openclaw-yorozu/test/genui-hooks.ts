@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { registerHooks } from "node:module";
 
 const stub = new URL("./genui-host.js", import.meta.url).href;
-const gateway = /\/src\/(runtime|relay|push|retry|activity|attachments|reactions|reads)\.(js|ts)$/;
+const gateway = /\/src\/(runtime|relay|push|retry|activity|attachments|reactions|reads|keys|cron|updates)\.(js|ts)$/;
 
 registerHooks({
   resolve(specifier, context, next) {

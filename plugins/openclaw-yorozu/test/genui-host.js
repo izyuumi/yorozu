@@ -8,8 +8,10 @@ export const host = {
   sent: [],
   /** Overrides a keyed store's `maxEntries`, to reach the cap with a few rows. */
   cap: undefined,
-  /** Plays OpenClaw for one turn: gets the plugin's `deliver`. */
+  /** Plays OpenClaw for one turn: gets the plugin's `deliver` and the run's `start`. */
   run: undefined,
+  /** The agent run starts only when `run` calls `start`, as for a message waiting behind a running turn. */
+  queued: false,
   /** Overrides staging a reply's files: gets the media URLs. */
   stage: undefined,
   /** Makes a keyed store's `register` fail ("reject") or never finish ("hang"). */
@@ -66,11 +68,38 @@ export const buildChannelInboundEventContext = (context) => context;
 export const toInboundMediaFactsWithMetadata = async () => [];
 export const getAgentScopedMediaLocalRoots = () => [];
 export const createTypingCallbacks = () => ({});
+// The agent run starts (`onAgentRunStart`) before `host.run`, or, with `host.queued`, when `host.run` calls `start`.
 export const runChannelInboundEvent = async ({ adapter }) => {
-  await host.run?.(adapter.resolveTurn().delivery.deliver);
+  const turn = adapter.resolveTurn();
+  const start = () => turn.replyOptions?.onAgentRunStart?.("run");
+  if (!host.queued) start();
+  await host.run?.(turn.delivery.deliver, start);
 };
 
-// ./runtime.js, ./relay.js, ./push.js, ./retry.js, ./activity.js, ./attachments.js, ./reactions.js, ./reads.js
+// What channel.ts takes from openclaw/plugin-sdk/*: the plugin object as declared, and the presentation SDK as in
+// presentations.test.ts.
+export const DEFAULT_ACCOUNT_ID = "default";
+export const createChatChannelPlugin = (plugin) => plugin;
+export const buildThreadAwareOutboundSessionRoute = ({ route }) => route;
+export const normalizeMessagePresentation = (raw) => raw;
+export const renderMessagePresentationTableFallbackText = (b) => `${b.caption}`;
+export const renderMessagePresentationChartFallbackText = (b) => `${b.title}`;
+export const channelReadyPatch = () => ({});
+export const channelStoppedPatch = () => ({});
+
+// ./runtime.js, ./relay.js, ./push.js, ./retry.js, ./activity.js, ./attachments.js, ./reactions.js, ./reads.js,
+// ./keys.js, ./cron.js, ./updates.js
+export const loadHostKeys = async () => ({ room: "room" });
+export const listCronJobs = async () => [];
+export const announceGatewayState = async () => {};
+export const runRelayHost = async () => {};
+export const runParked = () => {};
+export const loadAttachmentIndex = async () => {};
+export const mediaMaxBytes = () => 1;
+export const loadMessageTimes = async () => {};
+export const loadReactions = async () => {};
+export const reactionActions = {};
+export const userReaction = () => {};
 export const yorozuRuntime = { getRuntime: () => ({ state: { openKeyedStore }, channel: { reply: {} } }) };
 export const broadcast = (events) => host.sent.push(...events);
 export const activityTurn = () => {};

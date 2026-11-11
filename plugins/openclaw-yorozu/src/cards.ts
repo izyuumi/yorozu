@@ -33,13 +33,21 @@ export function cardFor(raw: unknown, text: string | null | undefined, sdk: Pres
 }
 
 const CHANNEL_DATA = "yorozu";
-type Carrier = { text?: string; channelData?: Record<string, unknown> };
+type Carrier = { text?: string; channelData?: Record<string, unknown>; presentationTextMode?: string };
+export const DROPPED = "yorozu: dropped a card that cannot be shown; the reply goes out without it";
 
 /** `outbound.renderPresentation`: OpenClaw strips `presentation` from the payload this returns, so the sanitized card
- * rides in `channelData.yorozu`. Null when there is nothing to show; OpenClaw then sends its own text fallback. */
-export function renderedPayload<P extends Carrier>(payload: P, raw: unknown, sdk: PresentationSdk): P | null {
+ * rides in `channelData.yorozu`. For null OpenClaw sends its own flattening of the unsanitized card
+ * (`renderPresentationForDelivery`, `src/channels/plugins/outbound/presentation-delivery.ts:69-83`), so a dropped
+ * card returns the payload with its own text and no card instead. Except with `presentationTextMode: "fallback"`:
+ * core has blanked `text` here and sends the authored text as it is for null. */
+export function renderedPayload<P extends Carrier>(payload: P, raw: unknown, sdk: PresentationSdk, log?: { warn(line: string): void }): P | null {
   const card = cardFor(raw, payload.text, sdk);
-  if (!card.presentation) return null;
+  if (!card.presentation) {
+    if (!card.dropped) return null;
+    log?.warn(DROPPED);
+    return payload.presentationTextMode === "fallback" ? null : payload;
+  }
   return { ...payload, text: card.text, channelData: { ...payload.channelData, [CHANNEL_DATA]: { presentation: card.presentation } } };
 }
 
@@ -63,8 +71,16 @@ export const turnCards = (sessionId: string, userMessageId: string): string => `
 /** The key of a card whose reply matched no transcript event (a card-only payload, a `message` tool send). */
 export const turnCardKey = (sessionId: string, userMessageId: string, replyId: string): string =>
   turnCards(sessionId, userMessageId) + replyId;
-/** A stored card. `reply`, on a turn-keyed card only: the live reply that carried it, which history shows again. */
-export type StoredCard = { presentation: Presentation; reply?: { messageId: string; ts: number; text: string } };
+/** A stored card. `reply`, on a turn-keyed card only: every chunk of the live reply that carried it, in order, which
+ * history shows again under the same ids (the card on the last). */
+export type StoredCard = { presentation: Presentation; reply?: { messageId: string; ts: number; text: string }[] };
+
+/** A turn-keyed card's record from the reply events that carried it. */
+export const replyChunks = (events: Event[]): NonNullable<StoredCard["reply"]> =>
+  events.flatMap((event) => (event.kind === "reply" ? [{ messageId: event.data.messageId, ts: event.data.ts, text: event.data.text }] : []));
+
+/** Conversations forgotten in this process that `put` turns away; the newest this many. */
+export const FORGOTTEN_MAX = 1_000;
 
 /** Cards kept per conversation, so its index row stays small; the oldest goes first. */
 export const CONV_CARDS_MAX = 500;
@@ -95,14 +111,16 @@ export type Keyed<T> = {
 
 /** Cards by key, plus each conversation's list of keys. A card is read only through its conversation's list, so
  * deleting the conversation takes every card that can still be shown.
- * - Every operation fails with `CardStoreTimeout` after `waitMs`. Writes run one at a time, each waiting at most
- *   `waitMs` for the one before it.
+ * - Every operation fails with `CardStoreTimeout` `waitMs` after it was called, time spent waiting its turn
+ *   included. Writes run one at a time; one whose time ran out while it waited fails without running.
  * - An operation that timed out is abandoned: when the store answers it later, it makes no further write. So a
  *   stalled put cannot write its stale copy of the list over a later put's, and cannot re-create a deleted list.
  *   A write already handed to the store when the time ran out cannot be taken back.
+ * - A conversation forgotten in this process (the newest `FORGOTTEN_MAX`) stores no more cards (`CardForgotten`):
+ *   a card of a turn still running when its conversation was deleted does not bring the conversation's cards back.
  * - A row over the store's limits is not written (`CardTooLarge`). */
 export function cardStore(cards: () => Keyed<StoredCard>, index: () => Keyed<string[]>, waitMs: number = CARD_WAIT_MS) {
-  const bounded = <T>(work: (live: () => void) => Promise<T>): Promise<T> => {
+  const bounded = <T>(work: (live: () => void) => Promise<T>, after: Promise<void> = Promise.resolve()): Promise<T> => {
     let abandoned = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, fail) => {
@@ -114,19 +132,24 @@ export function cardStore(cards: () => Keyed<StoredCard>, index: () => Keyed<str
     const live = () => {
       if (abandoned) throw named("CardStoreTimeout", "abandoned");
     };
-    const job = work(live);
+    const job = after.then(() => {
+      live();
+      return work(live);
+    });
     job.catch(() => {}); // settled after the timeout: nobody is waiting any more
     return Promise.race([job, timeout]).finally(() => clearTimeout(timer));
   };
   let queue: Promise<void> = Promise.resolve();
   const serial = <T>(work: (live: () => void) => Promise<T>): Promise<T> => {
-    const run = queue.then(() => bounded(work));
+    const run = bounded(work, queue);
     queue = run.then(() => {}, () => {});
     return run;
   };
+  const forgotten = new Set<string>();
   return {
     put: (convId: string, key: string, card: StoredCard): Promise<void> =>
       serial(async (live) => {
+        if (forgotten.has(convId)) throw named("CardForgotten", "the conversation was deleted");
         if (bytes(key) > STORE_KEY_MAX_BYTES || bytes(card) > STORE_VALUE_MAX_BYTES) throw named("CardTooLarge", "a card row is over the store's limit");
         const keys = (await index().lookup(convId)) ?? [];
         if (!keys.includes(key)) {
@@ -154,6 +177,10 @@ export function cardStore(cards: () => Keyed<StoredCard>, index: () => Keyed<str
         }
         live();
         await index().delete(convId);
+        live();
+        forgotten.delete(convId);
+        forgotten.add(convId);
+        for (const old of forgotten) if (forgotten.size > FORGOTTEN_MAX) forgotten.delete(old);
       }),
   };
 }

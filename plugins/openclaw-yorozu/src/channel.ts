@@ -230,7 +230,8 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
     // Explicit-target sends only (cron, a message tool send naming a target); a turn's own reply goes through
     // `deliver` in conversation.ts. OpenClaw calls `sendPayload` only for a payload with presentation, interactive,
     // channelData, location, audioAsVoice or videoAsNote; plain text and media still use sendText and sendMedia.
-    renderPresentation: ({ payload, presentation }) => renderedPayload(payload, presentation, presentationSdk),
+    // `outboundLog` is unset until `startAccount` runs; a dropped card then goes without its log line.
+    renderPresentation: ({ payload, presentation }) => renderedPayload(payload, presentation, presentationSdk, outboundLog),
     sendPayload: async ({ cfg, accountId, threadId, payload, mediaAccess, mediaLocalRoots, mediaReadFile, replyToId }) => ({
       channel: CHANNEL_ID,
       messageId: await sendConversationPayload({

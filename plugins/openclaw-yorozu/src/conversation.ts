@@ -11,7 +11,7 @@ import { createTypingCallbacks } from "openclaw/plugin-sdk/channel-outbound";
 import { chunkMarkdownText, chunkMarkdownTextWithMode, resolveChunkMode, resolveTextChunkLimit } from "openclaw/plugin-sdk/reply-runtime";
 import { resolveAgentRoute, resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
 import { stageOutbound, uploadedFiles, type MediaAccess } from "./attachments.js";
-import { cardFor, cardKey, errorTag, turnCardKey, withCard } from "./cards.js";
+import { cardFor, cardKey, DROPPED, errorTag, replyChunks, turnCardKey, withCard } from "./cards.js";
 import { isId, type Attachment, type Event, type Message, type ReplyTo, type ToolStatus } from "./envelope.js";
 import { itemText, liveReplyIds, liveSessionId } from "./history.js";
 import type { Presentation, PresentationSdk } from "./presentation.js";
@@ -73,7 +73,7 @@ export function replyEvents(
 /** A payload's text and card as sent (`cardFor`), with one content-free line for a card that was dropped. */
 function payloadCard(payload: { text?: string; presentation?: unknown }, sdk: PresentationSdk, log?: ChannelGatewayContext["log"]) {
   const card = cardFor(payload.presentation, payload.text, sdk);
-  if (card.dropped) log?.warn("yorozu: dropped a card that cannot be shown; the reply goes out without it");
+  if (card.dropped) log?.warn(DROPPED);
   return card;
 }
 
@@ -188,7 +188,6 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
   // As the app reads a turn's end: a reply is done, a reported failure failed, a retry still running, nothing gone.
   let ended: "failed" | "retrying" | undefined;
   const turn = { messageId, agentId: route.agentId, sessionKey };
-  runningTurns.set(convId, turn);
   try {
     await runChannelInboundEvent({
       channel: CHANNEL_ID,
@@ -213,10 +212,13 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
               const card = payloadCard(payload, ctx.presentationSdk, log);
               if (!card.text.trim() && !urls.length && !card.presentation) return;
               runStarted();
-              // A transcript message's ids only for a payload with text or a file of its own: a card-only payload
-              // (a `message` tool send, whose transcript message holds a tool call and no text) must not take the
-              // ids of some other reply's text.
-              const ids = payload.text?.trim() || urls.length ? liveReplyIds(route.agentId, sessionKey, messageId, usedReplies) : undefined;
+              // A transcript message's ids only for a payload with text or a file of its own. With a card, only a
+              // message saying the payload's text: a card-only payload (a `message` tool send, whose transcript
+              // message holds a tool call and no text) or one whose text no message says must not take the ids of
+              // some other reply's text, and leaves that message to it.
+              const ids = !card.presentation
+                ? payload.text?.trim() || urls.length ? liveReplyIds(route.agentId, sessionKey, messageId, usedReplies) : undefined
+                : payload.text?.trim() ? liveReplyIds(route.agentId, sessionKey, messageId, usedReplies, payload.text) : undefined;
               const { attachments, failures } = await stageOutbound(urls, ctx.mediaMaxBytes, access, ids?.id(0));
               const body = [card.text, ...failures].filter((line) => line.trim()).join("\n\n");
               const replyTo = replyTarget(cfg, ctx.agent, convId, payload.replyToId, message);
@@ -229,13 +231,12 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
               if (card.presentation && carrier?.kind === "reply") {
                 const { presentation } = card;
                 // With a transcript message's ids, history puts the card on that message. Without, the card is kept
-                // by its turn with the reply that carried it, which history shows again under the same id.
+                // by its turn with the reply that carried it, which history shows again under the same ids.
                 const sessionId = ids?.sessionId ?? liveSessionId(route.agentId, sessionKey);
-                const { messageId: replyId, ts, text: shown } = carrier.data;
-                const key = ids ? cardKey(ids.sessionId, ids.eventId) : sessionId && turnCardKey(sessionId, messageId, replyId);
+                const key = ids ? cardKey(ids.sessionId, ids.eventId) : sessionId && turnCardKey(sessionId, messageId, carrier.data.messageId);
                 if (!key) log?.warn(NOT_KEPT);
                 else {
-                  void storeCard(convId, key, ids ? { presentation } : { presentation, reply: { messageId: replyId, ts, text: shown } }).catch(
+                  void storeCard(convId, key, ids ? { presentation } : { presentation, reply: replyChunks(replies) }).catch(
                     (error: unknown) => log?.warn(`yorozu: a card was not stored (${errorTag(error)}); history will not show it`),
                   );
                 }
@@ -248,6 +249,9 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
             allowToolLifecycleWhenProgressHidden: true,
             suppressDefaultToolProgressMessages: true,
             onAgentRunStart: () => {
+              // The turn sendPayload stores cards under: from its agent run's start, so a message that waits in
+              // OpenClaw's queue behind a running turn does not take that turn's cards. One run per session at a time.
+              runningTurns.set(convId, turn);
               runStarted();
               return undefined;
             },
@@ -367,9 +371,9 @@ export async function sendConversationPayload(params: {
   const sessionId = turn && liveSessionId(turn.agentId, turn.sessionKey);
   const carrier = replies.at(-1);
   if (turn && sessionId && carrier?.kind === "reply") {
-    const { messageId, ts, text } = carrier.data;
-    void storeCard(convId, turnCardKey(sessionId, turn.messageId, messageId), {
-      presentation: card.presentation, reply: { messageId, ts, text },
+    // Core mirrors the sent text into the transcript; history finds that message by its text and puts the card on it.
+    void storeCard(convId, turnCardKey(sessionId, turn.messageId, carrier.data.messageId), {
+      presentation: card.presentation, reply: replyChunks(replies),
     }).catch((error: unknown) => params.log?.warn(`yorozu: a card was not stored (${errorTag(error)}); history will not show it`));
   } else params.log?.warn(NOT_KEPT);
   const first = replies[0];
