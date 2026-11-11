@@ -431,6 +431,36 @@ public struct Presentation: Codable, Equatable, Sendable {
 
     /// How many blocks fell back to their `alt` or were skipped.
     public var fellBack: Int { blocks.count { if case .unknown = $0 { true } else { false } } }
+
+    public static let maxFallbackBytes = 32768
+
+    /// The text the plugin sends with a card-only reply (its `fallback()`): the title and each block's non-empty `alt`,
+    /// joined by blank lines, cut by Unicode scalar to `maxFallbackBytes` of UTF-8 with the marker last.
+    public var fallbackText: String {
+        let marker = "…(truncated)", limit = Self.maxFallbackBytes - marker.utf8.count
+        var result = String.UnicodeScalarView(), size = 0
+        for part in ([title] + blocks.map(\.alt)).compactMap({ $0 }) where !part.isEmpty {
+            for scalar in ((result.isEmpty ? "" : "\n\n") + part).unicodeScalars {
+                let n = UTF8.width(scalar)
+                if size + n > limit { return String(result) + marker }
+                result.append(scalar)
+                size += n
+            }
+        }
+        return String(result)
+    }
+
+    /// True when `text` is only this card's fallback, so the card alone says it.
+    public func isFallback(for text: String) -> Bool { !text.isEmpty && text == fallbackText }
+
+    public enum Part: Equatable, Sendable { case text, card }
+
+    /// What an agent reply shows, in order: its text bubble, then its card. A card never hides text, except the
+    /// card's own fallback text (a card-only reply); a card that doesn't render leaves the text alone.
+    public static func parts(text: String, card: Presentation?) -> [Part] {
+        guard let card, card.renders else { return text.isEmpty ? [] : [.text] }
+        return card.isFallback(for: text) || text.isEmpty ? [.card] : [.text, .card]
+    }
 }
 
 /// A card over `Presentation.maxBytes`, or one that isn't a card, decodes as nil. The decoder hands over no bytes, so

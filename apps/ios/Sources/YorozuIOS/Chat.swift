@@ -392,14 +392,16 @@ struct ItemRow: View {
     private var agent: some View {
         VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
             quoteHeader
-            if let card = item.presentation, card.renders {
-                PresentationView(card: card).contextMenu { reply; react; copy; selectText }
-            } else if !item.text.isEmpty {
+            let parts = Presentation.parts(text: item.text, card: item.presentation)
+            if parts.contains(.text) {
                 MarkdownBlocks(item.text)
                     .padding(LayoutMetrics.stack)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
                     .contextMenu { reply; react; copy; selectText }
+            }
+            if parts.contains(.card), let card = item.presentation {
+                PresentationView(card: card).contextMenu { reply; react; copy; selectText }
             }
             if let files = item.attachments, !files.isEmpty {
                 AttachmentList(model: model, attachments: files, alignment: .leading)

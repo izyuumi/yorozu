@@ -11,7 +11,7 @@ private enum CardMetrics {
     static let areaOpacity: Double = 0.5
 }
 
-/// A reply's read-only card (capability `presentation`), in place of its text bubble: title and tone, then each
+/// A reply's read-only card (capability `presentation`), after its text bubble (alone for a card-only reply): title and tone, then each
 /// block. A block the reader couldn't check draws as its `alt`.
 struct PresentationView: View {
     let card: Presentation

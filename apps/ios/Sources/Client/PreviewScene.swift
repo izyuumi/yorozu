@@ -71,7 +71,7 @@ enum PreviewScene: String {
         {"convId":"\(cardID)","more":false,"rev":2,"items":[
         {"kind":"user","id":"d0000000-0000-4000-8000-0000000000a1","seq":1,"ts":\(ts),"text":"What did the trip cost?"},
         {"kind":"agent","id":"d0000000-0000-4000-8000-0000000000a2","seq":2,"ts":\(ts + 30_000),
-         "text":"Trip costs\\n\\nThe trip cost 1,140 in total.\\n\\nTraveler A: 420\\nTraveler B: 380\\nTraveler C: 340",
+         "text":"The trip cost 1,140 in total. Traveler A paid the most, mostly for transport.",
          "presentation":{"title":"Trip costs","tone":"info","blocks":[
           {"type":"text","text":"The trip cost **1,140** in total.","alt":"The trip cost 1,140 in total."},
           {"type":"table","caption":"Per traveler","headers":["Traveler","Transport","Lodging","Total"],

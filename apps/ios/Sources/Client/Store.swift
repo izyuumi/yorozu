@@ -100,7 +100,7 @@ struct ChatItem: Codable, Identifiable, Equatable {
     var seq: Int?
     var replyTo: ReplyTo?
     var reactions: Reactions?
-    /// The reply's card, drawn in place of the text bubble while a block of it renders.
+    /// The reply's card, drawn after the text bubble while a block of it renders (alone for a card-only reply).
     var presentation: Presentation?
 
     var summary: String {

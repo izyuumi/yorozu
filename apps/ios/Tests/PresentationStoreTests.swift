@@ -51,6 +51,18 @@ import YorozuWire
         #expect(try JSONDecoder().decode(Conversation.self, from: JSONEncoder().encode(conversation)) == conversation)
     }
 
+    /// What the reply row shows, in order: a card never hides the reply's text, except a card-only reply's fallback.
+    @Test func rowShowsTextThenCard() {
+        let item = history(card)
+        #expect(Presentation.parts(text: item.text, card: item.presentation) == [.text, .card])
+        let cardOnly = ChatItem(id: id, kind: .agent, text: card.fallbackText, ts: 20, presentation: card)
+        #expect(cardOnly.text == "Trip costs\n\nTotals per traveler.\n\nCosts\nTraveler, Paid\nTraveler A, 120\n\nalt")
+        #expect(Presentation.parts(text: cardOnly.text, card: cardOnly.presentation) == [.card])
+        let blank = Presentation(title: "Trip costs", blocks: [.divider, .unknown(alt: nil)])
+        #expect(Presentation.parts(text: "Trip costs", card: blank) == [.text])
+        #expect(Presentation.parts(text: item.text, card: nil) == [.text])
+    }
+
     /// A conversation stored before cards existed.
     @Test func storedItemWithoutTheFieldDecodes() throws {
         let json = #"{"id":"\#(id)","kind":"agent","text":"Here are the costs.","ts":20,"seq":2}"#
