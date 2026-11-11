@@ -30,6 +30,12 @@ fn permissions_are_exact() {
         "core:event:allow-listen",
         "core:event:allow-unlisten",
         "allow-snapshot",
+        "allow-submit-link",
+        "allow-confirm-pairing",
+        "allow-cancel-pairing",
+        "allow-forget-pairing",
+        "allow-pair-again",
+        "allow-retry-connection",
     ];
     assert_eq!(capability["permissions"], json!(want));
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities");

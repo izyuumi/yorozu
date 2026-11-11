@@ -30,6 +30,10 @@ echo "== test"
 # Until then cargo only warns that the excluded package doesn't exist.
 cargo test --workspace --exclude yorozu-windows --features yorozu-core/insecure-plaintext-store
 
+echo "== probe"
+cargo build -p yorozu-probe --features yorozu-core/insecure-plaintext-store
+export YOROZU_PROBE_BIN="$(pwd)/target/debug/yorozu-probe"
+
 echo "== conformance"
 # The client's expectations of the real Node relay (pnpm install --filter @yorozu/relay first).
 node --test conformance/host/*.test.ts

@@ -1,0 +1,12 @@
+[package]
+name = "yorozu-probe"
+description = "Test-only headless driver of yorozu-core for the conformance tests"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+yorozu-core = { path = "../../core", features = ["insecure-plaintext-store"] }
+serde_json = "=1.0.154"
+tokio = { version = "=1.54.1", features = ["rt-multi-thread", "macros", "time", "sync", "io-std", "io-util"] }

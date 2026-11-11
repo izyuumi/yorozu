@@ -1,19 +1,53 @@
-//! Every command the web view may invoke. Each one is also declared in `build.rs` and
-//! granted in `capabilities/default.json`.
-//!
-//! | command    | does                                                          |
-//! |------------|---------------------------------------------------------------|
-//! | `snapshot` | returns the state to render; in smoke mode it also ends the run |
-
-use tauri::{AppHandle, State};
-use yorozu_core::Snapshot;
-
+//! Web-view command table: snapshot reads state; all mutations go to the Rust driver.
 use crate::smoke::Smoke;
+use tauri::{AppHandle, State};
+use yorozu_core::{
+    driver::{Command, Handle},
+    Snapshot,
+};
 
+pub struct Core(pub Option<Handle>);
 #[tauri::command]
-pub fn snapshot(app: AppHandle, smoke: State<'_, Option<Smoke>>) -> Snapshot {
+pub fn snapshot(
+    app: AppHandle,
+    smoke: State<'_, Option<Smoke>>,
+    core: State<'_, Core>,
+) -> Snapshot {
     if let Some(smoke) = smoke.inner() {
         smoke.ready(&app);
     }
-    Snapshot::initial(yorozu_core::VERSION, env!("YOROZU_BUILD_SHA"))
+    core.0
+        .as_ref()
+        .map(Handle::snapshot)
+        .unwrap_or_else(|| Snapshot::initial(yorozu_core::VERSION, env!("YOROZU_BUILD_SHA")))
+}
+fn send(core: State<'_, Core>, cmd: Command) -> Result<(), String> {
+    core.0
+        .as_ref()
+        .ok_or("connection driver unavailable")?
+        .command(cmd)
+}
+#[tauri::command]
+pub fn submit_link(core: State<'_, Core>, link: String) -> Result<(), String> {
+    send(core, Command::SubmitLink(link))
+}
+#[tauri::command]
+pub fn confirm_pairing(core: State<'_, Core>) -> Result<(), String> {
+    send(core, Command::Confirm)
+}
+#[tauri::command]
+pub fn cancel_pairing(core: State<'_, Core>) -> Result<(), String> {
+    send(core, Command::Cancel)
+}
+#[tauri::command]
+pub fn forget_pairing(core: State<'_, Core>) -> Result<(), String> {
+    send(core, Command::Forget)
+}
+#[tauri::command]
+pub fn pair_again(core: State<'_, Core>) -> Result<(), String> {
+    send(core, Command::PairAgain)
+}
+#[tauri::command]
+pub fn retry_connection(core: State<'_, Core>) -> Result<(), String> {
+    send(core, Command::Retry)
 }
