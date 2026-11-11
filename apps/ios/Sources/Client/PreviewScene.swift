@@ -145,6 +145,8 @@ enum PreviewScene: String {
     /// activity starts, and the device locks.
     @MainActor private func lockscreen(_ at: (Double) async -> Void) async {
         WidgetStore.defaults?.set(true, forKey: WidgetStore.previewsKey)
+        // The throwaway simulator's setting: the Live Activity is off until turned on.
+        UserDefaults.standard.set(true, forKey: LiveActivitySetting.key)
         await at(-0.5)
         while YorozuActivities.shared == nil { try? await Task.sleep(for: .milliseconds(100)) }
         guard let activities = YorozuActivities.shared else { return }

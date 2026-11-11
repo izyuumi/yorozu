@@ -67,7 +67,7 @@ let project = Project(
                 // The plugin's direct listener on the LAN (#532); browsed only once the owner allowed Local Network.
                 "NSBonjourServices": ["_yorozu._tcp"],
                 "NSLocalNetworkUsageDescription": "Yorozu connects directly to your host on the same network, for faster messages.",
-                // One device-local Live Activity: started in the app, updated by the app and the notification service, never by push.
+                // One Live Activity, opt-in (Settings › Live Activities): started in the app, updated by the app, the notification service and, with a host that supports it, counts-only relay pushes.
                 "NSSupportsLiveActivities": true,
                 // The voice model is an Apple-hosted asset pack on iPhone and iPad (YorozuAssets).
                 "BAAppGroupID": .string(appGroup),

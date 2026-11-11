@@ -70,14 +70,14 @@
     "widgetPreviews": {
       "title": "Show Message Previews in Widgets",
       "platforms": ["ios"],
-      "location": "Settings › General › Widgets & Live Activities",
+      "location": "Settings › General › Widgets",
       "description": "Off by default. Widgets and Lock Screen accessories show conversation titles, unread counts and reply times, hidden on the Lock Screen until the device is unlocked. On: the medium and large widgets also show the first line of the latest reply. The snapshot stays in the app's App Group container on the device and is deleted when you unpair."
     },
-    "turnLiveActivity": {
-      "title": "Show Live Activity",
+    "liveActivities": {
+      "title": "Live Activities",
       "platforms": ["ios"],
-      "location": "Settings › General › Widgets & Live Activities",
-      "description": "On by default. One Live Activity on the Lock Screen and in the Dynamic Island follows the agent's turns, approvals waiting for you, and voice recording and transcription: up to three rows, each opening its conversation and showing one line: a running timer, Review for something that needs you, the finish time, or Failed. It shows conversation titles only while message previews are on, and never message text or tool details. It starts when you leave Yorozu with something running, ends when you return (unless a recording or transcription is running), keeps finished rows for about two minutes, and runs on the device only (no push)."
+      "location": "Settings › General › Live Activities",
+      "description": "Off by default. On: one Live Activity on the Lock Screen and in the Dynamic Island follows the agent's turns, approvals waiting for you, and voice recording and transcription: up to three rows, each opening its conversation and showing one line: a running timer, Review for something that needs you, the finish time, or Failed. It shows conversation titles only while message previews are on, and never message text or tool details. It starts when you leave Yorozu with something running, ends when you return (unless a recording or transcription is running), and keeps finished rows for about two minutes. While Yorozu is suspended, the host keeps it current with counts-only pushes when its relay supports them. Turning it off ends a running activity at once."
     }
   }
 }
