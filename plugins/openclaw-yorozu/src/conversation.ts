@@ -236,7 +236,9 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
                 const key = ids ? cardKey(ids.sessionId, ids.eventId) : sessionId && turnCardKey(sessionId, messageId, carrier.data.messageId);
                 if (!key) log?.warn(NOT_KEPT);
                 else {
-                  void storeCard(convId, key, ids ? { presentation } : { presentation, reply: replyChunks(replies) }).catch(
+                  void storeCard(convId, key, ids ? { presentation } : {
+                    presentation, reply: replyChunks(replies), ...(failures.length && { mirrorText: card.text }),
+                  }).catch(
                     (error: unknown) => log?.warn(`yorozu: a card was not stored (${errorTag(error)}); history will not show it`),
                   );
                 }
@@ -371,9 +373,9 @@ export async function sendConversationPayload(params: {
   const sessionId = turn && liveSessionId(turn.agentId, turn.sessionKey);
   const carrier = replies.at(-1);
   if (turn && sessionId && carrier?.kind === "reply") {
-    // Core mirrors the sent text into the transcript; history finds that message by its text and puts the card on it.
+    // Core mirrors text before attachment-failure lines; history replaces its chunks with the live reply's.
     void storeCard(convId, turnCardKey(sessionId, turn.messageId, carrier.data.messageId), {
-      presentation: card.presentation, reply: replyChunks(replies),
+      presentation: card.presentation, reply: replyChunks(replies), ...(failures.length && { mirrorText: card.text }),
     }).catch((error: unknown) => params.log?.warn(`yorozu: a card was not stored (${errorTag(error)}); history will not show it`));
   } else params.log?.warn(NOT_KEPT);
   const first = replies[0];

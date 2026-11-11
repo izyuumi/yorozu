@@ -267,7 +267,7 @@ test("a card of a conversation without a session is sent, not stored, and logged
   assert.equal(rows("presentation-index").has(convId), false);
 });
 
-test("the store keeps 10,000 cards and drops the oldest; an evicted card leaves the history item as text", async () => {
+test("the store keeps 10,000 cards and drops the oldest; eviction keeps transcript text but loses a card-only turn-keyed bubble", async () => {
   assert.deepEqual(CARDS, { namespace: "presentations", maxEntries: 10_000, overflowPolicy: "evict-oldest" });
   assert.deepEqual(CARD_INDEX, { namespace: "presentation-index", maxEntries: 10_000, overflowPolicy: "evict-oldest" });
   const convs = [conversation(10), conversation(11), conversation(12)];
@@ -282,6 +282,19 @@ test("the store keeps 10,000 cards and drops the oldest; an evicted card leaves 
   const shown = await Promise.all(convs.map(async ({ convId }) => (await page(convId)).map((item) => "presentation" in item)));
   assert.deepEqual(shown, [[false, false], [false, true], [false, true]]);
   assert.deepEqual((await page(convs[0]!.convId))[1], { kind: "agent", id: convs[0]!.eventId, seq: 1, ts: 1_700_000_001_000, text });
+  const only = conversation(13);
+  host.transcripts.get(only.sessionId)![1].message.content = [{ type: "toolCall", id: "send-card", name: "message" }];
+  const [live] = await turn(only.convId, [{ presentation: card() }]);
+  assert.equal((await page(only.convId)).at(-1)!.id, live!.messageId);
+  host.cap = rows("presentations").size;
+  try {
+    // Refresh the other rows, making the turn-keyed reply the oldest, then evict it.
+    for (const { convId } of convs) await turn(convId, [{ text, presentation: card() }]);
+  } finally {
+    host.cap = undefined;
+  }
+  assert.equal(rows("presentations").has(turnCardKey(only.sessionId, userId, live!.messageId)), false);
+  assert.deepEqual((await page(only.convId)).map((item) => item.kind), ["user", "tools"]);
 });
 
 test("card store: put and get by key, listed per conversation, forgotten together", async () => {
@@ -748,14 +761,18 @@ test("a separate card-only payload never takes text reply A's transcript id or c
   }
 });
 
-test("hung card lookups bound history and delete; history warns once, delete fails internal and retains the session", async (t) => {
+test("failed or hung card lookups lose card-only turn-keyed bubbles; history warns once, delete retains the session", async (t) => {
   const { answerRequest } = await import("../src/history.ts");
   const { convId, key } = conversation(53);
   await turn(convId, [{ text, presentation: card() }]);
+  const only = conversation(531);
+  host.transcripts.get(only.sessionId)![1].message.content = [{ type: "toolCall", id: "send-card", name: "message" }];
+  const [live] = await turn(only.convId, [{ presentation: card() }]);
+  assert.equal((await page(only.convId)).at(-1)!.id, live!.messageId);
   t.mock.timers.enable({ apis: ["setTimeout"] });
   warnings.length = 0;
   try {
-    for (const mode of ["hang", "cards-hang"]) {
+    for (const mode of ["reject", "hang", "cards-hang"]) {
       host.lookup = mode;
       warnings.length = 0;
       const history = answerRequest({} as never, "main", { kind: "history", data: { convId } }, log);
@@ -767,7 +784,14 @@ test("hung card lookups bound history and delete; history warns once, delete fai
         { kind: "user", id: userId, seq: 0, ts: 1_700_000_000_000, text: "Show me the costs" },
         { kind: "agent", id: uuid(5301), seq: 1, ts: 1_700_000_001_000, text },
       ]);
-      assert.deepEqual(warnings, [NO_CARDS]);
+      const warning = mode === "reject" ? NO_CARDS.replace("CardStoreTimeout", "Error") : NO_CARDS;
+      assert.deepEqual(warnings, [warning]);
+      warnings.length = 0;
+      const missing = historyPage({} as never, "main", { convId: only.convId }, log);
+      await stored();
+      t.mock.timers.tick(CARD_WAIT_MS);
+      assert.deepEqual((await missing).items.map((item) => item.kind), ["user", "tools"]);
+      assert.deepEqual(warnings, [warning]);
     }
     // A later lookup failure also removes cards already read for this page.
     const sessionId = host.sessions.get(sessionKey(convId))!.sessionId;
@@ -934,7 +958,7 @@ test("a card with text goes on the transcript message that says its text, never 
   ]);
 });
 
-test("a sendPayload card goes on the message core mirrored into the transcript, with no second copy; unmirrored it comes back on its own", async () => {
+test("a sendPayload card replaces every mirror chunk with its live chunks; unmirrored it comes back on its own", async () => {
   for (const mirrored of [true, false]) {
     const { convId, sessionId } = conversation(mirrored ? 67 : 68);
     const transcript = host.transcripts.get(sessionId)!;
@@ -952,11 +976,56 @@ test("a sendPayload card goes on the message core mirrored into the transcript, 
     const items = agents(await page(convId, { limit: 8 }));
     if (mirrored) {
       assert.deepEqual(items.map((item) => ["text" in item && item.text, "presentation" in item]), [["Here are", false], [" the cos", false], ["ts.", true]]);
-      assert.equal(items[0]!.id, mirror);
-      assert.deepEqual(items[2]!.presentation, live.at(-1)!.presentation);
+      assert.deepEqual(items, asItems(live, 2));
     } else {
       assert.deepEqual(items, [{ kind: "agent", id: mirror, seq: 2, ts: 1_700_000_002_000, text: "Done." }, ...asItems(live, 2)]);
     }
+  }
+});
+
+test("a mirrored turn-keyed card retains its live reaction and replyTo at the mirror's position", async () => {
+  const { convId, sessionId } = conversation(671);
+  const transcript = host.transcripts.get(sessionId)!;
+  transcript[1].message.content = [{ type: "toolCall", id: "send", name: "message" }];
+  const live = await turn(convId, [{ text, presentation: card(), replyToId: userId }], { limit: 8 });
+  const cardId = live.at(-1)!.messageId;
+  const { noteReply } = await import("../src/replies.ts");
+  const replyTo = { messageId: userId, text: "Show me the costs" };
+  noteReply(cardId, replyTo);
+  host.reactions.set(cardId, { user: "👍" });
+  transcript.push(
+    { type: "message", id: uuid(67102), message: { role: "assistant", content: text, timestamp: 1_700_000_002_000 } },
+    { type: "message", id: uuid(67103), message: { role: "assistant", content: "Done.", timestamp: 1_700_000_003_000 } },
+  );
+  try {
+    const expected = asItems(live, 2);
+    assert.deepEqual(agents(await page(convId, { limit: 8 })), [
+      ...expected.slice(0, -1), { ...expected.at(-1), replyTo, reactions: { user: "👍" } },
+      { kind: "agent", id: uuid(67103), seq: 3, ts: 1_700_000_003_000, text: "Done." },
+    ]);
+  } finally {
+    host.reactions.delete(cardId);
+  }
+});
+
+test("attachment failure lines do not duplicate a turn-keyed card's mirrored text", async () => {
+  const { convId, sessionId } = conversation(672);
+  const transcript = host.transcripts.get(sessionId)!;
+  transcript[1].message.content = [{ type: "toolCall", id: "send", name: "message" }];
+  const failure = "(Couldn't attach costs.pdf: too large.)";
+  host.stage = () => ({ attachments: [], failures: [failure] });
+  let live: Reply[] = [];
+  try {
+    host.run = async () => {
+      live = (await payloadSend({ threadId: convId, text, mediaUrls: ["costs.pdf"], presentation: card(), cfg: { limit: 8 } })).events.map((event) => event.data as Reply);
+      transcript.push({ type: "message", id: uuid(67202), message: { role: "assistant", content: text, timestamp: 1_700_000_002_000 } });
+    };
+    await handleMessage({ cfg: {}, agent: "main", presentationSdk: sdk, log } as never, { convId, messageId: userId, text: "Show me the costs" });
+    await stored();
+    assert.equal(live.map((reply) => reply.text).join(""), `${text}\n\n${failure}`);
+    assert.deepEqual(agents(await page(convId, { limit: 8 })), asItems(live, 2));
+  } finally {
+    host.stage = undefined;
   }
 });
 

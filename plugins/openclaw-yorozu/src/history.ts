@@ -23,7 +23,6 @@ import {
   type HistoryTool,
   type ToolStatus,
 } from "./envelope.js";
-import type { Presentation } from "./presentation.js";
 import { cardKeys, storedCard } from "./presentations.js";
 import { reactionsOf } from "./reactions.js";
 import { replyOf } from "./replies.js";
@@ -37,8 +36,8 @@ const LIST_MAX = 2000;
 const CACHE_MAX = 8;
 // `cards`: the card key of each agent message's last chunk, by item id. `turns`: the key prefix of a turn's other
 // cards (`turnCards`), by the `seq` of the turn's last items. `turnOf`: that prefix by the `seq` of each of the
-// turn's items. `replies`: by prefix, the turn's agent messages: last chunk id, full text and card key.
-type TurnReply = { id: string; text: string; key: string };
+// turn's items. `replies`: by prefix, the turn's agent messages and their chunk count, full text and card key.
+type TurnReply = { eventId: string; seq: number; chunks: number; text: string; key: string };
 type Built = {
   items: HistoryItem[];
   cards: Map<string, string>;
@@ -111,7 +110,7 @@ export async function historyPage(
   const picked: HistoryItem[][] = [];
   let bytes = 0;
   let more = false;
-  // A card store that fails or does not answer in time costs the page's cards, never the page.
+  // A card store that fails or does not answer in time still allows a page of transcript items.
   let storeDown = false;
   const read = async <T>(get: () => Promise<T>): Promise<T | undefined> => {
     if (storeDown) return undefined;
@@ -127,38 +126,39 @@ export async function historyPage(
   const listed = built.cards.size || built.turns.size ? ((await read(() => cardKeys(convId))) ?? []) : [];
   const has = new Set(listed);
   // A turn's turn-keyed cards, read once per page. A card whose reply's text is that of one of the turn's agent
-  // messages without a card of its own (core mirrors an outbound send into the transcript) goes on that message's
-  // last chunk. Any other comes back as the reply that carried it, every chunk under its live id, after the turn's
-  // other items. Never on another reply's text.
-  const turnCardsRead = new Map<string, Promise<{ attach: Map<string, Presentation>; extra: HistoryItem[] }>>();
+  // messages without a card of its own (core mirrors an outbound send into the transcript) replaces every chunk
+  // of that message at its seq. Any other comes back after the turn's other items. Both use the live chunks and ids.
+  // A card-only reply has no transcript text (core mirrors nothing for empty text): store failure, timeout or
+  // eviction loses its whole bubble from history, not just its card.
+  const turnCardsRead = new Map<string, Promise<{ replace: Map<string, HistoryItem[]>; extra: HistoryItem[] }>>();
   const endOf = new Map([...built.turns].map(([seq, turn]) => [turn, seq]));
   const turnCardsOf = (turn: string) => {
     let found = turnCardsRead.get(turn);
     if (!found) {
       const seq = endOf.get(turn)!;
       found = (async () => {
-        const attach = new Map<string, Presentation>();
+        const replace = new Map<string, HistoryItem[]>();
         const extra: HistoryItem[] = [];
         for (const key of listed.filter((key) => key.startsWith(turn))) {
           const card = await read(() => storedCard(key));
           const chunks = chunksOf(card?.reply);
           if (!card?.presentation || !chunks) continue;
           const full = chunks.map((chunk) => chunk.text).join("");
-          const mirrored = built.replies.get(turn)?.find((reply) => !attach.has(reply.id) && !has.has(reply.key) && sameText(reply.text, full));
-          if (mirrored) {
-            attach.set(mirrored.id, card.presentation);
-            continue;
-          }
-          chunks.forEach(({ messageId, ts, text }, k) => {
+          const mirrored = built.replies.get(turn)?.find((reply) => !replace.has(chunkId(built.sessionId, reply.eventId, 0)) && !has.has(reply.key)
+            && sameText(reply.text, typeof card.mirrorText === "string" ? card.mirrorText : full));
+          const restored: HistoryItem[] = chunks.map(({ messageId, ts, text }, k) => {
             const replyTo = replyOf(messageId);
             const reactions = reactionsOf(messageId);
-            extra.push({
-              kind: "agent", id: messageId, seq, ts, text: cut(text), ...(replyTo && { replyTo }), ...(reactions && { reactions }),
+            return {
+              kind: "agent", id: messageId, seq: mirrored?.seq ?? seq, ts, text: cut(text), ...(replyTo && { replyTo }), ...(reactions && { reactions }),
               ...(k === chunks.length - 1 && { presentation: card.presentation }),
-            });
+            };
           });
+          if (mirrored) {
+            for (let k = 0; k < mirrored.chunks; k++) replace.set(chunkId(built.sessionId, mirrored.eventId, k), k === 0 ? restored : []);
+          } else extra.push(...restored);
         }
-        return { attach, extra };
+        return { replace, extra };
       })();
       turnCardsRead.set(turn, found);
     }
@@ -172,11 +172,13 @@ export async function historyPage(
       const turn = built.turnOf.get(seq);
       const last = built.turns.get(seq);
       const fromTurn = turn && endOf.has(turn) && listed.some((key) => key.startsWith(turn)) ? await turnCardsOf(turn) : undefined;
-      group = await Promise.all(bare.map(async (item) => {
+      group = (await Promise.all(bare.map(async (item) => {
         const key = built.cards.get(item.id);
-        const presentation = key && has.has(key) ? (await read(() => storedCard(key)))?.presentation : fromTurn?.attach.get(item.id);
-        return presentation && item.kind === "agent" ? { ...item, presentation } : item;
-      }));
+        const replacement = fromTurn?.replace.get(item.id);
+        if (replacement) return replacement;
+        const presentation = key && has.has(key) ? (await read(() => storedCard(key)))?.presentation : undefined;
+        return [presentation && item.kind === "agent" ? { ...item, presentation } : item];
+      }))).flat();
       if (fromTurn && last === turn) group = [...group, ...fromTurn.extra];
     }
     const size = group.reduce((n, item) => n + Buffer.byteLength(JSON.stringify(item)), 0);
@@ -430,7 +432,7 @@ function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): 
       });
       const lastId = chunkId(sessionId, eventId, chunks.length - 1);
       cards.set(lastId, cardKey(sessionId, eventId));
-      if (turn) replies.get(turnCards(sessionId, turn.user))?.push({ id: lastId, text, key: cardKey(sessionId, eventId) });
+      if (turn) replies.get(turnCards(sessionId, turn.user))?.push({ eventId, seq, chunks: chunks.length, text, key: cardKey(sessionId, eventId) });
     } else if (message.role === "toolResult" && typeof message.toolCallId === "string") {
       const call = pending.get(message.toolCallId);
       if (call) call.status = message.isError === true ? "failed" : "done";

@@ -72,8 +72,9 @@ export const turnCards = (sessionId: string, userMessageId: string): string => `
 export const turnCardKey = (sessionId: string, userMessageId: string, replyId: string): string =>
   turnCards(sessionId, userMessageId) + replyId;
 /** A stored card. `reply`, on a turn-keyed card only: every chunk of the live reply that carried it, in order, which
- * history shows again under the same ids (the card on the last). */
-export type StoredCard = { presentation: Presentation; reply?: { messageId: string; ts: number; text: string }[] };
+ * history shows again under the same ids (the card on the last). `mirrorText`: text before attachment-failure
+ * lines, when they changed the stored chunks, so history can still match core's mirror. */
+export type StoredCard = { presentation: Presentation; reply?: { messageId: string; ts: number; text: string }[]; mirrorText?: string };
 
 /** A turn-keyed card's record from the reply events that carried it. */
 export const replyChunks = (events: Event[]): NonNullable<StoredCard["reply"]> =>
@@ -111,7 +112,8 @@ export type Keyed<T> = {
 
 /** Cards by key, plus each conversation's list of keys. A card is read only through its conversation's list, so
  * deleting the conversation takes every card that can still be shown.
- * - Every operation fails with `CardStoreTimeout` `waitMs` after it was called, time spent waiting its turn
+ * - The deadline bounds promises that reject or never settle; it cannot interrupt a synchronous store call.
+ *   Every operation fails with `CardStoreTimeout` `waitMs` after it was called, time spent waiting its turn
  *   included. Writes run one at a time; one whose time ran out while it waited fails without running.
  * - An operation that timed out is abandoned: when the store answers it later, it makes no further write. So a
  *   stalled put cannot write its stale copy of the list over a later put's, and cannot re-create a deleted list.

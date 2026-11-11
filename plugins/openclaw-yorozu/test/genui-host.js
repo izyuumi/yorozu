@@ -6,6 +6,7 @@ export const host = {
   transcripts: new Map(),
   stores: new Map(),
   sent: [],
+  reactions: new Map(),
   /** Overrides a keyed store's `maxEntries`, to reach the cap with a few rows. */
   cap: undefined,
   /** Plays OpenClaw for one turn: gets the plugin's `deliver` and the run's `start`. */
@@ -113,5 +114,5 @@ export const stageOutbound = async (urls) => host.stage?.(urls) ?? { attachments
 export const uploadedFiles = async () => [];
 export const attachmentAt = () => undefined;
 export const attachmentsOf = () => [];
-export const reactionsOf = () => undefined;
+export const reactionsOf = (messageId) => host.reactions.get(messageId);
 export const forgetCursor = async () => {};
