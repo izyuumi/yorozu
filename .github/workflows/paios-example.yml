@@ -52,6 +52,7 @@ jobs:
           grep -q '^Time zone: UTC$' "$vault/out.txt"
           test -f "$vault/PAIOS/AGENTS.md"
           test ! -e "$vault/PAIOS/install.sh"
+          test ! -e "$vault/PAIOS/INSTALL_WITH_AGENT.md"
           want=$(cd "$vault" && pwd -P)
           # shellcheck disable=SC1091,SC2016
           ( set +u; unset PAIOS_VAULT PAIOS_TZ; . "$vault/PAIOS/paios.env"
@@ -189,8 +190,34 @@ jobs:
           grep -q "Fetched $REPO@$SHA" "$vault3/out.txt"
           test -f "$vault3/PAIOS/AGENTS.md"
           test ! -e "$vault3/PAIOS/install.sh"
+          test ! -e "$vault3/PAIOS/INSTALL_WITH_AGENT.md"
           # The installer and the self-test leave nothing behind in the temp folder.
           [ -z "$(ls -A "$private_tmp")" ]
+
+      - name: Agent prompt names only the installer's flags
+        run: |
+          set -euo pipefail
+          doc=examples/paios/INSTALL_WITH_AGENT.md
+          # Exactly one fenced block.
+          [ "$(grep -c '^```' "$doc")" -eq 2 ]
+          prompt=$(awk '/^```/ { n++; next } n == 1' "$doc")
+          [ -n "$prompt" ]
+          # Option tokens: -x or --word at the start of a word.
+          opts() { { grep -oE '(^|[^[:alnum:]_-])--?[A-Za-z][A-Za-z0-9-]*' || true; } | sed 's/^[^-]//' | LC_ALL=C sort -u; }
+          allowed=$(/bin/bash examples/paios/install.sh --help | opts)
+          [ -n "$allowed" ]
+          # curl's and bash's own flags in the one-liner are not installer flags.
+          used=$(sed -e 's/curl -fsSL //' -e 's/bash -s -- //' <<<"$prompt" | opts)
+          unknown=$(LC_ALL=C comm -23 <(echo "$used") <(echo "$allowed") | { grep -vxE -e '--force|-f' || true; })
+          if [ -n "$unknown" ]; then
+            echo "$doc names flags that install.sh --help does not list:"; echo "$unknown"; exit 1
+          fi
+          # --force and -f may be named only on a line that says they are not supported.
+          # The exemption is per line: "not supported" must appear on the same line as the flag.
+          force=$(grep -E '(^|[^[:alnum:]_-])(--force|-f)([^[:alnum:]-]|$)' <<<"$prompt" | grep -vi 'not supported' || true)
+          if [ -n "$force" ]; then
+            echo "$doc names --force or -f without saying it is not supported:"; echo "$force"; exit 1
+          fi
 
       - name: Clean up
         if: always()
