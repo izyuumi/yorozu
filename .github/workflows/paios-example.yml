@@ -13,6 +13,8 @@ concurrency:
 permissions:
   contents: read
 
+# Every installer run uses /bin/bash, so macOS exercises the system bash 3.2.
+# Each step appends the temp dirs it makes to $RUNNER_TEMP/paios-tmpdirs for the clean-up step.
 jobs:
   install:
     strategy:
@@ -27,6 +29,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Tool versions
+        run: |
+          bash --version | head -1
+          /bin/bash --version | head -1
+          tar --version | head -1
+          python3 -V
+
       - name: Self-test
         run: bash examples/paios/System/Scripts/selftest.sh
 
@@ -34,47 +43,122 @@ jobs:
         run: |
           set -euo pipefail
           vault=$(mktemp -d)
+          echo "$vault" >> "$RUNNER_TEMP/paios-tmpdirs"
           echo "vault=$vault" >> "$GITHUB_ENV"
-          bash examples/paios/install.sh --tz UTC "$vault" | tee "$vault/out.txt"
+          /bin/bash examples/paios/install.sh --tz UTC "$vault" | tee "$vault/out.txt"
           grep -q 'SELFTEST PASS' "$vault/out.txt"
+          grep -q '^Time zone: UTC$' "$vault/out.txt"
           test -f "$vault/PAIOS/AGENTS.md"
           test ! -e "$vault/PAIOS/install.sh"
           want=$(cd "$vault" && pwd -P)
+          # shellcheck disable=SC1091,SC2016
           ( set +u; unset PAIOS_VAULT PAIOS_TZ; . "$vault/PAIOS/paios.env"
-            [ "$PAIOS_VAULT" = "$want" ] && [ "$PAIOS_TZ" = "UTC" ] )
+            /bin/bash -c '[ "$PAIOS_VAULT" = "$1" ] && [ "$PAIOS_TZ" = "$2" ]' _ "$want" UTC )
 
       - name: Refuse an existing PAIOS folder
         run: |
           set -euo pipefail
           listing() { (cd "$vault/PAIOS" && find . | sort && find . -type f -exec cksum {} + | sort); }
           before=$(listing)
-          rc=0; out=$(bash examples/paios/install.sh --tz UTC "$vault" 2>&1) || rc=$?
+          rc=0; out=$(/bin/bash examples/paios/install.sh --tz UTC "$vault" 2>&1) || rc=$?
           echo "$out"
           [ "$rc" -eq 1 ]
           grep -q 'Refusing' <<<"$out"
           [ "$before" = "$(listing)" ]
-          rc=0; bash examples/paios/install.sh --force "$vault" || rc=$?
+          rc=0; /bin/bash examples/paios/install.sh --force "$vault" || rc=$?
           [ "$rc" -eq 2 ]
           [ "$before" = "$(listing)" ]
+
+      - name: Refuse a file and a symlink
+        run: |
+          set -euo pipefail
+          v=$(mktemp -d)
+          echo "$v" >> "$RUNNER_TEMP/paios-tmpdirs"
+          echo keep > "$v/PAIOS"
+          rc=0; out=$(/bin/bash examples/paios/install.sh --tz UTC "$v" 2>&1) || rc=$?
+          echo "$out"
+          [ "$rc" -eq 1 ]
+          grep -q 'Refusing' <<<"$out"
+          [ -f "$v/PAIOS" ] && [ ! -L "$v/PAIOS" ] && [ "$(cat "$v/PAIOS")" = keep ]
+          rm "$v/PAIOS"
+          ln -s "$v/no-such-target" "$v/PAIOS"
+          rc=0; out=$(/bin/bash examples/paios/install.sh --tz UTC "$v" 2>&1) || rc=$?
+          echo "$out"
+          [ "$rc" -eq 1 ]
+          grep -q 'Refusing' <<<"$out"
+          [ -L "$v/PAIOS" ] && [ "$(readlink "$v/PAIOS")" = "$v/no-such-target" ]
+          [ ! -e "$v/no-such-target" ]
 
       - name: No vault path and no terminal
         run: |
           set -euo pipefail
-          rc=0; bash examples/paios/install.sh </dev/null || rc=$?
+          rc=0; /bin/bash examples/paios/install.sh </dev/null || rc=$?
           [ "$rc" -eq 2 ]
+
+      - name: Invalid zone
+        run: |
+          set -euo pipefail
+          v=$(mktemp -d)
+          echo "$v" >> "$RUNNER_TEMP/paios-tmpdirs"
+          rc=0; /bin/bash examples/paios/install.sh --tz Not/AZone "$v" || rc=$?
+          [ "$rc" -eq 2 ]
+          [ ! -e "$v/PAIOS" ] && [ ! -L "$v/PAIOS" ]
+
+      - name: System time zone
+        run: |
+          set -euo pipefail
+          v=$(mktemp -d)
+          echo "$v" >> "$RUNNER_TEMP/paios-tmpdirs"
+          env -u PAIOS_TZ /bin/bash examples/paios/install.sh "$v"
+          # shellcheck disable=SC1091,SC2016
+          got=$( set +u; unset PAIOS_VAULT PAIOS_TZ; . "$v/PAIOS/paios.env"
+                 /bin/bash -c 'printf %s "$PAIOS_TZ"' )
+          echo "PAIOS_TZ=$got"
+          [ -n "$got" ]
+          python3 -c 'import sys, zoneinfo; zoneinfo.ZoneInfo(sys.argv[1])' "$got"
 
       - name: Path with spaces, a quote and a dollar sign
         run: |
           set -euo pipefail
           base2=$(mktemp -d)
-          echo "base2=$base2" >> "$GITHUB_ENV"
+          echo "$base2" >> "$RUNNER_TEMP/paios-tmpdirs"
           vault2="$base2/my vault's \$dir"
           mkdir "$vault2"
-          bash examples/paios/install.sh --tz UTC "$vault2" | tee "$base2/out.txt"
+          /bin/bash examples/paios/install.sh --tz UTC "$vault2" | tee "$base2/out.txt"
           grep -q 'SELFTEST PASS' "$base2/out.txt"
           want=$(cd "$vault2" && pwd -P)
+          # shellcheck disable=SC1091,SC2016
           ( set +u; unset PAIOS_VAULT PAIOS_TZ; . "$vault2/PAIOS/paios.env"
-            [ "$PAIOS_VAULT" = "$want" ] && [ "$PAIOS_TZ" = "UTC" ] )
+            /bin/bash -c '[ "$PAIOS_VAULT" = "$1" ] && [ "$PAIOS_TZ" = "$2" ]' _ "$want" UTC )
+
+      - name: Failed self-test rolls back
+        run: |
+          set -euo pipefail
+          copy=$(mktemp -d)
+          v=$(mktemp -d)
+          printf '%s\n' "$copy" "$v" >> "$RUNNER_TEMP/paios-tmpdirs"
+          cp -R examples/paios "$copy/paios"
+          printf '#!/bin/bash\necho SELFTEST FAIL: forced; exit 1\n' > "$copy/paios/System/Scripts/selftest.sh"
+          rc=0; /bin/bash "$copy/paios/install.sh" --tz UTC "$v" || rc=$?
+          [ "$rc" -eq 1 ]
+          [ ! -e "$v/PAIOS" ] && [ ! -L "$v/PAIOS" ]
+          [ -z "$(ls -A "$v")" ]
+
+      - name: Checkout junk is not copied
+        run: |
+          set -euo pipefail
+          copy=$(mktemp -d)
+          v=$(mktemp -d)
+          printf '%s\n' "$copy" "$v" >> "$RUNNER_TEMP/paios-tmpdirs"
+          cp -R examples/paios "$copy/paios"
+          mkdir -p "$copy/paios/System/Scripts/__pycache__" "$copy/paios/System/Scripts/vault-preflight/state"
+          echo junk > "$copy/paios/System/Scripts/__pycache__/x.pyc"
+          echo '{}' > "$copy/paios/System/Scripts/vault-preflight/state/x.json"
+          /bin/bash "$copy/paios/install.sh" --tz UTC "$v"
+          test -f "$v/PAIOS/AGENTS.md"
+          [ ! -e "$v/PAIOS/System/Scripts/__pycache__" ]
+          [ ! -e "$v/PAIOS/System/Scripts/vault-preflight/state" ]
+          [ -z "$(find "$v/PAIOS" \( -name __pycache__ -o -name '*.pyc' \))" ]
 
       - name: One-liner against this commit
         env:
@@ -83,17 +167,24 @@ jobs:
         run: |
           set -euo pipefail
           vault3=$(mktemp -d)
-          echo "vault3=$vault3" >> "$GITHUB_ENV"
+          private_tmp=$(mktemp -d)
+          printf '%s\n' "$vault3" "$private_tmp" >> "$RUNNER_TEMP/paios-tmpdirs"
           curl -fsSL "https://raw.githubusercontent.com/$REPO/$SHA/examples/paios/install.sh" \
-            | PAIOS_REPO="$REPO" PAIOS_REF="$SHA" bash -s -- --tz UTC "$vault3" | tee "$vault3/out.txt"
+            | PAIOS_REPO="$REPO" PAIOS_REF="$SHA" TMPDIR="$private_tmp" /bin/bash -s -- --tz UTC "$vault3" \
+            | tee "$vault3/out.txt"
           grep -q 'SELFTEST PASS' "$vault3/out.txt"
           grep -q "Fetched $REPO@$SHA" "$vault3/out.txt"
           test -f "$vault3/PAIOS/AGENTS.md"
           test ! -e "$vault3/PAIOS/install.sh"
+          # The installer and the self-test leave nothing behind in the temp folder.
+          [ -z "$(ls -A "$private_tmp")" ]
 
       - name: Clean up
         if: always()
         run: |
-          for d in "${vault:-}" "${base2:-}" "${vault3:-}"; do
-            if [ -n "$d" ]; then rm -rf "$d"; fi
-          done
+          if [ -f "$RUNNER_TEMP/paios-tmpdirs" ]; then
+            while IFS= read -r d; do
+              if [ -n "$d" ]; then rm -rf "$d"; fi
+            done < "$RUNNER_TEMP/paios-tmpdirs"
+            rm -f "$RUNNER_TEMP/paios-tmpdirs"
+          fi
