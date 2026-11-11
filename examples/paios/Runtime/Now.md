@@ -6,7 +6,7 @@ Compact navigation and attention page. Link to canonical records; do not copy th
 
 ## Attention
 
-- [[Projects/Example Project]]: next review 2026-02-01.
+- [Projects/Example Project](<../Projects/Example Project.md>): next review 2026-02-01.
 
 ## Waiting on
 
@@ -14,4 +14,4 @@ Compact navigation and attention page. Link to canonical records; do not copy th
 
 ## Coverage
 
-Conversation import coverage: see [[Runtime/Source Registry]].
+Conversation import coverage: see [Runtime/Source Registry](<Source Registry.md>).

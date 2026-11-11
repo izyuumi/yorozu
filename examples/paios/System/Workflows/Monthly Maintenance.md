@@ -6,7 +6,7 @@
 2. Audit active, observed, proposed, suspended, and revoked authorization rules.
 3. Review privacy incidents, redaction quality, and source access scope.
 4. Archive completed projects with retrospectives; preserve lineage and history.
-5. Detect oversized, duplicated, orphaned or stale records under [[System/Workflows/Current Truth]]. Move accumulated historical narratives out of current project/self-model sections into linked archives; retain source locators, stable IDs and aliases. Do not duplicate full-world state into another live surface.
+5. Detect oversized, duplicated, orphaned or stale records under [System/Workflows/Current Truth](<Current Truth.md>). Move accumulated historical narratives out of current project/self-model sections into linked archives; retain source locators, stable IDs and aliases. Do not duplicate full-world state into another live surface.
 6. Evaluate retrieval quality, failure patterns, and compute use against decision quality.
 7. Review self-model calibration and successful/failed predictions.
 8. Assess schemas, metadata, and directory layout for a justified migration.
