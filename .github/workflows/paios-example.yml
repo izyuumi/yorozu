@@ -55,6 +55,7 @@ jobs:
           test ! -e "$vault/PAIOS/install.sh"
           test ! -e "$vault/PAIOS/INSTALL_WITH_AGENT.md"
           test -f "$vault/PAIOS/IMPORT_HISTORY.md"
+          test -f "$vault/PAIOS/docs/obsidian.md"
           # Nothing but PAIOS/ (and this step's out.txt) appears in the folder, and the install
           # holds no hidden file or folder, so no app-settings folder was created anywhere.
           # Portable: macos find has no -printf. Count top-level entries without ls.
@@ -226,6 +227,7 @@ jobs:
           test ! -e "$vault3/PAIOS/install.sh"
           test ! -e "$vault3/PAIOS/INSTALL_WITH_AGENT.md"
           test -f "$vault3/PAIOS/IMPORT_HISTORY.md"
+          test -f "$vault3/PAIOS/docs/obsidian.md"
           n=$(find "$vault3" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')
           [ "$n" = 2 ]
           test -d "$vault3/PAIOS"
