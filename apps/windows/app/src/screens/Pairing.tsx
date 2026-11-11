@@ -16,7 +16,9 @@ export function Pairing({ pairing, act }: { pairing: PairingView; act: (task: Pr
     <section className="pairing">
       <h1>{strings.pairingHeading}</h1>
       <form onSubmit={event => { event.preventDefault(); act(command("submit_link", { link })); setLink(""); }}>
-        <label htmlFor="pairing-link">{strings.pairingLabel}</label>
+        <label htmlFor="pairing-link">
+          {strings.pairingLabel} <code>{strings.pairingCommand}</code>
+        </label>
         <textarea id="pairing-link" rows={4} spellCheck={false} autoComplete="off" value={link} onChange={e => setLink(e.target.value)} />
         <button type="submit" disabled={!link.trim()}>{strings.pairingButton}</button>
       </form>

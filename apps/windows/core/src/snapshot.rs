@@ -16,6 +16,7 @@ pub struct Snapshot {
     pub open: Option<OpenConv>,
     /// Not in the spec's Snapshot: the footer shows the version and the build sha.
     pub version: String,
+    /// The first 7 characters of the commit CI built, or `dev` for a local build.
     pub build: String,
 }
 
@@ -35,7 +36,8 @@ pub enum PairingView {
     },
 }
 
-/// The last notice. The UI shows each `seq` once.
+/// The last notice, kept here so one sent before the web view listens isn't lost.
+/// `seq` tells a new notice from the one before it.
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Notice {

@@ -16,7 +16,7 @@ function Invoke-Native([scriptblock]$Command) {
 # Starts the app with --smoke and requires exit code 0 and "ready 0.1.0" in the file.
 function Test-Smoke([string]$Exe, [string]$File) {
     Remove-Item $File -ErrorAction SilentlyContinue
-    $p = Start-Process $Exe -ArgumentList '--smoke', $File -Wait -PassThru
+    $p = Start-Process $Exe -ArgumentList '--smoke', "`"$File`"" -Wait -PassThru
     if ($p.ExitCode -ne 0) {
         throw "$Exe --smoke exited with code $($p.ExitCode)"
     }
@@ -36,6 +36,7 @@ Invoke-Native { pnpm build }
 Pop-Location
 
 Write-Host '== 2. tests'
+# The probe crate arrives in W2; until then cargo only warns about the unknown package.
 Invoke-Native { cargo test --workspace --exclude yorozu-probe }
 
 Write-Host '== 3. no plaintext key store in the app'
@@ -48,6 +49,8 @@ if ($tree.Contains('insecure-plaintext-store')) {
 }
 
 Write-Host '== 4. installer'
+# CI's cache restores apps/windows/target, so remove any old bundle: only this build's installer may pass.
+Remove-Item -LiteralPath 'target\release\bundle' -Recurse -Force -ErrorAction SilentlyContinue
 Push-Location app
 Invoke-Native { pnpm tauri build }
 Pop-Location

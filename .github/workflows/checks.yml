@@ -35,8 +35,8 @@ jobs:
           # The website's Worker serves the help MCP server, so its tests run for both.
           echo "web=$(match '^(apps/web/|apps/mcp/|pnpm-lock\.yaml$|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
           echo "plugin=$(match '^(plugins/openclaw-yorozu/|apps/ios/Tests/Fixtures/|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
-          # The Windows client's Rust core shares the wire fixtures, and its conformance tests run the
-          # real Node relay and plugin Hub, so their changes run it too.
+          # The Windows client's Rust core and its conformance test against the real Node relay; later
+          # the shared wire fixtures and the plugin Hub too.
           echo "windows_core=$(match '^(apps/windows/|packages/YorozuWire/Tests/YorozuWireTests/Fixtures/|plugins/openclaw-yorozu/src/|apps/relay/src/|apps/relay/package\.json$|pnpm-lock\.yaml$|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
 
   app:
@@ -104,8 +104,8 @@ jobs:
         env:
           TITLE: ${{ github.event.pull_request.title }}
           BODY: ${{ github.event.pull_request.body }}
-          BASE: ${{ github.event.pull_request.base.sha }}
-        run: bash apps/windows/ci/commit-type.sh
+        # HEAD is the merge ref, so its first parent is the base it was built on; base.sha can be older.
+        run: BASE=$(git rev-parse HEAD^1) bash apps/windows/ci/commit-type.sh
 
   relay:
     needs: changes

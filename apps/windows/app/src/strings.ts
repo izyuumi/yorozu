@@ -1,7 +1,8 @@
 export const strings = {
   "appName": "Yorozu",
   "pairingHeading": "Pair this PC",
-  "pairingLabel": "Paste the pairing link from `openclaw yorozu pair`",
+  "pairingLabel": "Paste the pairing link from",
+  "pairingCommand": "openclaw yorozu pair",
   "pairingButton": "Pair",
   "S1": "Pair with this host? It keeps up to 16 devices; if it has 16, the one paired longest ago is removed.",
   "S2": "This isn't a Yorozu pairing link.",

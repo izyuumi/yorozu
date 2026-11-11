@@ -29,7 +29,7 @@ impl Protector for UnsupportedProtector {
 pub fn allowed_navigation(url: &tauri::Url) -> bool {
     matches!(
         (url.scheme(), url.host_str(), url.port()),
-        ("http" | "https", Some("tauri.localhost"), None) | ("tauri", Some("localhost"), None)
+        ("http", Some("tauri.localhost"), None) | ("tauri", Some("localhost"), None)
     )
 }
 
@@ -37,6 +37,8 @@ pub fn run() {
     let smoke = smoke::from_args(std::env::args());
 
     let mut builder = tauri::Builder::default();
+    // Not under `--smoke`: the smoke run must not hand off to, or be blocked by, an
+    // installed instance that is already running.
     if smoke.is_none() {
         // A second launch focuses the first one's window and exits.
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {

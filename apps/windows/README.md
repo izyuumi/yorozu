@@ -4,19 +4,19 @@ The Windows client for Yorozu: a Tauri 2 app with a Rust core (`core`) that owns
 
 ## Install
 
-Every pull request and every merge to `main` that touches this directory builds an unsigned installer.
+Every pull request and every merge to `main` that touches this directory or `.github/workflows/windows-installer.yml` builds an unsigned installer.
 
 1. On GitHub, open the pull request's checks or the repository's Actions tab, and pick the newest "Windows installer" run (of the pull request, or of `main`).
-2. Under Artifacts, download `yorozu-windows-<commit>` and unzip it. It holds `Yorozu_0.1.0_x64-setup.exe`. Artifacts are kept for 90 days; "Run workflow" on `main` builds a fresh one at any time.
+2. Under Artifacts, download `yorozu-windows-<commit>` and unzip it. It holds `Yorozu_0.1.0_x64-setup.exe`. Artifacts are kept for 90 days; "Run workflow" on `main` builds a fresh one at any time. On a pull request build the app's footer shows the first 7 characters of the merge commit GitHub builds, not the head commit in the artifact name.
 3. Run the setup. The installer isn't signed, so Windows SmartScreen stops it: choose "More info", then "Run anyway".
 
 The app needs Windows 10 version 1803 or later and the WebView2 runtime. Windows 11 has the runtime built in; on Windows 10 the setup downloads it if it's missing. The app installs for the current user only, into `%LOCALAPPDATA%\Yorozu`, without asking for administrator rights.
 
-Uninstalling keeps the pairing, so a reinstall is still paired. To remove it as well, tick "Delete the application data" in the uninstaller.
+Uninstalling keeps the app's data folder (it holds the pairing once pairing lands), so a reinstall is still paired. To remove it too, tick "Delete the application data" in the uninstaller.
 
 ## Docs live here
 
-Windows documentation belongs in this directory, not in `docs/` or the root `README.md`. Those feed `apps/mcp/src/content.json`, and a change to that file deploys the website.
+Windows documentation belongs in this directory. `apps/mcp/scripts/generate.ts` builds `apps/mcp/src/content.json` from the root `README.md`, the top-level `docs/*.md` and the plugin README, and a change to that file deploys the website.
 
 ## Run
 
@@ -29,7 +29,7 @@ bash apps/windows/ci/core.sh
 
 The install is for the conformance test (`conformance/host/`), which runs the real Node relay from `apps/relay` under Node 24 or later. The script also needs the toolchain pinned in `rust-toolchain.toml`, which rustup installs on first use. The pull request job `windows-core` in `.github/workflows/checks.yml` runs the same script.
 
-The app itself (`app/`: the React UI, and the Tauri shell in `app/src-tauri`) is built, tested, installed and smoke-run on Windows by `ci/app.ps1`, which the "Windows installer" workflow runs. To check the shell on another system:
+The app itself (`app/`: the React UI, and the Tauri shell in `app/src-tauri`) is built, tested, installed and smoke-run on Windows by `ci/app.ps1`, which the "Windows installer" workflow runs. To check the shell on macOS or Linux:
 
 ```sh
 cd apps/windows/app && pnpm install --frozen-lockfile && pnpm build
@@ -44,18 +44,20 @@ Nothing under `apps/windows/` triggers a release or a deploy. Release Mac covers
 
 ## Commit and PR titles
 
-A pull request that is scoped `(windows)`, or that changes only `apps/windows/**` and `.github/workflows/windows-installer.yml`, must not move the app's version or its release notes. Its title and every commit subject must be one of:
+A pull request scoped `(windows)`, or one whose every changed file is under `apps/windows/` or is `.github/workflows/windows-installer.yml`, must not raise the app's minor or major version or reach the release notes. In `scripts/version.sh` a `feat` raises the minor; a `!` or a `BREAKING CHANGE:`/`BREAKING-CHANGE:` footer raises the major, or the minor while the major is 0. `scripts/release_notes.sh` lists `feat`, `fix` and `perf`.
+
+Its title and every non-merge commit subject must be one of:
 
 - `chore(windows): …`, `build(windows): …`, `ci(windows): …`, `test(windows): …` or `docs(windows): …`;
-- any `Revert "…"` title: a revert subject only bumps the patch in `scripts/version.sh`, like a chore.
+- `Revert "…"`, which matches none of those patterns.
 
-Dependabot's pull requests are skipped by the workflow step (`user.login != 'dependabot[bot]'`), not by the script.
+Forbidden: `!` in the title or a subject, and a line starting `BREAKING CHANGE: ` or `BREAKING-CHANGE: ` in the pull request body or a commit message.
 
-Otherwise no `feat`, `fix` or `perf`, no `!`, and no line starting `BREAKING CHANGE: ` in the pull request body or a commit message. `feat` bumps the minor version and `!` or `BREAKING CHANGE` the major in `scripts/version.sh`; `feat`, `fix` and `perf` reach `scripts/release_notes.sh`.
-
-The `release-guards` job enforces this on every pull request with `ci/commit-type.sh`; `ci/commit-type.test.sh` tests it.
+The `release-guards` job runs `ci/commit-type.sh` on every pull request except Dependabot's, which the step's `if:` skips. It runs on the pull request's push events, not on a title or body edit, so the merger checks the title again before merging. `ci/commit-type.test.sh` tests the script.
 
 ## Rollback
+
+W0 to W3 are the four stacked pull requests that added this client, titled with the suffixes (W0) to (W3).
 
 1. Revert W3, then W2, then W1, one PR each, titled `Revert "<original title>"`.
 2. One PR removes the `windows-core` job, the `windows_core` output and the `commit-type.sh` step from `checks.yml`, and deletes `.github/workflows/windows-installer.yml` if W1 was not reverted.

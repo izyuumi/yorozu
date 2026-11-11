@@ -14,7 +14,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-installer-${{ github.ref }}
+  # Pull request runs cancel each other; every commit on main gets its own run.
+  group: windows-installer-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:

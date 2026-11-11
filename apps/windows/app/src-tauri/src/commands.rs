@@ -1,4 +1,7 @@
-//! Web-view command table: snapshot reads state; all mutations go to the Rust driver.
+//! Every command the web view may invoke. A command is declared in four places: here, in
+//! `lib.rs` (`invoke_handler`), in `build.rs` (`AppManifest`) and in
+//! `capabilities/default.json`, which grants it. `snapshot` reads the state to render (in
+//! smoke mode it also ends the run); every other command goes to the core's driver.
 use crate::smoke::Smoke;
 use tauri::{AppHandle, State};
 use yorozu_core::{
