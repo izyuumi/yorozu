@@ -6,7 +6,15 @@ fn main() {
 
     // Declaring the app's commands makes each one need an `allow-<command>` permission
     // in capabilities/default.json (spec section 9).
-    let manifest = tauri_build::AppManifest::new().commands(&["snapshot"]);
+    let manifest = tauri_build::AppManifest::new().commands(&[
+        "snapshot",
+        "submit_link",
+        "confirm_pairing",
+        "cancel_pairing",
+        "forget_pairing",
+        "pair_again",
+        "retry_connection",
+    ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("tauri-build failed");
 }

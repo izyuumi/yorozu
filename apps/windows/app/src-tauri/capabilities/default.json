@@ -1,6 +1,18 @@
 {
   "identifier": "default",
   "description": "Everything the web view may call: listening to events and the app's own commands.",
-  "windows": ["main"],
-  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten", "allow-snapshot"]
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-snapshot",
+    "allow-submit-link",
+    "allow-confirm-pairing",
+    "allow-cancel-pairing",
+    "allow-forget-pairing",
+    "allow-pair-again",
+    "allow-retry-connection"
+  ]
 }

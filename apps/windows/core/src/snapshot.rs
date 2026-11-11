@@ -7,6 +7,10 @@ use serde::Serialize;
 pub struct Snapshot {
     pub pairing: PairingView,
     pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_close: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub update_required: bool,
     pub notice: Option<Notice>,
     pub list: Vec<ConvSummary>,
     pub open: Option<OpenConv>,
@@ -20,6 +24,16 @@ pub struct Snapshot {
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum PairingView {
     Unpaired,
+    Confirming {
+        fingerprint: String,
+        #[serde(rename = "relayHost")]
+        relay_host: String,
+    },
+    Pairing,
+    Paired,
+    Removed {
+        reason: String,
+    },
 }
 
 /// The last notice, kept here so one sent before the web view listens isn't lost.
@@ -60,6 +74,8 @@ impl Snapshot {
         Self {
             pairing: PairingView::Unpaired,
             status: None,
+            last_close: None,
+            update_required: false,
             notice: None,
             list: Vec::new(),
             open: None,
