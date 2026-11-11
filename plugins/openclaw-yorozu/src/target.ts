@@ -1,9 +1,10 @@
 /**
  * The message tool's target and thread on this channel. This file imports nothing, so the tests can load it.
  *
- * The channel has one peer, the owner, and a conversation is the thread id of a send. Core takes a
- * message-tool send through this plugin only on a host that sets `channels.yorozu`; without it a
- * send from a Yorozu turn goes to core's private source-reply sink and none of this runs.
+ * The channel has one peer, the owner, and a conversation is the thread id of a send. Core takes an
+ * implicit message-tool send (no explicit route) through this plugin only on a host that sets
+ * `channels.yorozu`; without it such a send from a Yorozu turn goes to core's private source-reply
+ * sink. A send with an explicit route always comes here.
  */
 const CHANNEL_ID = "yorozu";
 export const PEER = "owner";

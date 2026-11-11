@@ -46,7 +46,7 @@ test("without channels.yorozu the plugin stays out of the send", () => {
   }
 });
 
-test("with channels.yorozu the send resolves and routes", () => {
+test("with channels.yorozu the helpers accept the owner and name the turn's conversation", () => {
   for (const cfg of [configured, { channels: { yorozu: { agent: "main" } } }, { channels: { yorozu: { enabled: true } } }]) {
     assert.equal(channelConfigured(cfg), true, JSON.stringify(cfg));
     assert.equal(looksLikeOwner(turn.currentChannelId), true);
