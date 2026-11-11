@@ -9,7 +9,7 @@ import {
 } from "openclaw/plugin-sdk/session-store-runtime";
 import { messageTime, revOf } from "./activity.js";
 import { attachmentAt, attachmentsOf } from "./attachments.js";
-import { cardKey } from "./cards.js";
+import { cardKey, errorTag, turnCards } from "./cards.js";
 import { DEFAULT_CHUNK_LIMIT } from "./conversation.js";
 import {
   isId,
@@ -34,8 +34,9 @@ const PAGE_BYTES = 192 * 1024;
 const ITEM_CHARS = 60_000;
 const LIST_MAX = 2000;
 const CACHE_MAX = 8;
-// `cards`: the card key of each agent message's last chunk, by item id.
-type Built = { items: HistoryItem[]; cards: Map<string, string> };
+// `cards`: the card key of each agent message's last chunk, by item id. `turns`: the key prefix of a turn's other
+// cards (`turnCards`), by the `seq` of the turn's last items.
+type Built = { items: HistoryItem[]; cards: Map<string, string>; turns: Map<number, string> };
 const cache = new Map<string, Built & { sessionId: string; rev: number }>();
 
 export async function answerRequest(
@@ -46,7 +47,7 @@ export async function answerRequest(
 ): Promise<Event | undefined> {
   try {
     if (request.kind === "conv_list") return { kind: "conv_list", data: listConversations(agent) };
-    if (request.kind === "history") return { kind: "history", data: await historyPage(cfg, agent, request.data) };
+    if (request.kind === "history") return { kind: "history", data: await historyPage(cfg, agent, request.data, log) };
   } catch (error) {
     log?.warn(`yorozu: ${request.kind} failed: ${String(error)}`);
     const convId = request.kind === "history" ? request.data.convId : undefined;
@@ -77,7 +78,12 @@ export function listConversations(agent: string): ConvList {
   return { conversations: conversations.slice(0, LIST_MAX) };
 }
 
-export async function historyPage(cfg: OpenClawConfig, agent: string, request: HistoryRequest): Promise<History> {
+export async function historyPage(
+  cfg: OpenClawConfig,
+  agent: string,
+  request: HistoryRequest,
+  log?: ChannelGatewayContext["log"],
+): Promise<History> {
   const { convId, before, after } = request;
   const empty: History = { convId, items: [], more: false, rev: 0, ...(before !== undefined ? { before } : {}), ...(after !== undefined ? { after } : {}) };
   const built = itemsOf(cfg, agent, convId);
@@ -96,14 +102,45 @@ export async function historyPage(cfg: OpenClawConfig, agent: string, request: H
   const picked: HistoryItem[][] = [];
   let bytes = 0;
   let more = false;
-  const listed = built.cards.size ? await cardKeys(convId) : new Set<string>();
+  // A card store that fails or does not answer in time costs the page's cards, never the page.
+  let storeDown = false;
+  const read = async <T>(get: () => Promise<T>): Promise<T | undefined> => {
+    if (storeDown) return undefined;
+    try {
+      return await get();
+    } catch (error) {
+      if (storeDown) return undefined;
+      storeDown = true;
+      log?.warn(`yorozu: the card store did not answer (${errorTag(error)}); this history page goes out without cards`);
+      return undefined;
+    }
+  };
+  const listed = built.cards.size || built.turns.size ? ((await read(() => cardKeys(convId))) ?? []) : [];
+  const has = new Set(listed);
   // The group with its stored cards, which count toward the page's size; nothing when the page is full.
   const take = async (bare: HistoryItem[]) => {
-    const group = listed.size ? await Promise.all(bare.map(async (item) => {
-      const key = built.cards.get(item.id);
-      const presentation = key && listed.has(key) ? await storedCard(key) : undefined;
-      return presentation && item.kind === "agent" ? { ...item, presentation } : item;
-    })) : bare;
+    let group = bare;
+    if (listed.length) {
+      group = await Promise.all(bare.map(async (item) => {
+        const key = built.cards.get(item.id);
+        const presentation = key && has.has(key) ? (await read(() => storedCard(key)))?.presentation : undefined;
+        return presentation && item.kind === "agent" ? { ...item, presentation } : item;
+      }));
+      // The turn's cards whose replies matched no transcript event: each comes back as the reply that carried it,
+      // under its live id, after the turn's other items. Never on another reply's text.
+      const turn = built.turns.get(bare[0]!.seq);
+      for (const key of turn ? listed.filter((key) => key.startsWith(turn)) : []) {
+        const card = await read(() => storedCard(key));
+        const reply = card?.reply;
+        if (!card?.presentation || !isId(reply?.messageId) || typeof reply.text !== "string" || !Number.isSafeInteger(reply.ts)) continue;
+        const replyTo = replyOf(reply.messageId);
+        const reactions = reactionsOf(reply.messageId);
+        group = [...group, {
+          kind: "agent", id: reply.messageId, seq: bare[0]!.seq, ts: reply.ts, text: cut(reply.text),
+          ...(replyTo && { replyTo }), ...(reactions && { reactions }), presentation: card.presentation,
+        }];
+      }
+    }
     const size = group.reduce((n, item) => n + Buffer.byteLength(JSON.stringify(item)), 0);
     const count = picked.reduce((n, g) => n + g.length, 0);
     if (picked.length && (count + group.length > PAGE_ITEMS || bytes + size > PAGE_BYTES)) return undefined;
@@ -126,7 +163,11 @@ export async function historyPage(cfg: OpenClawConfig, agent: string, request: H
       picked.unshift(group);
     }
   }
-  const page = picked.flat();
+  const page = picked.flat().map((item) => {
+    if (!storeDown || item.kind !== "agent" || !item.presentation) return item;
+    const { presentation: _, ...plain } = item;
+    return plain;
+  });
   return { ...empty, items: page, more, rev };
 }
 
@@ -185,6 +226,14 @@ export function liveReplyIds(
   return undefined;
 }
 
+/** The conversation's current session, which with the user's message names a turn (`turnCardKey`). */
+export function liveSessionId(agent: string, sessionKey: string): string | undefined {
+  try {
+    return getSessionEntry({ agentId: agent, sessionKey })?.sessionId || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 type Fields = Record<string, unknown>;
 const obj = (v: unknown): Fields | undefined => (typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Fields) : undefined);
@@ -247,10 +296,16 @@ function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): 
   let tools: Extract<HistoryItem, { kind: "tools" }> | undefined;
   let lastUser: string | undefined;
   const pending = new Map<string, { status: ToolStatus }>();
+  // A turn runs from the owner's message to the next user-role message or reset, as `liveReplyIds` reads it. A
+  // message id seen twice (a retried run) names its last turn only, so a card comes back once.
+  const turnEnds = new Map<string, number>();
+  let turn: { user: string; from: number } | undefined;
   const closeRun = () => {
     for (const call of pending.values()) if (call.status === "running") call.status = "failed";
     pending.clear();
     tools = undefined;
+    if (turn && items.length > turn.from) turnEnds.set(turn.user, items.at(-1)!.seq);
+    turn = undefined;
   };
   events.forEach((raw, index) => {
     const event = obj(raw);
@@ -280,6 +335,7 @@ function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): 
       const sent = obj(obj(obj(message.__openclaw)?.transport))?.messageId;
       const id = isId(sent) ? sent : isId(eventId) ? eventId : derivedId(sessionId, eventId);
       lastUser = id;
+      turn = { user: id, from: items.length };
       if (text.trim() || files.length) {
         items.push({ kind: "user", id, seq, ts, text: cut(text), ...(files.length ? { attachments: files } : {}) });
       }
@@ -311,5 +367,7 @@ function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): 
       if (call) call.status = message.isError === true ? "failed" : "done";
     }
   });
-  return { items, cards };
+  if (turn && items.length > turn.from) turnEnds.set(turn.user, items.at(-1)!.seq);
+  const turns = new Map([...turnEnds].map(([user, seq]) => [seq, turnCards(sessionId, user)]));
+  return { items, cards, turns };
 }

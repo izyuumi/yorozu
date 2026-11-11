@@ -249,7 +249,7 @@ Every box's plaintext is one UTF-8 JSON object `{"kind": <string>, "data": <obje
 | `delivered` | plugin → clients | `convId`, `messageId` |
 | `run_started` | plugin → clients | `convId`, `messageId` |
 | `typing` | plugin → clients | `convId`, `active` |
-| `reply` | plugin → clients | `convId`, `messageId` (plugin-made), `text`, `ts`, `attachments`?, `replyTo`?, `presentation`? |
+| `reply` | plugin → clients | `convId`, `messageId` (plugin-made), `text`, `ts`, `attachments`?, `replyTo`? |
 | `reaction` | both | `convId`, `messageId`, `emoji`, `remove`? (`true`), `by`? (`user` or `agent`; plugin → clients only) |
 | `tool` | plugin → clients | `convId`, `messageId` (the user message whose run made the call), `callId`, `name`, `status` |
 | `error` | both | `code`, `message` (English, for logs), `convId`?, `messageId`?, `attachmentId`? |
@@ -283,14 +283,14 @@ Each side sends its own as its first box and acts on nothing else until it has t
 |---|---|---|
 | `app` | the app version | the plugin version (`0.1.0`) |
 | `name` | device model | the host's hostname |
-| `capabilities` | `attachments`, `devices`, `replies`, `reactions`, `resume`, `direct`, `unversioned-wire` | `attachments`, `devices`, `invite`, `replies`, `reactions`, `resume`, `unversioned-wire`, `presentation`, `liveActivityPush` while its relay's `registered` said `liveActivity: true`, `direct` while its direct listener is listening, and `push-proxy` while its relay's `registered` said `pushProxy: true` |
+| `capabilities` | `attachments`, `devices`, `replies`, `reactions`, `resume`, `direct`, `unversioned-wire` | `attachments`, `devices`, `invite`, `replies`, `reactions`, `resume`, `unversioned-wire`, `liveActivityPush` while its relay's `registered` said `liveActivity: true`, `direct` while its direct listener is listening, and `push-proxy` while its relay's `registered` said `pushProxy: true` |
 | `mediaMaxBytes`, `agent`, `hostVersion` | — | attachment limit; `channels.yorozu.agent`; OpenClaw version |
 
 `direct` and `push-proxy` were introduced by [#532](https://github.com/izyuumi/yorozu/issues/532) (`Direct.capability`, `DIRECT`; `PushProxy.capability`, `PUSH_PROXY`; [Direct path](#direct-path)). The client lists `direct`, which asks the plugin for [`direct_hints`](#direct-path), and not `push-proxy`; it trusts a direct listener for its probe, not for the plugin's capability. `protocolMin` and `protocolMax` stay 3; new behavior is gated on a capability, never on a version.
 
 `unversioned-wire` was introduced by [#532](https://github.com/izyuumi/yorozu/issues/532), wire migration steps 1 and 2 (`UnversionedWire.capability`, `UNVERSIONED_WIRE`). The plugin always lists it and accepts both frame formats and their prologues; each connection's init decides the format for its response and all session boxes. Clients list it too and send unversioned only to a plugin that listed this capability, keeping legacy for every other plugin and falling back after an unanswered relay init as described in [Frames](#frames).
 
-The client offers attachments, Settings devices, adding a device and replying only when the plugin lists `attachments`, `devices`, `invite` and `replies` (attachments and replies also before it has the plugin's `peer_info`), and sends `replyTo` only to a plugin listing `replies`. The plugin answers `device_list`, `device_patch` and `pair_invite` from any client and reads `foreground.active` whenever present; it gates four things on the client's capabilities: a reply's files, sent to a client without `attachments` as one text line each; `replyTo` on `reply` and history items, left out for a client without `replies`; `reaction` events and history `reactions`, left out for a client without `reactions`; and `presentation` on `reply` and history items, left out for a client without [`presentation`](#cards-presentation). The client offers reacting only once the plugin's `peer_info` lists `reactions`, and asks ActivityKit for a Live Activity push token only from a plugin listing `liveActivityPush` (otherwise its activity has none, as before). The plugin stores the client's `name` (cut to 64) for `openclaw yorozu devices`.
+The client offers attachments, Settings devices, adding a device and replying only when the plugin lists `attachments`, `devices`, `invite` and `replies` (attachments and replies also before it has the plugin's `peer_info`), and sends `replyTo` only to a plugin listing `replies`. The plugin answers `device_list`, `device_patch` and `pair_invite` from any client and reads `foreground.active` whenever present; it gates three things on the client's capabilities: a reply's files, sent to a client without `attachments` as one text line each; `replyTo` on `reply` and history items, left out for a client without `replies`; and `reaction` events and history `reactions`, left out for a client without `reactions`. The client offers reacting only once the plugin's `peer_info` lists `reactions`, and asks ActivityKit for a Live Activity push token only from a plugin listing `liveActivityPush` (otherwise its activity has none, as before). The plugin stores the client's `name` (cut to 64) for `openclaw yorozu devices`.
 
 Right after the client's `peer_info`, the plugin sends that device every stored [`read_cursor`](#read_cursor).
 
@@ -312,25 +312,6 @@ Capability `reactions`. One emoji per person (the user, the agent) per message, 
 - The plugin sends every change, with `by`, to every device, the sender included, and keeps each message's reactions by its id (keyed state namespace `reactions`, at most 10,000, oldest dropped). A `user` or `agent` history item carries them as `reactions: {user?, agent?}`; a page replaces the client's copy.
 - The client shows them as chips under the bubble; tapping your own takes it back.
 
-#### Cards: `presentation`
-
-Capability `presentation` (`PRESENTATION`). A `reply` or an `agent` history item may carry a read-only card next to its text: `presentation: {title?, tone?, blocks}`. It travels inside the sealed event, so the relay sees nothing new. The plugin lists the capability always and sends the field only to a session whose client listed it too, each device by its own `peer_info`; every other session gets the same event without the key. An event without a card is byte-for-byte what it was before the capability (`test/genui-golden.test.ts`).
-
-| Block `type` | Fields |
-|---|---|
-| `text`, `context` | `text` |
-| `divider` | — |
-| `table` | `caption`, `headers` (unique strings), `rows` (strings or finite numbers, each as wide as `headers`), `rowHeaderColumnIndex`? |
-| `chart` | `title`, `chartType`; `pie`: `segments` [`label`, `value` > 0]; `bar`, `area`, `line`: `categories` (unique), `series` [`name` (unique), `values`, one per category], `xLabel`?, `yLabel`? |
-
-- Every block also has `alt`, its plain-text rendering (`""` for a divider). `tone` is `info`, `success`, `warning`, `danger` or `neutral`.
-- **Text always**: `text` is sent as before and stays what search, Siri, push previews and Copy use. A payload with no text whose card is sent gets the card's fallback text (the title and each block's `alt`, at most 32 KiB) as `text`.
-- **Last chunk**: a reply split into several `reply` events carries the card on the last one only; a history page puts it on the agent message's last item.
-- **Limits** (`src/presentation.ts`, the only definition): the card is at most 64 KiB as JSON, 50 blocks, strings of 4000 UTF-16 units (longer ones end in `…`), tables of 20 columns and 200 rows, charts of 12 series, 100 categories and 100 pie segments. A block over a limit or with invalid data becomes a `context` block that says so; blocks past the size limit become one `context` note. Buttons, selects and any other block type are left out, along with every field not named above (actions, callback values, approval ids, commands).
-- **Dropped card**: a card that is not an object, is JSON text over 64 KiB, or has nothing to show after that (no block left, or only dividers and no title) is not sent, and its fallback text is not used. The text goes out exactly as it would without a card; with empty text and no file, nothing is sent.
-- **Tolerant reader**: a client draws each block it can check (finite numbers, row width equal to the header count, the card at most 64 KiB as received). A block of an unknown type or failing a check is drawn as its `alt`; one without `alt` is skipped; when nothing draws, the bubble shows `text`. A client without the capability never receives the field, and one that receives it anyway ignores it (`GenUIReplayTests`).
-- **History**: the plugin keeps a card by its session and transcript event (keyed state namespace `presentations`, at most 10,000, oldest dropped; at most 500 per conversation, oldest dropped) and adds it to the history item while it is stored. The card is stored after the `reply` is sent, so a history page requested right then may not have it yet. Deleting the conversation deletes its cards in the same operation. A card is not stored, and shows live only, when its reply has random ids (a turn's reply whose transcript message was not found, and every explicit-target send: a cron delivery or a `message` tool send naming a target) or when the store write failed ([details](openclaw-channel.md#behaviour-the-plugin-depends-on)).
-
 #### `tool`
 
 One tool call of an agent run, for a collapsed row under the message it answers. `callId` is OpenClaw's tool call id (not a UUID, at most 128 characters); updates of one call share it and the last `status` wins: `running`, then `done` or `failed`. `name` is the tool's name (at most 128). The client ignores a `tool` of any other `status`, and drops such a call from a history item.
@@ -348,7 +329,7 @@ Items carry `kind`, `id`, `seq` (the transcript event's; shared by items of one 
 | `kind` | Fields | From |
 |---|---|---|
 | `user` | `text`, `attachments`?, `replyTo`?, `reactions`? | a user message from the owner (OpenClaw-internal user-role turns are skipped); `id` is the client's `messageId`; `<file …>` blocks OpenClaw appends for documents are removed |
-| `agent` | `text`, `attachments`?, `replyTo`?, `reactions`?, `presentation`? | assistant text without `MEDIA:` lines, trimmed and chunked by `textChunkLimit` like live replies, files on the last chunk (or an item with empty `text`); cron deliveries mirrored into the transcript come out here too |
+| `agent` | `text`, `attachments`?, `replyTo`?, `reactions`? | assistant text without `MEDIA:` lines, trimmed and chunked by `textChunkLimit` like live replies, files on the last chunk (or an item with empty `text`); cron deliveries mirrored into the transcript come out here too |
 | `tools` | `tools`: [`callId`, `name`, `status`] | one row per run, at its first tool call; `id` is the run's user `messageId`; a call without a result is `running` only while the run is the transcript's last |
 | `reset` | — | a `/new` or `/reset` boundary |
 
@@ -477,7 +458,7 @@ Capability `liveActivityPush` (iPhone, iPad). Counts-only ActivityKit pushes kee
 | Frames | `Frame(payload:)`, `.payload`, `.sid` | `decodeFrame`, `encodeFrame`, `frameSid` |
 | Boxes | `Session.seal`, `.open`, `.openEvent` | `Session.seal`, `.open` |
 | Envelope | `WireEvent`, `PeerInfo.negotiate`, `WireEvent.newId`, `isId` | `Event`, `parseEvent`, `encodeEvent`, `negotiate`, `isId` |
-| Capabilities | `Attachment.capability`, `Devices.capability`, `Invite.capability`, `ReplyTo.capability`, `Reaction.capability`, `ActivityReport.capability`, `Direct.capability`, `PushProxy.capability`, `UnversionedWire.capability` | `ATTACHMENTS`, `DEVICES`, `INVITE`, `REPLIES`, `REACTIONS`, `LIVE_ACTIVITY_PUSH`, `DIRECT`, `PUSH_PROXY`, `UNVERSIONED_WIRE`, `PRESENTATION` (plugin only so far: the client does not list `presentation` yet) |
+| Capabilities | `Attachment.capability`, `Devices.capability`, `Invite.capability`, `ReplyTo.capability`, `Reaction.capability`, `ActivityReport.capability`, `Direct.capability`, `PushProxy.capability`, `UnversionedWire.capability` | `ATTACHMENTS`, `DEVICES`, `INVITE`, `REPLIES`, `REACTIONS`, `LIVE_ACTIVITY_PUSH`, `DIRECT`, `PUSH_PROXY`, `UNVERSIONED_WIRE` |
 | Live Activity push | `ActivityReport` (the app's `ActivityReports.swift`, `YorozuActivities`) | `applyTurn`, `plan`, `contentState`, `holdFor` (`liveactivity.ts`) |
 | Attachments | `Attachment` (`chunkBytes`, `chunkCount`), `Upload`, `UploadAck`, `Download`, `Chunk` | `CHUNK_BYTES`, `attachments.ts` |
 | Push preview | `PushPreview.key`, `.open(userInfo:key:)`, `RelayConnection.registerPush` | `previewKey`, `previewPlaintext`, `sealPreview`, `threadRef` (`push.ts`) |

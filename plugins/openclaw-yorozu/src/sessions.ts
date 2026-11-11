@@ -106,7 +106,8 @@ export async function applyPatch(agent: string, patch: ConvPatch, log?: ChannelG
     }
     if (patch.deleted) {
       if (entry.archivedAt === undefined) await archive(agent, sessionKey, true);
-      // Cards first: a failure here leaves a conversation that can be deleted again, never cards without one.
+      // Cards first: a card store that fails or does not answer in time (`CARD_WAIT_MS`) fails the delete, which
+      // leaves a conversation that can be deleted again, never cards without one.
       await forgetCards(convId);
       await deleteSessionEntry({ agentId: agent, sessionKey, archiveTranscript: true });
       await forgetCursor(convId);

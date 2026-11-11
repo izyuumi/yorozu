@@ -8,12 +8,12 @@ import {
 } from "openclaw/plugin-sdk/channel-inbound";
 import { getAgentScopedMediaLocalRoots } from "openclaw/plugin-sdk/media-local-roots";
 import { createTypingCallbacks } from "openclaw/plugin-sdk/channel-outbound";
-import { chunkMarkdownText, resolveTextChunkLimit } from "openclaw/plugin-sdk/reply-runtime";
+import { chunkMarkdownText, chunkMarkdownTextWithMode, resolveChunkMode, resolveTextChunkLimit } from "openclaw/plugin-sdk/reply-runtime";
 import { resolveAgentRoute, resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
 import { stageOutbound, uploadedFiles, type MediaAccess } from "./attachments.js";
-import { cardFor, withCard } from "./cards.js";
+import { cardFor, cardKey, errorTag, turnCardKey, withCard } from "./cards.js";
 import { isId, type Attachment, type Event, type Message, type ReplyTo, type ToolStatus } from "./envelope.js";
-import { itemText, liveReplyIds } from "./history.js";
+import { itemText, liveReplyIds, liveSessionId } from "./history.js";
 import type { Presentation, PresentationSdk } from "./presentation.js";
 import { storeCard } from "./presentations.js";
 import { noteReply } from "./replies.js";
@@ -73,9 +73,11 @@ export function replyEvents(
 /** A payload's text and card as sent (`cardFor`), with one content-free line for a card that was dropped. */
 function payloadCard(payload: { text?: string; presentation?: unknown }, sdk: PresentationSdk, log?: ChannelGatewayContext["log"]) {
   const card = cardFor(payload.presentation, payload.text, sdk);
-  if (card.dropped) log?.warn("yorozu: dropped a card that cannot be shown; its text was sent");
+  if (card.dropped) log?.warn("yorozu: dropped a card that cannot be shown; the reply goes out without it");
   return card;
 }
+
+const NOT_KEPT = "yorozu: a card went out without being stored; history will not show it";
 
 export function replyTarget(cfg: OpenClawConfig, agent: string, convId: string, id?: string | null, current?: Message): ReplyTo | undefined {
   const messageId = id?.trim().toLowerCase();
@@ -208,7 +210,10 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
               const card = payloadCard(payload, ctx.presentationSdk, log);
               if (!card.text.trim() && !urls.length && !card.presentation) return;
               runStarted();
-              const ids = liveReplyIds(route.agentId, sessionKey, messageId, usedReplies);
+              // A transcript message's ids only for a payload with text or a file of its own: a card-only payload
+              // (a `message` tool send, whose transcript message holds a tool call and no text) must not take the
+              // ids of some other reply's text.
+              const ids = payload.text?.trim() || urls.length ? liveReplyIds(route.agentId, sessionKey, messageId, usedReplies) : undefined;
               const { attachments, failures } = await stageOutbound(urls, ctx.mediaMaxBytes, access, ids?.id(0));
               const body = [card.text, ...failures].filter((line) => line.trim()).join("\n\n");
               const replyTo = replyTarget(cfg, ctx.agent, convId, payload.replyToId, message);
@@ -217,9 +222,20 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
               if (!firstReply && first?.kind === "reply") firstReply = { messageId: first.data.messageId, text: body || "📎" };
               send(...replies);
               // After the reply and not awaited: a slow or failing store costs the history card, never the reply.
-              // Only a reply with its transcript ids can be found again by a history page.
-              if (card.presentation && ids) {
-                void storeCard(convId, ids, card.presentation).catch(() => log?.warn("yorozu: a card was not stored; history will show its text"));
+              const carrier = replies.at(-1);
+              if (card.presentation && carrier?.kind === "reply") {
+                const { presentation } = card;
+                // With a transcript message's ids, history puts the card on that message. Without, the card is kept
+                // by its turn with the reply that carried it, which history shows again under the same id.
+                const sessionId = ids?.sessionId ?? liveSessionId(route.agentId, sessionKey);
+                const { messageId: replyId, ts, text: shown } = carrier.data;
+                const key = ids ? cardKey(ids.sessionId, ids.eventId) : sessionId && turnCardKey(sessionId, messageId, replyId);
+                if (!key) log?.warn(NOT_KEPT);
+                else {
+                  void storeCard(convId, key, ids ? { presentation } : { presentation, reply: { messageId: replyId, ts, text: shown } }).catch(
+                    (error: unknown) => log?.warn(`yorozu: a card was not stored (${errorTag(error)}); history will not show it`),
+                  );
+                }
               }
             },
             onError: (error, info) => log?.warn(`yorozu: ${info.kind} reply failed: ${String(error)}`),
@@ -298,9 +314,13 @@ export async function sendConversationMedia(params: {
   return messageId;
 }
 
-/** An explicit-target payload OpenClaw hands to `sendPayload`, with the card `renderPresentation` put in
- * `channelData.yorozu` if any: chunked text, files and the card on the last chunk. Its ids are random, so the card is
- * not stored for history. */
+/** An explicit-target payload OpenClaw hands to `sendPayload`: the id of its first reply, or "" when nothing was sent.
+ * - With the card `renderPresentation` put in `channelData.yorozu`: chunked text, files and the card on the last
+ *   chunk. It belongs to no turn, so the card is not stored for history.
+ * - Without a card (some other `channelData`, a location, or a card that was dropped): exactly what OpenClaw does
+ *   for a channel with no `sendPayload` (`src/infra/outbound/deliver-core.ts:342-397`, `message-plan.ts`): one
+ *   `sendText` per text chunk, or one `sendMedia` per file with the text on the first. Nothing sendable sends
+ *   nothing and does not throw; OpenClaw records a result without an id as not delivered. */
 export async function sendConversationPayload(params: {
   cfg: OpenClawConfig;
   accountId?: string | null;
@@ -316,11 +336,30 @@ export async function sendConversationPayload(params: {
 }): Promise<string> {
   const convId = deliveryConv(params.threadId);
   const card = payloadCard(params, params.sdk, params.log);
+  const { threadId, replyTo } = params;
+  if (!card.presentation) {
+    const text = params.text ?? "";
+    const sent: string[] = [];
+    for (const [k, mediaUrl] of params.mediaUrls.entries()) {
+      sent.push(await sendConversationMedia({ threadId, text: k === 0 ? text : "", mediaUrl, maxBytes: params.maxBytes, access: params.access, replyTo }));
+    }
+    if (!params.mediaUrls.length) {
+      // `planOutboundTextMessageUnits`, with the channel's chunker and limit as the outbound adapter declares them.
+      const limit = resolveTextChunkLimit(params.cfg, CHANNEL_ID, params.accountId, { fallbackLimit: DEFAULT_CHUNK_LIMIT });
+      const blocks = resolveChunkMode(params.cfg, CHANNEL_ID, params.accountId) === "newline" ? chunkMarkdownTextWithMode(text, limit, "newline") : [text];
+      if (!blocks.length && text) blocks.push(text);
+      for (const block of blocks) {
+        const chunks = chunkMarkdownText(block, limit);
+        for (const chunk of chunks.length || !block ? chunks : [block]) sent.push(sendConversationText({ threadId, text: chunk, replyTo }));
+      }
+    }
+    return sent[0] ?? "";
+  }
   const { attachments, failures } = await stageOutbound(params.mediaUrls, params.maxBytes, params.access);
   const text = [card.text, ...failures].filter((line) => line.trim()).join("\n\n");
-  const replies = replyEvents(params.cfg, convId, text, params.accountId, undefined, attachments, params.replyTo, card.presentation);
-  const first = replies[0];
-  if (first?.kind !== "reply") throw new Error("yorozu: a delivery needs text, a file or a card");
+  const replies = replyEvents(params.cfg, convId, text, params.accountId, undefined, attachments, replyTo, card.presentation);
   broadcast(replies);
-  return first.data.messageId;
+  params.log?.warn(NOT_KEPT);
+  const first = replies[0];
+  return first?.kind === "reply" ? first.data.messageId : "";
 }

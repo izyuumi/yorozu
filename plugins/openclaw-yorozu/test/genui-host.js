@@ -14,6 +14,8 @@ export const host = {
   stage: undefined,
   /** Makes a keyed store's `register` fail ("reject") or never finish ("hang"). */
   register: undefined,
+  /** Makes `lookup` fail ("reject"), never finish ("hang"), or hang only for cards ("cards-hang"). */
+  lookup: undefined,
 };
 
 // The keyed state store as the plugin uses it: bounded, oldest row dropped.
@@ -30,7 +32,12 @@ const openKeyedStore = ({ namespace, maxEntries }) => {
         rows.delete(old);
       }
     },
-    lookup: async (key) => rows.get(key),
+    lookup: async (key) => {
+      if (typeof host.lookup === "function") await host.lookup(namespace, key);
+      if (host.lookup === "reject") throw new Error("store down");
+      if (host.lookup === "hang" || (host.lookup === "cards-hang" && namespace === "presentations")) await new Promise(() => {});
+      return rows.get(key);
+    },
     delete: async (key) => rows.delete(key),
     entries: async () => [...rows].map(([key, value]) => ({ key, value })),
   };
@@ -39,6 +46,8 @@ const openKeyedStore = ({ namespace, maxEntries }) => {
 // openclaw/plugin-sdk/*
 export const resolveTextChunkLimit = (cfg, _channel, _account, { fallbackLimit }) => cfg.limit ?? fallbackLimit;
 export const chunkMarkdownText = (text, limit) => text.match(new RegExp(`[\\s\\S]{1,${limit}}`, "g")) ?? [];
+export const resolveChunkMode = (cfg) => cfg.chunkMode ?? "length";
+export const chunkMarkdownTextWithMode = (text, limit) => text.split("\n\n").flatMap((part) => chunkMarkdownText(part, limit));
 export const resolveAgentRoute = ({ defaultAgentId, accountId }) => ({
   agentId: defaultAgentId, accountId: accountId ?? "default", sessionKey: `agent:${defaultAgentId}:yorozu:direct:owner`,
 });
