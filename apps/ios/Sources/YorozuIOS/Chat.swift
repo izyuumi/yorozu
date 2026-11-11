@@ -17,6 +17,8 @@ struct ChatView: View {
     @State private var dropFailure: String?
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var atBottom = true
+    /// A chat that just got its first content, until it rests at its newest message or the user drags.
+    @State private var opening = false
     @State private var phase: ScrollPhase = .idle
     @State private var edge: ChatScrollEdge?
     @State private var settling: Task<Void, Never>?
@@ -80,13 +82,16 @@ struct ChatView: View {
         }
         .onScrollPhaseChange { _, new in
             phase = new
+            if new == .interacting { opening = false }
             scheduleSettle()
         }
         // Only the first layout starts at the bottom; later size changes are left to the follow rule and the settle.
         .defaultScrollAnchor(.bottom, for: .initialOffset)
-        // Opening a chat starts at its newest message: the geometry for the first content can land before this
-        // onChange, so atBottom is already false by then.
+        // Opening a chat starts at its newest message. The geometry for the first content can land before this
+        // onChange (atBottom already false), and a scroll issued in the same update as the first content can be
+        // dropped, so the settle keeps following until the chat rests at its end or the user drags.
         .onChange(of: items.last?.id) { old, _ in
+            if old == nil { opening = true }
             if old == nil || atBottom || items.last?.kind == .user { scrollToEnd() }
         }
         .task(id: model.state == .ready) { model.open(convId) }
@@ -263,7 +268,11 @@ extension ChatView {
     /// row measured shorter), or short of it while following. Never mid-gesture, so a bounce at the bottom is not fought.
     private func settle() {
         guard phase == .idle, let edge else { return }
-        if edge.needsSettle(following: atBottom) { scrollToEnd() }
+        if edge.needsSettle(following: atBottom || opening) {
+            scrollToEnd()
+        } else if opening {
+            opening = false
+        }
     }
 
     /// Once the geometry has held still for a moment: the keyboard and the composer move the insets in animations the
