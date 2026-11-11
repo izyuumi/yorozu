@@ -257,6 +257,39 @@ public struct Presentation: Codable, Equatable, Sendable {
             case .number(let v): try c.encode(v)
             }
         }
+
+        /// The cell as the plugin's `alt` writes it (JavaScript's `String(n)`): no locale grouping, every digit sent.
+        public var text: String {
+            switch self {
+            case .string(let v): v
+            case .number(let v): Self.javaScript(v)
+            }
+        }
+
+        /// ECMAScript Number::toString on Swift's shortest round-trip digits; `v` is finite (the table check).
+        static func javaScript(_ v: Double) -> String {
+            // "2026.0", "1e-07", "1.2345678901234568e+20": digits and where the point goes (value = 0.digits × 10^point).
+            let parts = v.magnitude.description.split(separator: "e")
+            let mantissa = parts[0].split(separator: ".", omittingEmptySubsequences: false)
+            var digits = Array(mantissa.joined())
+            var point = mantissa[0].count + (parts.count > 1 ? Int(parts[1]) ?? 0 : 0)
+            while digits.first == "0" { digits.removeFirst(); point -= 1 }
+            while digits.last == "0" { digits.removeLast() }
+            guard !digits.isEmpty else { return "0" }
+            let s = String(digits), k = digits.count, sign = v < 0 ? "-" : ""
+            let body: String
+            if k <= point && point <= 21 {
+                body = s + String(repeating: "0", count: point - k)
+            } else if 0 < point && point <= 21 {
+                body = String(digits[..<point]) + "." + String(digits[point...])
+            } else if -6 < point && point <= 0 {
+                body = "0." + String(repeating: "0", count: -point) + s
+            } else {
+                let e = point - 1
+                body = String(digits[0]) + (k > 1 ? "." + String(digits[1...]) : "") + "e" + (e < 0 ? "-" : "+") + String(abs(e))
+            }
+            return sign + body
+        }
     }
 
     public struct Table: Codable, Equatable, Sendable {
@@ -304,7 +337,7 @@ public struct Presentation: Codable, Equatable, Sendable {
         var valid: Bool {
             if chartType == .pie {
                 guard let segments, !segments.isEmpty else { return false }
-                return segments.allSatisfy { $0.value.isFinite && $0.value >= 0 }
+                return segments.allSatisfy { $0.value.isFinite && $0.value > 0 }
             }
             guard let categories, let series, !categories.isEmpty, !series.isEmpty else { return false }
             return series.allSatisfy { $0.values.count == categories.count && $0.values.allSatisfy(\.isFinite) }

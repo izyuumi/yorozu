@@ -104,6 +104,8 @@ struct PresentationTests {
         #"{"type":"chart","chartType":"line","title":"C","categories":["A"],"series":[{"name":"S","values":[null]}],"alt":"alt"}"#,
         #"{"type":"chart","chartType":"pie","title":"C","segments":[{"label":"A","value":-1}],"alt":"alt"}"#,
         #"{"type":"chart","chartType":"pie","title":"C","segments":[],"alt":"alt"}"#,
+        // A pie slice of nothing, as the plugin rejects it.
+        #"{"type":"chart","chartType":"pie","title":"C","segments":[{"label":"A","value":2},{"label":"B","value":0}],"alt":"alt"}"#,
         #"{"type":"chart","chartType":"radar","title":"C","alt":"alt"}"#,
         #"{"type":"text","alt":"alt"}"#,
     ])
@@ -121,6 +123,32 @@ struct PresentationTests {
         let chart = Presentation.Chart(chartType: .bar, categories: ["A"], series: [.init(name: "S", values: [.nan])])
         #expect(!chart.valid)
         #expect(!Presentation.Chart(chartType: .pie, segments: [.init(label: "A", value: .infinity)]).valid)
+    }
+
+    @Test func pieSegmentOfZeroFailsTheCheck() {
+        #expect(!Presentation.Chart(chartType: .pie, segments: [.init(label: "A", value: 1), .init(label: "B", value: 0)]).valid)
+        #expect(Presentation.Chart(chartType: .pie, segments: [.init(label: "A", value: 0.001)]).valid)
+    }
+
+    /// A table cell shows the digits the plugin's `alt` writes (JavaScript's `String(n)`): no grouping, full precision.
+    @Test(arguments: [
+        ("2026", "2026"), ("-2026", "-2026"), ("120", "120"), ("0", "0"), ("-0", "0"), ("2.5", "2.5"),
+        ("0.1234567", "0.1234567"), ("0.30000000000000004", "0.30000000000000004"),
+        ("1234567.891", "1234567.891"), ("9007199254740993", "9007199254740992"),
+        ("123456789012345680000", "123456789012345680000"), ("1e21", "1e+21"), ("1.5e300", "1.5e+300"),
+        ("0.00001", "0.00001"), ("0.000001", "0.000001"), ("1e-7", "1e-7"), ("-1.25e-10", "-1.25e-10"),
+    ])
+    func tableNumberShowsEveryDigitWithoutGrouping(json: String, shown: String) throws {
+        let card = try card(blocks: #"{"type":"table","headers":["A"],"rows":[[\#(json)]],"alt":"alt"}"#)
+        guard case .table(let table, _) = card.blocks.first else {
+            Issue.record("not a table")
+            return
+        }
+        #expect(table.rows[0][0].text == shown)
+    }
+
+    @Test func tableStringCellShowsAsSent() {
+        #expect(Presentation.Cell.string("1,000").text == "1,000")
     }
 
     @Test func rowHeaderIndexOutsideTheHeadersIsIgnored() throws {

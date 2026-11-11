@@ -8,6 +8,7 @@ private enum CardMetrics {
     static let cellTight: CGFloat = 5
     static let radius: CGFloat = 9
     static let chartHeight: CGFloat = 220
+    static let areaOpacity: Double = 0.5
 }
 
 /// A reply's read-only card (capability `presentation`), in place of its text bubble: title and tone, then each
@@ -134,10 +135,7 @@ private struct CardTable: View {
     }
 
     private func text(_ row: Int, _ column: Int) -> String {
-        switch table.rows[row][column] {
-        case .string(let text): text
-        case .number(let number): number.formatted()
-        }
+        table.rows[row][column].text
     }
 
     /// "Traveler A, Paid, 120": the cell with its row header and column header.
@@ -205,7 +203,7 @@ private struct CardChart: View, AXChartDescriptorRepresentable {
                 let name = PlottableValue.value(String(localized: "Series"), point.series)
                 switch chart.chartType {
                 case .line: LineMark(x: x, y: y).foregroundStyle(by: name)
-                case .area: AreaMark(x: x, y: y).foregroundStyle(by: name)
+                case .area: AreaMark(x: x, y: y, stacking: .unstacked).foregroundStyle(by: name).opacity(CardMetrics.areaOpacity)
                 default: BarMark(x: x, y: y).foregroundStyle(by: name).position(by: name)
                 }
             }
