@@ -15,7 +15,7 @@ const { applyPatch } = await import("../src/sessions.ts");
 const { downgrade } = await import("../src/hub.ts");
 const { encodeEvent, PEER_INFO, PRESENTATION } = await import("../src/envelope.ts");
 const {
-  CARD_INDEX, CARD_WAIT_MS, CARDS, CONV_CARDS_MAX, cardKey, FORGOTTEN_MAX, cardStore, channelCard, MESSAGE_TOOL, MESSAGE_TOOL_HINTS, PRESENTATION_CAPABILITIES,
+  CARD_GUIDANCE, CARD_INDEX, CARD_WAIT_MS, CARDS, CONV_CARDS_MAX, cardKey, FORGOTTEN_MAX, cardStore, channelCard, MESSAGE_TOOL, MESSAGE_TOOL_HINTS, PRESENTATION_CAPABILITIES,
   renderedPayload, STORE_KEY_MAX_BYTES, STORE_VALUE_MAX_BYTES, turnCardKey,
 } = await import("../src/cards.ts");
 const { MAX_PRESENTATION_BYTES, sanitizePresentation } = await import("../src/presentation.ts");
@@ -117,6 +117,29 @@ test("the channel declares cards to OpenClaw, to the agent and to the apps", () 
   assert.match(hints, /`presentation`.*`title`.*`text`, `context`, `divider`, `table` or `chart`/);
   assert.match(hints, /plain text is always sent alongside/);
   assert.doesNotMatch(hints, /button|select|slider|approv/i);
+});
+
+test("every turn carries static card guidance without channel config and preserves its quote", async () => {
+  const captured: { supplemental: { groupSystemPrompt: string; quote?: unknown } }[] = [];
+  host.run = async (_deliver: unknown, _start: unknown, ctxPayload: typeof captured[number]) => {
+    captured.push(ctxPayload);
+  };
+  try {
+    const quote = { messageId: uuid(8801), text: "Quoted costs" };
+    for (const [i, replyTo] of [undefined, quote, undefined].entries()) {
+      await handleMessage({ cfg: {}, accountId: "default", agent: "main", mediaMaxBytes: 1, presentationSdk: sdk, log } as never,
+        { convId: uuid(8800), messageId: uuid(8810 + i), text: `Turn ${i}`, ...(replyTo && { replyTo }) });
+    }
+    assert.equal(captured.length, 3);
+    assert.equal(CARD_GUIDANCE, ["## Yorozu app", ...MESSAGE_TOOL_HINTS].join("\n"));
+    assert.deepEqual(captured.map((ctx) => ctx.supplemental), [
+      { groupSystemPrompt: CARD_GUIDANCE },
+      { groupSystemPrompt: CARD_GUIDANCE, quote: { id: quote.messageId, fullId: quote.messageId, body: quote.text, senderAllowed: true } },
+      { groupSystemPrompt: CARD_GUIDANCE },
+    ]);
+  } finally {
+    host.run = undefined;
+  }
 });
 
 test("a table and chart card goes out with its text, alt on every block, and no controls", async () => {
