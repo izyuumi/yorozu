@@ -131,7 +131,12 @@ test("every turn carries static card guidance without channel config and preserv
         { convId: uuid(8800), messageId: uuid(8810 + i), text: `Turn ${i}`, ...(replyTo && { replyTo }) });
     }
     assert.equal(captured.length, 3);
-    assert.equal(CARD_GUIDANCE, ["## Yorozu app", ...MESSAGE_TOOL_HINTS].join("\n"));
+    for (const { supplemental: { groupSystemPrompt } } of captured) {
+      assert.ok(groupSystemPrompt.startsWith("## Yorozu app"));
+      for (const hint of MESSAGE_TOOL_HINTS) assert.ok(groupSystemPrompt.includes(hint));
+      assert.match(groupSystemPrompt, /presentation/);
+      assert.match(groupSystemPrompt, /table/);
+    }
     assert.deepEqual(captured.map((ctx) => ctx.supplemental), [
       { groupSystemPrompt: CARD_GUIDANCE },
       { groupSystemPrompt: CARD_GUIDANCE, quote: { id: quote.messageId, fullId: quote.messageId, body: quote.text, senderAllowed: true } },
