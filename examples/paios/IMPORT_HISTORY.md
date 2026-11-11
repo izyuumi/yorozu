@@ -47,7 +47,7 @@ Fill my PAIOS folder with the lasting facts you already know about me. PAIOS is 
 
 8. Never modify, move or delete the source history or your harness's own memory. Open it read-only.
 
-9. Make a later run safe. Before you write a fact, search PAIOS for it. If a record in the same folder already says the same thing, do not write a second one: skip it, or add the new source to that record's source_refs only if that source is not already listed. If a record has the same source locator, update it instead of duplicating it. If I approved nothing new, write nothing, including no edits to Runtime/Now.md. A second run on unchanged history must write no new fact records and must not rewrite files that already contain those facts.
+9. Make a later run safe. Before you write a fact, search PAIOS for it. If a record in the same folder already says the same thing about the same subject, do not write a second one: skip it, or add the new source to that record's source_refs only if that source is not already listed. If that same-fact record already has the same source locator, update it instead of duplicating it. A shared source locator alone (a session ID, or one file and heading) is not enough to treat two different approved facts as the same record: write a separate record for each fact. If I approved nothing new, write nothing, including no edits to Runtime/Now.md. A second run on unchanged history must write no new fact records and must not rewrite files that already contain those facts.
 
 10. Finish with a short report: how many items you found, how many I approved, how many you wrote and to which files, how many you skipped as secrets or sensitive, the conflicts still open, and which sources you did not read.
 ```
