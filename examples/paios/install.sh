@@ -39,7 +39,7 @@ die() { printf 'install.sh: %s\n' "$1" >&2; exit 1; }
 usage_error() { printf 'install.sh: %s\n\n' "$1" >&2; usage >&2; exit 2; }
 
 cleanup() {
-  if [ -n "$tmp" ]; then rm -rf -- "$tmp"; fi
+  if [ -n "$tmp" ]; then rm -rf -- "$tmp" || true; fi
   # Only ever removes the PAIOS folder this run created.
   if [ "$created" = 1 ] && [ -n "$dest" ]; then
     printf 'install.sh: removing %s\n' "$dest" >&2
@@ -105,9 +105,9 @@ main() {
   fi
   [ -n "$vault" ] || usage_error "no vault path given"
 
-  command -v python3 >/dev/null 2>&1 || die "python3 3.9 or newer is required, and python3 was not found"
+  command -v python3 >/dev/null 2>&1 || die "Python 3.9 or newer is required; python3 was not found"
   python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' \
-    || die "python3 3.9 or newer is required; found $(python3 -V 2>&1)"
+    || die "Python 3.9 or newer is required; found $(python3 -V 2>&1)"
 
   [ -d "$vault" ] || die "not a folder: $vault (create it or open it in Obsidian first)"
   vault="$(cd -- "$vault" && pwd -P)"
@@ -124,7 +124,7 @@ main() {
     valid_tz "$PAIOS_TZ" || usage_error "PAIOS_TZ: not an IANA time zone: $PAIOS_TZ"
     tz="$PAIOS_TZ"
   elif ! tz="$(system_tz)"; then
-    echo "Note: could not detect the system time zone; using UTC (set it with --tz)."
+    echo "Note: could not detect the system time zone; using UTC. To change it, edit PAIOS_TZ in $dest/paios.env."
     tz="UTC"
   fi
 
@@ -142,7 +142,7 @@ main() {
     { [[ "$ref" =~ $ref_re ]] && [[ "$ref" != *..* ]]; } || usage_error "not a valid git ref: $ref"
     [[ "$repo" =~ $repo_re ]] || usage_error "PAIOS_REPO must be owner/name: $repo"
     command -v curl >/dev/null 2>&1 || die "curl is required to download PAIOS"
-    command -v tar >/dev/null 2>&1 || die "tar is required to download PAIOS"
+    command -v tar >/dev/null 2>&1 || die "tar is required to unpack the download"
     tmp="$(mktemp -d)"
     curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 2 --connect-timeout 20 \
       -o "$tmp/src.tar.gz" "https://codeload.github.com/$repo/tar.gz/$ref" \
@@ -199,16 +199,15 @@ PY
   # Read back from a child process, so the values must be exported.
   # shellcheck disable=SC1091,SC2016
   ( set +u; unset PAIOS_VAULT PAIOS_TZ; . "$dest/paios.env"
-    bash -c '[ "$PAIOS_VAULT" = "$1" ] && [ "$PAIOS_TZ" = "$2" ]' _ "$vault" "$tz" ) \
-    || die "paios.env did not read back the vault path and time zone; removing $dest"
+    "$BASH" -c '[ "$PAIOS_VAULT" = "$1" ] && [ "$PAIOS_TZ" = "$2" ]' _ "$vault" "$tz" ) \
+    || die "the written paios.env does not export the expected vault path and time zone"
 
   # The self-test works on its own temporary copy and changes nothing in $dest.
   local out rc=0
-  out="$(PAIOS_TZ="$tz" bash "$dest/System/Scripts/selftest.sh" </dev/null 2>&1)" || rc=$?
+  out="$(PAIOS_TZ="$tz" "$BASH" "$dest/System/Scripts/selftest.sh" </dev/null 2>&1)" || rc=$?
   printf '%s\n' "$out"
-  if [ "$rc" -ne 0 ] || ! printf '%s\n' "$out" | grep -q 'SELFTEST PASS'; then
-    die "self-test failed; removing $dest"
-  fi
+  case "$out" in *'SELFTEST PASS'*) ;; *) rc=1 ;; esac
+  [ "$rc" -eq 0 ] || die "self-test failed"
   created=0
 
   printf '\nInstalled PAIOS into %s\nTime zone: %s\n\nNext steps:\n' "$dest" "$tz"

@@ -37,7 +37,9 @@ jobs:
           python3 -V
 
       - name: Self-test
-        run: bash examples/paios/System/Scripts/selftest.sh
+        run: |
+          bash examples/paios/System/Scripts/selftest.sh
+          /bin/bash examples/paios/System/Scripts/selftest.sh
 
       - name: Install from the checkout
         run: |
@@ -69,7 +71,7 @@ jobs:
           [ "$rc" -eq 2 ]
           [ "$before" = "$(listing)" ]
 
-      - name: Refuse a file and a symlink
+      - name: Refuse a file and a dangling symlink named PAIOS
         run: |
           set -euo pipefail
           v=$(mktemp -d)
@@ -79,14 +81,17 @@ jobs:
           echo "$out"
           [ "$rc" -eq 1 ]
           grep -q 'Refusing' <<<"$out"
-          [ -f "$v/PAIOS" ] && [ ! -L "$v/PAIOS" ] && [ "$(cat "$v/PAIOS")" = keep ]
+          [ -f "$v/PAIOS" ]
+          [ ! -L "$v/PAIOS" ]
+          [ "$(cat "$v/PAIOS")" = keep ]
           rm "$v/PAIOS"
           ln -s "$v/no-such-target" "$v/PAIOS"
           rc=0; out=$(/bin/bash examples/paios/install.sh --tz UTC "$v" 2>&1) || rc=$?
           echo "$out"
           [ "$rc" -eq 1 ]
           grep -q 'Refusing' <<<"$out"
-          [ -L "$v/PAIOS" ] && [ "$(readlink "$v/PAIOS")" = "$v/no-such-target" ]
+          [ -L "$v/PAIOS" ]
+          [ "$(readlink "$v/PAIOS")" = "$v/no-such-target" ]
           [ ! -e "$v/no-such-target" ]
 
       - name: No vault path and no terminal
@@ -102,7 +107,8 @@ jobs:
           echo "$v" >> "$RUNNER_TEMP/paios-tmpdirs"
           rc=0; /bin/bash examples/paios/install.sh --tz Not/AZone "$v" || rc=$?
           [ "$rc" -eq 2 ]
-          [ ! -e "$v/PAIOS" ] && [ ! -L "$v/PAIOS" ]
+          [ ! -e "$v/PAIOS" ]
+          [ ! -L "$v/PAIOS" ]
 
       - name: System time zone
         run: |
@@ -116,6 +122,12 @@ jobs:
           echo "PAIOS_TZ=$got"
           [ -n "$got" ]
           python3 -c 'import sys, zoneinfo; zoneinfo.ZoneInfo(sys.argv[1])' "$got"
+          v2=$(mktemp -d)
+          echo "$v2" >> "$RUNNER_TEMP/paios-tmpdirs"
+          env -u PAIOS_TZ TZ=Asia/Tokyo /bin/bash examples/paios/install.sh "$v2"
+          # shellcheck disable=SC1091,SC2016
+          ( set +u; unset PAIOS_VAULT PAIOS_TZ; . "$v2/PAIOS/paios.env"
+            /bin/bash -c '[ "$PAIOS_TZ" = Asia/Tokyo ]' )
 
       - name: Path with spaces, a quote and a dollar sign
         run: |
@@ -141,7 +153,8 @@ jobs:
           printf '#!/bin/bash\necho SELFTEST FAIL: forced; exit 1\n' > "$copy/paios/System/Scripts/selftest.sh"
           rc=0; /bin/bash "$copy/paios/install.sh" --tz UTC "$v" || rc=$?
           [ "$rc" -eq 1 ]
-          [ ! -e "$v/PAIOS" ] && [ ! -L "$v/PAIOS" ]
+          [ ! -e "$v/PAIOS" ]
+          [ ! -L "$v/PAIOS" ]
           [ -z "$(ls -A "$v")" ]
 
       - name: Checkout junk is not copied

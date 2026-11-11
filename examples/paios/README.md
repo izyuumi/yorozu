@@ -33,7 +33,7 @@ The vault folder must already exist. The script copies this folder into `<vault>
 Options:
 
 - `--tz <zone>`: your IANA time zone, e.g. `--tz Europe/Berlin`. Default: `PAIOS_TZ` if set, else the system zone, else UTC.
-- `--ref <ref>` or `PAIOS_REF`: the branch, tag or commit the one-liner fetches. Default: `main`.
+- `--ref <ref>` or `PAIOS_REF`: the branch, tag or commit to fetch when the script is not run from a checkout. Default: `main`.
 - `PAIOS_REPO`: `owner/name` of a fork to fetch from. Default: `izyuumi/yorozu`.
 - `-h`: show the help.
 
@@ -45,7 +45,7 @@ less install.sh
 bash install.sh "/path/to/your vault"
 ```
 
-Add `--ref <commit>` to pin the download to a commit, so the content it fetches matches the script you read.
+The script itself comes from `main`. Add `--ref <commit>` to pin the files it installs to that commit.
 
 ### No script
 
@@ -119,7 +119,7 @@ The scripts under `System/Scripts/` are standard-library Python 3.9+ or bash, ta
 | `HANDOFF_ROOT` | handoff | `$PAIOS_VAULT/PAIOS/Handover` |
 | `HANDOFF_ROLES` | handoff | `chief-of-staff,coder,product-owner` |
 | `PAIOS_PREFLIGHT_STATE` | vault-preflight | `state/` next to `compare.py` |
-| `PAIOS_REF` | `install.sh`, one-liner: the ref to fetch | `main` |
+| `PAIOS_REF` | `install.sh`, when not run from a checkout: the ref to fetch | `main` |
 | `PAIOS_REPO` | `install.sh`: the `owner/name` to fetch | `izyuumi/yorozu` |
 
 ## Privacy
