@@ -6,6 +6,16 @@ enum DemoData {
     static let travelID = "d0000000-0000-4000-8000-000000000002"
     static let codeID = "d0000000-0000-4000-8000-000000000003"
     static let archiveID = "d0000000-0000-4000-8000-000000000004"
+    #if DEBUG
+    static let longChatID = "d0000000-0000-4000-8000-000000000006"
+    /// `--demo --long-chat N`: a seeded N-message thread for reproducing long-timeline bugs.
+    static let longChatCount: Int? = {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let flag = arguments.firstIndex(of: "--long-chat"), flag + 1 < arguments.count,
+            let count = Int(arguments[flag + 1]) else { return nil }
+        return min(max(count, 1), 2_000)
+    }()
+    #endif
 
     private static let content: Content = {
         let parts = (Locale.preferredLanguages.first ?? "en").split(separator: "-").map(String.init)
@@ -29,6 +39,7 @@ enum DemoData {
             codeID: content.titles[2], archiveID: content.titles[3]]
         #if DEBUG
         if PreviewScene.current != nil { titles[PreviewScene.tidyID] = PreviewScene.tidyTitle }
+        if longChatCount != nil { titles[longChatID] = "Long chat" }
         #endif
         return titles
     }
@@ -58,6 +69,8 @@ enum DemoData {
         ]
         #if DEBUG
         if PreviewScene.current != nil { histories[PreviewScene.tidyID] = thread(PreviewScene.tidy, age: 90_000, toolRow: true) }
+        // `thread` spaces items 30 s apart, so the age grows with the count: the last message is a minute old, the newest of all.
+        if let count = longChatCount { histories[longChatID] = thread(longChat(count), age: Int64(count + 1) * 30_000) }
         #endif
         return histories
     }
@@ -101,6 +114,42 @@ enum DemoData {
         return reply?.text ?? content.fallback
     }
 }
+
+#if DEBUG
+private extension DemoData {
+    /// Deterministic filler, user first: lengths from one line to about thirty, with Markdown and code.
+    static func longChat(_ count: Int) -> [(HistoryItem.Kind, String)] {
+        (0..<count).map { index -> (HistoryItem.Kind, String) in
+            let turn = index / 2, number = turn + 1
+            if index.isMultiple(of: 2) {
+                switch turn % 5 {
+                case 0: return (.user, "What is next for plot \(number)?")
+                case 1: return (.user, "Ok, go on.")
+                case 2: return (.user, "Plot \(number) gets shade after three, and the hose does not reach it.\nDoes that change what we plant there?")
+                case 3: return (.user, "Before we continue, here is where things stand for bed \(number). The soil was turned last week, the compost bin is about half full, and two volunteers can come on Saturday morning but only until noon. I would rather finish one bed properly than start three.")
+                default: return (.user, "Two things about row \(number).\n\nFirst, the seed order arrived short, so we have fewer beans than planned.\n\nSecond, can you write the watering rota as a list?")
+                }
+            }
+            if turn % 10 == 9 {
+                let beds = (0..<(8 + (turn / 10) % 11)).map { "    var bed\($0 + 1) = \(($0 * 7 + turn) % 40)" }
+                return (.agent, "Here is the tally for plot \(number) as code:\n\n```swift\nstruct Plot\(number) {\n"
+                    + beds.joined(separator: "\n") + "\n}\n```\n\nEach number is a count of seedlings.")
+            }
+            switch turn % 6 {
+            case 0: return (.agent, "Plot \(number) is ready for planting.")
+            case 1: return (.agent, "Carry on with bed \(number) as planned.\n\nThe **only** change is the order: water first, then mulch, so the mulch does not wash into the path. *Nothing else moves.*")
+            case 2: return (.agent, "For plot \(number), shade changes the list:\n\n- **Lettuce** and *spinach* like the afternoon shade.\n- **Mint** grows anywhere, so keep it in a pot.\n- Leave the tomatoes in the sunny bed.\n- Two watering cans cover what the hose cannot reach.\n\nThat keeps the bed useful without moving the tap.")
+            case 3:
+                let weeks = (1...(6 + turn % 4)).map { "**Week \($0).** Bed \(number) needs about \($0 * 2) litres a day. *Check the soil with a finger* before watering, and skip a day after rain." }
+                return (.agent, "Here is the full plan for bed \(number), week by week.\n\n" + weeks.joined(separator: "\n\n")
+                    + "\n\nFinishing one bed properly is the right call.")
+            case 4: return (.agent, "The rota for row \(number):\n\n1. **Monday**: the early volunteer waters before nine.\n2. **Wednesday**: whoever closes the shed waters the beans.\n3. **Friday**: a long soak for every bed.\n4. **Sunday**: *rest*, unless the week was dry.\n\nWith fewer beans, plant them closer to the fence and fill the gap with radishes.")
+            default: return (.agent, "Short answer for plot \(number): yes.\n\nThe longer answer is that the soil there drains quickly, so anything planted this month needs water twice a day for the first week. After that the roots are deep enough to cope, and one evening watering is plenty.\n\nIf Saturday is the only day with help, use it for the heavy work and leave the planting for a weekday.")
+            }
+        }
+    }
+}
+#endif
 
 private extension DemoData {
     struct Content: Sendable {

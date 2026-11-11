@@ -1165,8 +1165,11 @@ final class AppModel {
         patch(ConvPatch(convId: convId, pinned: pinned)) { $0.pinnedAt = pinned ? $0.pinnedAt ?? Self.now : nil }
     }
 
-    func delete(_ convId: String) {
+    @discardableResult
+    func delete(_ convId: String) -> Bool {
+        guard conversations[convId]?.archived == true else { return false }
         patch(ConvPatch(convId: convId, deleted: true)) { _ in }
+        return true
     }
 
     var canPatch: Bool { state == .ready }

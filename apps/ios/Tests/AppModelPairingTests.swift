@@ -2,90 +2,25 @@ import Foundation
 import Testing
 import YorozuWire
 
-private actor IdleTransport: ClientTransport {
-    func updates() -> AsyncStream<RelayConnection.Update> { AsyncStream { $0.finish() } }
-    func start() {}
-    func reconnect() {}
-    func stop() {}
-    func registerPush(deviceToken: String) {}
-    func send(_ event: WireEvent) -> Bool { false }
-    func send(_ message: Message) -> Bool { false }
-    func raceAgain() {}
-}
-
-/// Yields what a test scripts; updates yielded before `updates()` is subscribed wait for it.
-private actor ScriptedTransport: ClientTransport {
-    private var continuation: AsyncStream<RelayConnection.Update>.Continuation?
-    private var waiting: [RelayConnection.Update] = []
-
-    func emit(_ update: RelayConnection.Update) {
-        if let continuation { continuation.yield(update) } else { waiting.append(update) }
-    }
-
-    func updates() -> AsyncStream<RelayConnection.Update> {
-        let (stream, continuation) = AsyncStream<RelayConnection.Update>.makeStream()
-        for update in waiting { continuation.yield(update) }
-        waiting = []
-        self.continuation = continuation
-        return stream
-    }
-
-    func start() {}
-    func reconnect() {}
-    func stop() {}
-    func registerPush(deviceToken: String) {}
-    func send(_ event: WireEvent) -> Bool { false }
-    func send(_ message: Message) -> Bool { false }
-    func raceAgain() {}
-}
-
 @MainActor
 @Suite struct AppModelPairingTests {
-    @MainActor private final class Transports {
-        var asked = 0
-        var fails = true
-        var scripted: ScriptedTransport?
-
-        func make() throws -> any ClientTransport {
-            asked += 1
-            if fails { throw CocoaError(.featureUnsupported) }
-            return scripted ?? IdleTransport()
-        }
-    }
-
-    private let storage = MemoryPairingStorage()
-    private let migration = PairingMigration.State()
-    private let transports = Transports()
-    private let cache: ConversationCache
-    private let convId = WireEvent.newId()
+    private let harness: ModelHarness
 
     init() throws {
-        // Fail before AppModel can reach an app-owned support directory or the App Group.
-        let bundleID = try #require(Bundle.main.bundleIdentifier)
-        try #require(!bundleID.hasPrefix("to.yumi.yorozu"))
-        try #require(!clientSupportDirectory.path.contains("to.yumi.yorozu"))
-        let environment = ProcessInfo.processInfo.environment
-        let home = try #require(environment["HOME"])
-        try #require(home == environment["CFFIXED_USER_HOME"])
-        try #require(URL(fileURLWithPath: home).lastPathComponent.hasPrefix("YorozuTests-"))
-        let suite = "YorozuTests-\(UUID().uuidString)"
-        let root = URL(fileURLWithPath: home).appending(path: suite, directoryHint: .isDirectory)
-        let completion = try #require(UserDefaults(suiteName: suite))
-        cache = ConversationCache(storedNames: StoredNames(root: root, completion: completion))
+        harness = try ModelHarness()
     }
 
-    private func store(paired: Bool) throws -> Pairing {
-        let json = #"{"pairing":{"v":3,"relayUrl":"wss://relay.test","macPubkey":"key","token":"","roomId":"room-\#(convId)"},"identity":{"signingPrivateKey":"","signingPublicKey":"","sessionPrivateKey":"","sessionPublicKey":""},"relayKnows":true,"paired":\#(paired)}"#
-        let pairing = try JSONDecoder().decode(Pairing.self, from: Data(json.utf8))
-        try pairing.save(storage: storage)
-        cache.save(Conversation(id: convId, createdAt: 1, updatedAt: 1))
-        return pairing
-    }
+    private var storage: MemoryPairingStorage { harness.storage }
+    private var migration: PairingMigration.State { harness.migration }
+    private var transports: ModelHarness.Transports { harness.transports }
+    private var cache: ConversationCache { harness.cache }
+    private var convId: String { harness.convId }
 
-    private func makeModel() -> AppModel {
-        AppModel(demo: false, storage: storage, migration: migration, cache: cache,
-            transport: { [transports] _, _ in try transports.make() }, shares: { [] }, notifications: {})
-    }
+    private func store(paired: Bool) throws -> Pairing { try harness.store(paired: paired) }
+    private func makeModel() -> AppModel { harness.makeModel() }
+    private func settled(_ condition: () -> Bool) async -> Bool { await harness.settled(condition) }
+    private func openFirstSession() async throws -> AppModel { try await harness.openFirstSession() }
+    private func stored() -> Pairing? { harness.stored() }
 
     @Test(arguments: [true, false]) func aFailedConnectKeepsTheStoredPairing(paired: Bool) throws {
         let pairing = try store(paired: paired)
@@ -127,27 +62,6 @@ private actor ScriptedTransport: ClientTransport {
         #expect(model.conversations[convId] != nil)
         #expect(transports.asked == 1)
     }
-
-    /// The listen task applies updates on its own turns of the main actor.
-    private func settled(_ condition: () -> Bool) async -> Bool {
-        for _ in 0..<100 where !condition() { try? await Task.sleep(for: .milliseconds(10)) }
-        return condition()
-    }
-
-    /// A model over the stored pairing whose transport is ready and has opened its first session.
-    private func openFirstSession() async throws -> AppModel {
-        let transport = ScriptedTransport()
-        await transport.emit(.state(.ready))
-        await transport.emit(.sessionOpen(PeerInfo(app: "test")))
-        transports.fails = false
-        transports.scripted = transport
-        let model = makeModel()
-        let opened = await settled { model.hostInfo != nil }
-        try #require(opened)
-        return model
-    }
-
-    private func stored() -> Pairing? { try? Pairing.load(storage: storage, state: migration) }
 
     @Test func aFailedPairedSaveIsSurfacedAndRetried() async throws {
         let pairing = try store(paired: false)
