@@ -1132,6 +1132,13 @@ final class AppModel {
             accent: UserDefaults.standard.string(forKey: Accent.key), live: active))
     }
 
+    /// An explicit new conversation: allocates an id and requests text (not voice) composer focus.
+    func newConversationId() -> String {
+        let id = WireEvent.newId()
+        composeRequest = ComposeRequest(convId: id, talk: false)
+        return id
+    }
+
     /// Opens what a widget, a control or a Lock Screen accessory asked for. Without a pairing the app just comes forward.
     /// Demo mode opens only new conversations: it writes no snapshot, so no link names one of its conversations.
     func open(_ link: WidgetLink) {
@@ -1140,9 +1147,7 @@ final class AppModel {
         case .conversation(let convId):
             guard !isDemo, WireEvent.isId(convId) else { return }
             requestedConversation = convId
-        case .new:
-            requestedConversation = WireEvent.newId()
-        case .ask, .talk:
+        case .new, .ask, .talk:
             let convId = WireEvent.newId()
             composeRequest = ComposeRequest(convId: convId, talk: link == .talk)
             requestedConversation = convId
