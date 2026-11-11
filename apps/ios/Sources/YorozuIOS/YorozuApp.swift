@@ -14,6 +14,11 @@ struct YorozuApp: App {
         WindowGroup {
             RootView(model: delegate.model)
                 .zoomable()
+                #if DEBUG
+                .task {
+                    if DemoData.longChatCount != nil, delegate.model.isDemo { delegate.model.requestedConversation = DemoData.longChatID }
+                }
+                #endif
                 #if os(macOS)
                 .task(id: delegate.model.isDemo) {
                     guard !delegate.model.isDemo else { return }
