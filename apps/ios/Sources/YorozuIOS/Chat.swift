@@ -736,8 +736,16 @@ private struct Composer: View {
         .task(id: request) {
             guard let request else { return }
             onRequestHandled()
-            guard request.talk else { return requestedFocus = request.convId }
+            guard request.talk else {
+                // The unfocused split pane must not steal the keyboard.
+                if focus != .unfocused { requestedFocus = request.convId }
+                return
+            }
             if voiceAvailable, VoiceSetup.shared.ready { await voice.start() } else { settingUpVoice = true }
+        }
+        .onChange(of: voice.phase) { _, phase in
+            // requestedFocus is one-shot: the text view is rebuilt when the voice bar leaves, and would otherwise refocus.
+            if phase != .idle { requestedFocus = nil }
         }
         .alert(String(localized: "Microphone access is off"), isPresented: $voice.micDenied) {
             Button(String(localized: "Open Settings")) { openMicrophoneSettings() }
