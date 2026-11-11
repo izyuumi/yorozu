@@ -6,7 +6,7 @@
 2. Reprioritize the execution queue using value, urgency, dependencies, effort, risk, and alignment.
 3. Review unresolved contradictions and ask only the clarifications now material.
 4. Review inferred goals, preferences, and mental models for evidence quality and drift.
-5. Apply [[System/Workflows/Current Truth]]: merge duplicate identities with logged lineage, keep one queue row per task ID, and replace competing current paragraphs with one evidence-backed state and linked history. Similar topics alone are not duplicate identities.
+5. Apply [System/Workflows/Current Truth](<Current Truth.md>): merge duplicate identities with logged lineage, keep one queue row per task ID, and replace competing current paragraphs with one evidence-backed state and linked history. Similar topics alone are not duplicate identities.
 6. Review waiting-on items and follow-up dates. Before classifying a missing scheduled artifact as failure, verify the expected timezone/day schedule and distinguish not-due, admission-deferred, disabled, started/failed and delivery-only gaps from available evidence. Never infer a missed slot from a daily cadence after a weekday-only change.
 7. Evaluate SOP successes, failures, and missing steps.
 8. Update the capability and self-model from actual outcomes.
@@ -27,4 +27,4 @@ After consolidation, check unique task IDs, compatible table headers and no stra
 
 ## Wiki health
 
-Run a bounded broad lint under [[System/Workflows/LLM Wiki#Lint — scoped after writes, broader during weekly maintenance]]. Reconcile catalog coverage; inspect orphan knowledge pages, missing concepts, source provenance, stale claims and contradictions. Record reviewed scope, findings and unresolved backlog in [[Runtime/Wiki Review Queue]] and [[PAIOS/log]].
+Run a bounded broad lint under [System/Workflows/LLM Wiki#Lint — scoped after writes, broader during weekly maintenance](<LLM Wiki.md#Lint — scoped after writes, broader during weekly maintenance>). Reconcile catalog coverage; inspect orphan knowledge pages, missing concepts, source provenance, stale claims and contradictions. Record reviewed scope, findings and unresolved backlog in [Runtime/Wiki Review Queue](<../../Runtime/Wiki Review Queue.md>) and [PAIOS/log](../../log.md).

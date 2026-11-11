@@ -6,7 +6,8 @@
 receipt.json holds the nine receipt fields: request, context_used, tools_used, checks, retries,
 user_corrections, result, rollback, lesson. Every field is required ("none" is a fine value).
 Refuses secret-looking text and never overwrites: an existing note gets " (2)", " (3)" and so on.
-Logs folder: --logs-dir, else $PAIOS_LOGS, else $PAIOS_VAULT/PAIOS/Execution/Logs. Dates use $PAIOS_TZ (default UTC).
+Logs folder: --logs-dir, else $PAIOS_LOGS, else $PAIOS_ROOT/PAIOS/Execution/Logs
+($PAIOS_VAULT is the older name for PAIOS_ROOT). Dates use $PAIOS_TZ (default UTC).
 Exit 0 written (or dry run ok), 1 refused, 2 usage error.
 """
 import argparse, json, os, re, sys
@@ -38,7 +39,7 @@ def main(argv=None):
     p.add_argument("--dry-run", action="store_true")
     a = p.parse_args(argv)
     if not a.logs_dir:
-        print("usage: set --logs-dir, PAIOS_LOGS or PAIOS_VAULT"); return 2
+        print("usage: set --logs-dir, PAIOS_LOGS or PAIOS_ROOT"); return 2
     if re.search(r"[/\\:]", a.topic) or re.search(r"[/\\:]", a.bot):
         print("REFUSED: bot and topic may not contain / \\ or :"); return 1
     receipt = json.load(open(a.receipt, encoding="utf-8"))

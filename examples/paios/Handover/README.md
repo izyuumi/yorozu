@@ -23,7 +23,7 @@ Handover/
   transfers/<from>-to-<to>.md    lane handovers between roles
 ```
 
-Set `HANDOFF_ROOT` if you keep this folder outside the vault.
+Set `HANDOFF_ROOT` if you keep this folder outside your PAIOS folder.
 
 ## The five-line header
 

@@ -9,7 +9,7 @@ version: 0.1.0
 
 ## 1. System boundaries
 
-PAIOS is a filesystem-backed personal cognitive operating system. Obsidian supplies durable storage and links; an agent runtime supplies reasoning and tool execution. The vault is not assumed to be a database, and the runtime is not assumed to be permanent.
+PAIOS is a filesystem-backed personal cognitive operating system. A plain folder of Markdown files supplies durable storage and links; an agent runtime supplies reasoning and tool execution. The folder is not assumed to be a database, and the runtime is not assumed to be permanent.
 
 The strict write boundary is `PAIOS/`. All imported databases and logs are mounted or referenced read-only. Derived files are written only inside PAIOS unless the user explicitly requests an outside edit.
 
