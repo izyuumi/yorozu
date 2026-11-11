@@ -38,7 +38,11 @@ fn reset_forgets_cursors_and_session_but_keeps_focus() {
     let mut m = Machine::default();
     m.step(Event::Focus(true));
     m.step(Event::SessionOpened);
-    assert_eq!(m.step(Event::Reply(cursor(1))), vec![cursor(1)]);
+    let before = ReadCursor {
+        conv_id: "x".into(),
+        ..cursor(1)
+    };
+    assert_eq!(m.step(Event::Reply(before.clone())), vec![before]);
     m.reset();
     assert!(m.step(Event::Opened(cursor(2))).is_empty());
     assert_eq!(m.step(Event::SessionOpened), vec![cursor(2)]);
