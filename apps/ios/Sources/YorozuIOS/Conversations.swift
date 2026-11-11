@@ -133,8 +133,9 @@ struct ConversationsView: View {
             isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
             titleVisibility: .visible, presenting: deleting) { conversation in
             Button(String(localized: "Delete"), role: .destructive) {
-                if selection == conversation.id { selection = nil }
-                model.delete(conversation.id)
+                let succeeded = model.delete(conversation.id)
+                selection = ConversationActions.selectionAfterConfirmedDelete(
+                    selection: selection, deletedId: conversation.id, succeeded: succeeded)
             }
         } message: { _ in
             Text("It is deleted on the host and on every device, with its history.")
@@ -201,9 +202,13 @@ struct ConversationsView: View {
                 ReadMarkButton(model: model, conversation: conversation)
                 if !archived { pin.tint(.orange).disabled(!model.canPatch) }
             }
-            .swipeActions(edge: .trailing) {
-                delete(String(localized: "Delete")).disabled(!model.canPatch)
-                archive.tint(.indigo).disabled(!model.canPatch)
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                ForEach(ConversationActions.trailingSwipe(archived: archived), id: \.self) { action in
+                    switch action {
+                    case .archive, .unarchive: archive.tint(.indigo).disabled(!model.canPatch)
+                    case .delete: delete(String(localized: "Delete")).disabled(!model.canPatch)
+                    }
+                }
             }
             .contextMenu {
                 if let openBeside, side(conversation.id) == nil {
@@ -217,9 +222,14 @@ struct ConversationsView: View {
                         newTitle = conversation.title ?? ""
                         renaming = conversation
                     }
-                    archive
-                    Divider()
-                    delete(String(localized: "Delete…"))
+                    ForEach(ConversationActions.menu(archived: archived), id: \.self) { action in
+                        switch action {
+                        case .archive, .unarchive: archive
+                        case .delete:
+                            Divider()
+                            delete(String(localized: "Delete…"))
+                        }
+                    }
                 }
                 .disabled(!model.canPatch)
             }

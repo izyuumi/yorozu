@@ -1224,3 +1224,9 @@ External TestFlight groups and Beta App Review stay off unless the repository va
 ## 2026-11-01 — Attachment limit 128 MB by default
 
 Replaces "Attachments both ways (`sendMedia`), 8 MB limit (OpenClaw's `mediaMaxMb` default), sealed chunks under the relay's 1 MiB frame limit. Share extension stays, with a preview of the picture or file being sent; PDFs show their first page (2026-10-17). No voice notes yet. (2026-10-15)": the default attachment limit is 128 MB, overridable through `agents.defaults.mediaMaxMb` or `channels.yorozu.mediaMaxMb`; the channel setting wins (#618).
+
+## 2026-11-11 — Archive-first swipe; Delete only on archived chats
+
+The owner's request: "Make the default thread item swipe to be archive first instead of delete. Deletion can only happen to archived chats. Also, implement shake to undo for both archive and delete."
+
+This change covers the first two sentences. On a conversation that is not archived, the trailing swipe offers Archive only, and a full swipe archives it. Delete is offered only on archived conversations, from the trailing swipe or the context menu, behind the confirmation dialog. Undo is out of scope for this change.
