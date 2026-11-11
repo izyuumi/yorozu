@@ -16,6 +16,44 @@ Every file is either part of the framework (rules, schemas, templates, workflows
 
 ## How to adopt it
 
+### One command
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/izyuumi/yorozu/main/examples/paios/install.sh | bash -s -- "/path/to/your vault"
+```
+
+Or from a checkout of this repository:
+
+```bash
+bash examples/paios/install.sh "/path/to/your vault"
+```
+
+The vault folder must already exist. The script copies this folder into `<vault>/PAIOS`, writes `PAIOS/paios.env` with your vault path and time zone, and runs the self-test. If `<vault>/PAIOS` already exists it refuses and changes nothing; it never overwrites or merges. It needs bash and Python 3.9+, plus curl and tar for the one-liner. When it finishes it prints the next steps (steps 3 to 5 below).
+
+Options:
+
+- `--tz <zone>`: your IANA time zone, e.g. `--tz Europe/Berlin`. Default: `PAIOS_TZ` if set, else the system zone.
+- `--ref <ref>` or `PAIOS_REF`: the branch, tag or commit the one-liner fetches. Default: `main`.
+- `PAIOS_REPO`: `owner/name` of a fork to fetch from. Default: `izyuumi/yorozu`.
+
+You can read the script before running it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/izyuumi/yorozu/main/examples/paios/install.sh -o install.sh
+less install.sh
+bash install.sh "/path/to/your vault"
+```
+
+### No script
+
+```bash
+npx degit izyuumi/yorozu/examples/paios "/path/to/your vault/PAIOS"
+```
+
+Then delete `install.sh` from the copy and follow the steps below from step 2.
+
+### By hand
+
 1. Copy this folder into your Obsidian vault and name it `PAIOS`:
    ```bash
    cp -R examples/paios "/path/to/your vault/PAIOS"
@@ -64,6 +102,7 @@ All scripts are standard-library Python 3.9+ or bash, and take paths from enviro
 | `System/Scripts/vault-preflight/preflight.sh` + `compare.py` | Tells an agent whether the vault is reachable and which rule files changed since it last read them. |
 | `System/Scripts/handoff/handoff.py` | Writes, claims, closes and checks handoff files in `Handover/`. |
 | `System/Scripts/selftest.sh` | Runs all of the above against a temporary copy and prints `SELFTEST PASS`. |
+| `install.sh` | Copies this folder into `<vault>/PAIOS`, writes `paios.env` and runs the self-test. Refuses if `PAIOS` already exists. Not copied into the vault. |
 
 | Variable | Used by | Default |
 |---|---|---|

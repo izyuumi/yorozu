@@ -8,9 +8,9 @@ type: entity
 schema_version: 1
 status: active
 title: Example
-created: 2026-07-31T12:00:00+00:00
-updated: 2026-07-31T12:00:00+00:00
-valid_from: 2026-07-31
+created: 2026-01-01T12:00:00+00:00
+updated: 2026-01-01T12:00:00+00:00
+valid_from: 2026-01-01
 valid_to:
 aliases: []
 tags: []
@@ -48,7 +48,7 @@ source_refs:
     conversation_id: abc123
     message_id: msg456
     event_id: event-...
-    observed_at: 2026-07-30T10:00:00+00:00
+    observed_at: 2025-12-31T10:00:00+00:00
 ```
 
 Never make a filesystem path the only evidence locator. Never include a secret in metadata.
