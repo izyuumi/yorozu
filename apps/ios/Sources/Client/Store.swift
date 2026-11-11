@@ -58,6 +58,8 @@ struct Conversation: Codable, Identifiable, Equatable {
     mutating func merge(_ incoming: [ChatItem]) {
         let seqs = incoming.compactMap(\.seq)
         if let low = seqs.min(), let high = seqs.max() {
+            // A page replaces the seq range it covers. The app never re-fetches a range it already holds (requests are
+            // `after: newestSeq` or `before: oldestSeq`), so no held item, and no card on one, falls inside it.
             let ids = Set(incoming.map(\.id))
             items.removeAll { item in item.seq.map { (low...high).contains($0) } == true && !ids.contains(item.id) }
         }
@@ -74,6 +76,7 @@ struct Conversation: Codable, Identifiable, Equatable {
                 if item.kind == .tools { item.tools = ToolCall.union(old.tools ?? [], item.tools ?? []) }
                 if item.attachments == nil { item.attachments = old.attachments }
                 if item.replyTo == nil { item.replyTo = old.replyTo }
+                if item.presentation == nil { item.presentation = old.presentation }
             }
             let lower = lowerBound()
             let at = items[lower...].firstIndex { other in other.seq.map { $0 > seq } ?? (other.ts > item.ts) } ?? items.endIndex
@@ -97,6 +100,8 @@ struct ChatItem: Codable, Identifiable, Equatable {
     var seq: Int?
     var replyTo: ReplyTo?
     var reactions: Reactions?
+    /// The reply's card, drawn after the text bubble while a block of it renders (alone for a card-only reply).
+    var presentation: Presentation?
 
     var summary: String {
         text.isEmpty ? attachments?.first.map { "📎 \($0.name)" } ?? "" : text
@@ -135,7 +140,8 @@ extension ChatItem {
                 attachments: ChatAttachment.list(item.attachments, uploaded: true), seq: item.seq, replyTo: item.replyTo, reactions: item.reactions)
         case .agent:
             self.init(id: item.id, kind: .agent, text: item.text ?? "", ts: item.ts,
-                attachments: ChatAttachment.list(item.attachments), seq: item.seq, replyTo: item.replyTo, reactions: item.reactions)
+                attachments: ChatAttachment.list(item.attachments), seq: item.seq, replyTo: item.replyTo, reactions: item.reactions,
+                presentation: item.presentation)
         case .tools:
             self.init(id: "tools:\(item.id)", kind: .tools, text: "", ts: item.ts,
                 tools: (item.tools ?? []).map { ToolCall(id: $0.callId, name: $0.name, status: $0.status) }, seq: item.seq)

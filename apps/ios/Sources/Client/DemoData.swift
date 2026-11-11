@@ -39,6 +39,7 @@ enum DemoData {
             codeID: content.titles[2], archiveID: content.titles[3]]
         #if DEBUG
         if PreviewScene.current != nil { titles[PreviewScene.tidyID] = PreviewScene.tidyTitle }
+        if let title = PreviewScene.cardTitle { titles[PreviewScene.cardID] = title }
         if longChatCount != nil { titles[longChatID] = "Long chat" }
         #endif
         return titles
@@ -69,6 +70,7 @@ enum DemoData {
         ]
         #if DEBUG
         if PreviewScene.current != nil { histories[PreviewScene.tidyID] = thread(PreviewScene.tidy, age: 90_000, toolRow: true) }
+        if let card = PreviewScene.card(at: now - 60_000) { histories[PreviewScene.cardID] = card }
         // `thread` spaces items 30 s apart, so the age grows with the count: the last message is a minute old, the newest of all.
         if let count = longChatCount { histories[longChatID] = thread(longChat(count), age: Int64(count + 1) * 30_000) }
         #endif

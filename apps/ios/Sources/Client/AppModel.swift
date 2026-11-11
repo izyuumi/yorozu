@@ -386,7 +386,7 @@ final class AppModel {
         guard !isDemo, let pairing else { return }
         let local = PeerInfo(app: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
             name: DeviceModel.name, capabilities: [Attachment.capability, Devices.capability, ReplyTo.capability, Reaction.capability,
-                Attachment.resumeCapability, Direct.capability, UnversionedWire.capability])
+                Attachment.resumeCapability, Direct.capability, UnversionedWire.capability, Presentation.capability])
         let connection: any ClientTransport
         do {
             connection = try makeTransport(pairing, local)
@@ -807,8 +807,8 @@ final class AppModel {
                 }
             }
             let files = ChatAttachment.list(reply.attachments)
-            append(ChatItem(id: reply.messageId, kind: .agent, text: reply.text, ts: reply.ts, attachments: files, replyTo: reply.replyTo),
-                to: reply.convId)
+            append(ChatItem(id: reply.messageId, kind: .agent, text: reply.text, ts: reply.ts, attachments: files, replyTo: reply.replyTo,
+                presentation: reply.presentation), to: reply.convId)
             progressed(reply.convId)
         case .reaction(let reaction):
             receive(reaction)
