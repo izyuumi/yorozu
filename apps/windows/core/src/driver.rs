@@ -281,7 +281,12 @@ impl Driver {
                         continue;
                     }
                     self.record = Some(record);
-                    self.conn = Machine::new(Standing::CodeOnly);
+                    // Generations carry over, so events queued by the old pairing stay stale.
+                    self.conn = Machine {
+                        socket_generation: self.conn.socket_generation,
+                        timer_generations: self.conn.timer_generations,
+                        ..Machine::new(Standing::CodeOnly)
+                    };
                     self.file_notice();
                     self.conn_event(EventKind::Start, None);
                 }
@@ -659,6 +664,8 @@ impl Driver {
                     .get("payload")
                     .and_then(Value::as_str)
                     .and_then(Frame::decode);
+                // Decrypt or ignore by state: this is the crypto half of rows C6, C7 and C11,
+                // and tests/machines.rs does not cover it.
                 let payload = match (&self.conn.state, frame.as_ref()) {
                     (State::Handshaking { keys: false }, Some(frame @ Frame::Response { .. })) => {
                         match self.handshake.as_mut().and_then(|h| h.finish(frame)) {
@@ -831,11 +838,7 @@ impl Driver {
             },
         };
         snapshot.status = crate::status::text(&self.conn);
-        snapshot.last_close = self
-            .conn
-            .last_close
-            .as_ref()
-            .map(|(code, reason)| format!("{code} {reason}"));
+        snapshot.last_close = crate::status::last_close(&self.conn);
         snapshot.update_required =
             self.conn.state == State::Idle(Some(connection::Terminal::UpdateRequired));
         drop(snapshot);

@@ -60,7 +60,8 @@ impl Pairing {
         {
             return false;
         }
-        // Reuse pairing-link validation at the disk trust boundary; known pairings omit both one-time values.
+        // Reuse pairing-link validation at the disk trust boundary. The token is dropped at the
+        // first joined and the secret at Open, so a placeholder stands in for whichever is absent.
         let query = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("relay", &self.relay)
             .append_pair("room", &self.room)
@@ -127,29 +128,38 @@ impl FileStore {
         let data = self.protector.protect(&serde_json::to_vec(pairing)?)?;
         fs::create_dir_all(&self.dir)?;
         let tmp = self.dir.join("pairing.bin.tmp");
-        let mut options = fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
+        let result = write_synced(&tmp, &data)
+            .and_then(|()| atomic_replace(&tmp, &self.dir.join("pairing.bin")));
+        if result.is_err() {
+            // Best effort: a failed write must not leave the keys behind in the temp file.
+            let _ = fs::remove_file(&tmp);
         }
-        let mut file = options.open(&tmp)?;
-        file.write_all(&data)?;
-        file.sync_all()?;
-        drop(file);
-        atomic_replace(&tmp, &self.dir.join("pairing.bin"))
+        result
     }
+    /// Tries to delete both files, then returns the first error.
     pub fn wipe(&self) -> io::Result<()> {
+        let mut result = Ok(());
         for name in ["pairing.bin", "pairing.bin.tmp"] {
             if let Err(e) = fs::remove_file(self.dir.join(name)) {
-                if e.kind() != io::ErrorKind::NotFound {
-                    return Err(e);
+                if e.kind() != io::ErrorKind::NotFound && result.is_ok() {
+                    result = Err(e);
                 }
             }
         }
-        Ok(())
+        result
     }
+}
+fn write_synced(path: &Path, data: &[u8]) -> io::Result<()> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(data)?;
+    file.sync_all()
 }
 #[cfg(not(windows))]
 fn atomic_replace(from: &Path, to: &Path) -> io::Result<()> {
@@ -166,6 +176,7 @@ fn atomic_replace(from: &Path, to: &Path) -> io::Result<()> {
     };
     let a: Vec<u16> = from.as_os_str().encode_wide().chain(Some(0)).collect();
     let b: Vec<u16> = to.as_os_str().encode_wide().chain(Some(0)).collect();
+    // SAFETY: `a` and `b` are NUL-terminated UTF-16 buffers that outlive the call.
     unsafe {
         MoveFileExW(
             PCWSTR(a.as_ptr()),
@@ -199,6 +210,8 @@ fn dpapi(data: &[u8], protect: bool) -> io::Result<Vec<u8>> {
         pbData: data.as_ptr().cast_mut(),
     };
     let mut output = CRYPT_INTEGER_BLOB::default();
+    // SAFETY: `input` points at `data`, which outlives the call. The OS allocates `output`; it
+    // is read for `cbData` bytes and freed exactly once with LocalFree.
     unsafe {
         if protect {
             CryptProtectData(

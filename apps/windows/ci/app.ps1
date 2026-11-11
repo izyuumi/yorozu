@@ -36,7 +36,7 @@ Invoke-Native { pnpm build }
 Pop-Location
 
 Write-Host '== 2. tests'
-# The probe crate arrives in W2; until then cargo only warns about the unknown package.
+# The probe is a test-only binary with the plaintext store; core.sh builds and runs it.
 Invoke-Native { cargo test --workspace --exclude yorozu-probe }
 
 Write-Host '== 3. no plaintext key store in the app'

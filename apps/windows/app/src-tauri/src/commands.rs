@@ -1,7 +1,17 @@
 //! Every command the web view may invoke. A command is declared in four places: here, in
 //! `lib.rs` (`invoke_handler`), in `build.rs` (`AppManifest`) and in
-//! `capabilities/default.json`, which grants it. `snapshot` reads the state to render (in
-//! smoke mode it also ends the run); every other command goes to the core's driver.
+//! `capabilities/default.json`, which grants it. Every command but `snapshot` goes to the
+//! core's driver.
+//!
+//! | command            | does                                                              |
+//! |--------------------|-------------------------------------------------------------------|
+//! | `snapshot`         | returns the state to render; in smoke mode it also ends the run   |
+//! | `submit_link`      | hands the pasted pairing link to the core, which asks to confirm  |
+//! | `confirm_pairing`  | creates this PC's keys, saves the pairing and starts connecting   |
+//! | `cancel_pairing`   | leaves the confirm screen, or stops and wipes a pairing under way |
+//! | `forget_pairing`   | stops the connection and wipes the pairing from this PC           |
+//! | `pair_again`       | wipes a removed or unreadable pairing; back to the pairing screen |
+//! | `retry_connection` | redials after "Update required"                                   |
 use crate::smoke::Smoke;
 use tauri::{AppHandle, State};
 use yorozu_core::{

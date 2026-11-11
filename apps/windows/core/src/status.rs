@@ -12,3 +12,17 @@ pub fn text(m: &Machine) -> Option<String> {
         _ => None,
     }
 }
+/// The last close as "CODE REASON" (or "CODE"), only for the "Connecting…" row of spec 7.2.
+pub fn last_close(m: &Machine) -> Option<String> {
+    match m.state {
+        State::Dialing | State::AwaitNonce | State::Joining | State::Backoff => {
+            let (code, reason) = m.last_close.as_ref()?;
+            Some(if reason.is_empty() {
+                code.to_string()
+            } else {
+                format!("{code} {reason}")
+            })
+        }
+        _ => None,
+    }
+}
