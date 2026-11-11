@@ -84,7 +84,11 @@ struct ChatView: View {
         }
         // Only the first layout starts at the bottom; later size changes are left to the follow rule and the settle.
         .defaultScrollAnchor(.bottom, for: .initialOffset)
-        .onChange(of: items.last?.id) { if atBottom || items.last?.kind == .user { scrollToEnd() } }
+        // Opening a chat starts at its newest message: the geometry for the first content can land before this
+        // onChange, so atBottom is already false by then.
+        .onChange(of: items.last?.id) { old, _ in
+            if old == nil || atBottom || items.last?.kind == .user { scrollToEnd() }
+        }
         .task(id: model.state == .ready) { model.open(convId) }
         .task(id: highlighted) {
             guard highlighted != nil else { return }
