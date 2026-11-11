@@ -81,6 +81,11 @@ export const runChannelInboundEvent = async ({ adapter }) => {
 // presentations.test.ts.
 export const DEFAULT_ACCOUNT_ID = "default";
 export const createChatChannelPlugin = (plugin) => plugin;
+export const defineChannelPluginEntry = (entry) => entry;
+export const ErrorCodes = { UNAVAILABLE: "UNAVAILABLE" };
+export const errorShape = (code, message) => ({ code, message });
+export const beginPairing = async () => {};
+export const unpairDevice = async () => false;
 export const buildThreadAwareOutboundSessionRoute = ({ route }) => route;
 export const normalizeMessagePresentation = (raw) => raw;
 export const renderMessagePresentationTableFallbackText = (b) => `${b.caption}`;

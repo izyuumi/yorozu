@@ -16,6 +16,7 @@ export const MESSAGE_TOOL_HINTS = [
   "- Use a card only for data that is genuinely tabular or chartable, or for a short titled summary. For anything else, reply in plain text.",
   "- Prefer a card when the user asks to see a card, chart, table or demo; send it in the same turn without asking.",
   "- Put the key facts in the text too; older Yorozu apps show only the text.",
+  "- A `table` needs `caption`, `headers` and `rows` (each row as long as `headers`).",
 ];
 
 const shows = (card: Presentation): boolean => !!card.title || card.blocks.some((block) => block.type !== "divider");

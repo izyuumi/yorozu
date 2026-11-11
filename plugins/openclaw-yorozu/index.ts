@@ -2,8 +2,11 @@ import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
 import { ErrorCodes, errorShape, type GatewayRequestHandlerOptions } from "openclaw/plugin-sdk/gateway-runtime";
 import { yorozuPlugin } from "./src/channel.js";
 import { listDevices } from "./src/devices.js";
+import { isId } from "./src/envelope.js";
+import { prepareToolPresentation } from "./src/presentation.js";
 import { beginPairing, unpairDevice } from "./src/relay.js";
 import { yorozuRuntime } from "./src/runtime.js";
+import { prefix } from "./src/sessions.js";
 
 export { yorozuRuntime };
 
@@ -35,6 +38,16 @@ export default defineChannelPluginEntry({
     );
   },
   registerFull(api) {
+    api.on("before_tool_call", (event, ctx) => {
+      if (event.toolName !== "message") return;
+      const { params } = event;
+      const agent = ctx.agentId ?? ctx.sessionKey?.match(/^agent:([^:]+):/)?.[1];
+      const start = agent ? prefix(agent) : undefined;
+      const ownSession = start && ctx.sessionKey?.startsWith(start) && isId(ctx.sessionKey.slice(start.length));
+      if (params.channel !== "yorozu" && !(params.channel == null && ownSession)) return;
+      const presentation = prepareToolPresentation(params.presentation);
+      return presentation !== params.presentation ? { params: { ...params, presentation } } : undefined;
+    });
     const admin = { scope: "operator.admin" } as const;
     api.registerGatewayMethod("yorozu.pair.begin", method(beginPairing), admin);
     api.registerGatewayMethod(
