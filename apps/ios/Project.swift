@@ -246,7 +246,7 @@ let project = Project(
                 "Sources/Client/Store.swift", "Sources/Client/SupportDirectory.swift", "Sources/Client/StoredNamesMigration.swift",
                 "Sources/Client/WidgetPublisher.swift", "Sources/Client/ActivityReports.swift", "Sources/Client/CronSchedule.swift",
                 "Sources/Client/ConnectionRoute.swift", "Sources/Client/LocalPairingFile.swift", "Sources/Client/PairingEntry.swift",
-                "Sources/Client/SceneLifecycle.swift", "Sources/Client/RequestQueue.swift",
+                "Sources/Client/SceneLifecycle.swift", "Sources/Client/RequestQueue.swift", "Sources/Client/ConversationActions.swift",
                 "Sources/WidgetShared/Model/**", "Sources/WidgetShared/Interface/WidgetLink.swift",
                 "Sources/WidgetShared/Interface/Launcher.swift", "Sources/YorozuIOS/LaunchColumns.swift",
                 "Sources/Client/AppModel.swift", "Sources/Client/ClientTransport.swift", "Sources/Client/DemoData.swift",
