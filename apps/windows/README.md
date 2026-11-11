@@ -4,7 +4,7 @@ The Windows client for Yorozu: a Tauri 2 app with a Rust core (`core`) that owns
 
 ## Docs live here
 
-Windows documentation belongs in this directory, not in `docs/` or the root `README.md`. Those feed `apps/mcp/src/content.json`, and a change to that file deploys the website.
+Windows documentation belongs in this directory. `apps/mcp/scripts/generate.ts` builds `apps/mcp/src/content.json` from the root `README.md`, the top-level `docs/*.md` and the plugin README, and a change to that file deploys the website.
 
 ## Run
 
@@ -23,18 +23,20 @@ Nothing under `apps/windows/` triggers a release or a deploy. Release Mac covers
 
 ## Commit and PR titles
 
-A pull request that is scoped `(windows)`, or that changes only `apps/windows/**` and `.github/workflows/windows-installer.yml`, must not move the app's version or its release notes. Its title and every commit subject must be one of:
+A pull request scoped `(windows)`, or one whose every changed file is under `apps/windows/` or is `.github/workflows/windows-installer.yml`, must not raise the app's minor or major version or reach the release notes. In `scripts/version.sh` a `feat` raises the minor; a `!` or a `BREAKING CHANGE:`/`BREAKING-CHANGE:` footer raises the major, or the minor while the major is 0. `scripts/release_notes.sh` lists `feat`, `fix` and `perf`.
+
+Its title and every non-merge commit subject must be one of:
 
 - `chore(windows): …`, `build(windows): …`, `ci(windows): …`, `test(windows): …` or `docs(windows): …`;
-- any `Revert "…"` title: a revert subject only bumps the patch in `scripts/version.sh`, like a chore.
+- `Revert "…"`, which matches none of those patterns.
 
-Dependabot's pull requests are skipped by the workflow step (`user.login != 'dependabot[bot]'`), not by the script.
+Forbidden: `!` in the title or a subject, and a line starting `BREAKING CHANGE: ` or `BREAKING-CHANGE: ` in the pull request body or a commit message.
 
-Otherwise no `feat`, `fix` or `perf`, no `!`, and no line starting `BREAKING CHANGE: ` in the pull request body or a commit message. `feat` bumps the minor version and `!` or `BREAKING CHANGE` the major in `scripts/version.sh`; `feat`, `fix` and `perf` reach `scripts/release_notes.sh`.
-
-The `release-guards` job enforces this on every pull request with `ci/commit-type.sh`; `ci/commit-type.test.sh` tests it.
+The `release-guards` job runs `ci/commit-type.sh` on every pull request except Dependabot's, which the step's `if:` skips. It runs on the pull request's push events, not on a title or body edit, so the merger checks the title again before merging. `ci/commit-type.test.sh` tests the script.
 
 ## Rollback
+
+W0 to W3 are the four stacked pull requests that added this client, titled with the suffixes (W0) to (W3).
 
 1. Revert W3, then W2, then W1, one PR each, titled `Revert "<original title>"`.
 2. One PR removes the `windows-core` job, the `windows_core` output and the `commit-type.sh` step from `checks.yml`, and deletes `.github/workflows/windows-installer.yml` if W1 was not reverted.

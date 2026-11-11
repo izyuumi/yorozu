@@ -98,4 +98,15 @@ expect 1 'Dependabot title, installer workflow' "$deps"
 new_repo; commit apps/windows/a 'chore(windows): x' 'BREAKING CHANGE: y'
 expect 1 'BREAKING CHANGE in a commit message' 'chore(windows): x'
 
+# The scope alone applies the rule, whatever the files.
+new_repo; commit src/a 'chore(windows): x'
+expect 1 'scope only' 'feat(windows): x'
+
+new_repo; commit apps/windows/a 'chore(windows): x' 'BREAKING-CHANGE: x'
+expect 1 'BREAKING-CHANGE hyphen' 'chore(windows): x'
+
+# Bad input.
+new_repo; BASE=not-a-commit
+expect 2 'BASE not a commit' 'chore(windows): x'
+
 exit "$failed"
