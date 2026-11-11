@@ -1,6 +1,7 @@
 import OSLog
 import SwiftUI
 import UserNotifications
+import YorozuWire
 #if os(macOS)
 import AppKit
 #endif
@@ -16,6 +17,20 @@ enum Diagnostics {
         let short = info["CFBundleShortVersionString"] as? String ?? "?"
         let build = info["CFBundleVersion"] as? String ?? "?"
         return "\(short) (\(build))"
+    }
+
+    /// Cards since launch, as counts only: cards drawn, blocks that fell back to their `alt` or were skipped, and
+    /// cards with nothing to draw, whose bubble showed the text.
+    private(set) static var presentationShown = 0
+    private(set) static var blockFellBack = 0
+    private(set) static var presentationFellBack = 0
+    private static var counted: Set<String> = []
+
+    /// Counts a message's card once, however often its row appears.
+    static func count(_ card: Presentation, id: String) {
+        guard counted.insert(id).inserted else { return }
+        if card.renders { presentationShown += 1 } else { presentationFellBack += 1 }
+        blockFellBack += card.fellBack
     }
 
     static func copy(_ model: AppModel) async {
@@ -48,6 +63,7 @@ enum Diagnostics {
             "Devices: \(model.devices?.count.description ?? "unknown")",
             "Notifications: \(notificationName(notifications))",
             "Voice engine: \(VoiceSetup.shared.engine?.rawValue ?? "none"), model \(VoiceSetup.shared.model.map { "\($0.state)" } ?? "none")",
+            "Cards: presentationShown \(presentationShown), blockFellBack \(blockFellBack), presentationFellBack \(presentationFellBack)",
         ]
         #if os(macOS)
         lines.append("Beta updates: \(UserDefaults.standard.bool(forKey: MacUpdates.betaKey))")

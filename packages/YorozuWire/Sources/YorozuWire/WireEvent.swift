@@ -207,14 +207,212 @@ public struct Reply: Codable, Equatable, Sendable {
     public var ts: Int64
     public var attachments: [Attachment]?
     public var replyTo: ReplyTo?
+    public var presentation: Presentation?
 
-    public init(convId: String, messageId: String, text: String, ts: Int64, attachments: [Attachment]? = nil, replyTo: ReplyTo? = nil) {
+    public init(convId: String, messageId: String, text: String, ts: Int64, attachments: [Attachment]? = nil, replyTo: ReplyTo? = nil,
+        presentation: Presentation? = nil) {
         self.convId = convId
         self.messageId = messageId
         self.text = text
         self.ts = ts
         self.attachments = attachments
         self.replyTo = replyTo
+        self.presentation = presentation
+    }
+
+    /// A card this client can't read is dropped; the reply keeps the rest.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        convId = try c.decode(String.self, forKey: .convId)
+        messageId = try c.decode(String.self, forKey: .messageId)
+        text = try c.decode(String.self, forKey: .text)
+        ts = try c.decode(Int64.self, forKey: .ts)
+        attachments = try c.decodeIfPresent([Attachment].self, forKey: .attachments)
+        replyTo = try c.decodeIfPresent(ReplyTo.self, forKey: .replyTo)
+        presentation = try c.decodeIfPresent(LossyPresentation.self, forKey: .presentation)?.value
+    }
+}
+
+/// A read-only card next to the text of a `reply` or an agent history item; capability `presentation`.
+/// The reader is tolerant: a block of an unknown type, or one that fails a check, decodes as `.unknown` with its `alt`.
+public struct Presentation: Codable, Equatable, Sendable {
+    public static let capability = "presentation"
+    public static let maxBytes = 64 * 1024
+
+    public enum Tone: String, Codable, Sendable { case info, success, warning, danger, neutral }
+
+    public enum Cell: Codable, Equatable, Sendable {
+        case string(String)
+        case number(Double)
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.singleValueContainer()
+            if let v = try? c.decode(Double.self) { self = .number(v) } else { self = .string(try c.decode(String.self)) }
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            switch self {
+            case .string(let v): try c.encode(v)
+            case .number(let v): try c.encode(v)
+            }
+        }
+    }
+
+    public struct Table: Codable, Equatable, Sendable {
+        public var caption: String?
+        public var headers: [String]
+        public var rows: [[Cell]]
+        public var rowHeaderColumnIndex: Int?
+
+        public init(caption: String? = nil, headers: [String], rows: [[Cell]], rowHeaderColumnIndex: Int? = nil) {
+            self.caption = caption
+            self.headers = headers
+            self.rows = rows
+            self.rowHeaderColumnIndex = rowHeaderColumnIndex
+        }
+
+        /// The row header column, when the index names one.
+        public var rowHeader: Int? { rowHeaderColumnIndex.flatMap { headers.indices.contains($0) ? $0 : nil } }
+
+        var valid: Bool {
+            !headers.isEmpty && !rows.isEmpty && rows.allSatisfy { row in
+                row.count == headers.count && row.allSatisfy { if case .number(let v) = $0 { v.isFinite } else { true } }
+            }
+        }
+    }
+
+    public struct Chart: Codable, Equatable, Sendable {
+        public enum Kind: String, Codable, Sendable { case pie, bar, line, area }
+        public struct Segment: Codable, Equatable, Sendable {
+            public var label: String
+            public var value: Double
+        }
+        public struct Series: Codable, Equatable, Sendable {
+            public var name: String
+            public var values: [Double]
+        }
+
+        public var title: String?
+        public var chartType: Kind
+        public var segments: [Segment]?
+        public var categories: [String]?
+        public var series: [Series]?
+        public var xLabel: String?
+        public var yLabel: String?
+
+        var valid: Bool {
+            if chartType == .pie {
+                guard let segments, !segments.isEmpty else { return false }
+                return segments.allSatisfy { $0.value.isFinite && $0.value >= 0 }
+            }
+            guard let categories, let series, !categories.isEmpty, !series.isEmpty else { return false }
+            return series.allSatisfy { $0.values.count == categories.count && $0.values.allSatisfy(\.isFinite) }
+        }
+    }
+
+    public enum Block: Codable, Equatable, Sendable {
+        case text(String)
+        case context(String)
+        case divider
+        case table(Table, alt: String?)
+        case chart(Chart, alt: String?)
+        case unknown(alt: String?)
+
+        /// The block as plain text: what draws when the block itself can't, and what assistive technology can read.
+        public var alt: String? {
+            switch self {
+            case .text(let text), .context(let text): text
+            case .divider: nil
+            case .table(_, let alt), .chart(_, let alt), .unknown(let alt): alt
+            }
+        }
+
+        private enum Keys: String, CodingKey { case type, text, alt }
+
+        public init(from decoder: Decoder) throws {
+            let c = try? decoder.container(keyedBy: Keys.self)
+            let alt = try? c?.decodeIfPresent(String.self, forKey: .alt)
+            let text = try? c?.decodeIfPresent(String.self, forKey: .text)
+            switch try? c?.decode(String.self, forKey: .type) {
+            case "text": if let text, !text.isEmpty { self = .text(text); return }
+            case "context": if let text, !text.isEmpty { self = .context(text); return }
+            case "divider": self = .divider; return
+            case "table": if let table = try? Table(from: decoder), table.valid { self = .table(table, alt: alt); return }
+            case "chart": if let chart = try? Chart(from: decoder), chart.valid { self = .chart(chart, alt: alt); return }
+            default: break
+            }
+            self = .unknown(alt: alt)
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: Keys.self)
+            switch self {
+            case .text(let text):
+                try c.encode("text", forKey: .type)
+                try c.encode(text, forKey: .text)
+            case .context(let text):
+                try c.encode("context", forKey: .type)
+                try c.encode(text, forKey: .text)
+            case .divider:
+                try c.encode("divider", forKey: .type)
+            case .table(let table, let alt):
+                try table.encode(to: encoder)
+                try c.encode("table", forKey: .type)
+                try c.encodeIfPresent(alt, forKey: .alt)
+            case .chart(let chart, let alt):
+                try chart.encode(to: encoder)
+                try c.encode("chart", forKey: .type)
+                try c.encodeIfPresent(alt, forKey: .alt)
+            case .unknown(let alt):
+                try c.encode("unknown", forKey: .type)
+                try c.encodeIfPresent(alt, forKey: .alt)
+            }
+        }
+    }
+
+    public var title: String?
+    public var tone: Tone?
+    public var blocks: [Block]
+
+    public init(title: String? = nil, tone: Tone? = nil, blocks: [Block]) {
+        self.title = title
+        self.tone = tone
+        self.blocks = blocks
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = try? c.decodeIfPresent(String.self, forKey: .title)
+        tone = try? c.decodeIfPresent(Tone.self, forKey: .tone)
+        blocks = try c.decode([Block].self, forKey: .blocks)
+    }
+
+    /// The blocks to draw: one that fell back to an empty or missing `alt` is skipped.
+    public var drawn: [Block] {
+        blocks.filter { if case .unknown(let alt) = $0 { alt?.isEmpty == false } else { true } }
+    }
+
+    /// False when nothing but dividers is left to draw: the bubble shows the message's text.
+    public var renders: Bool { drawn.contains { $0 != .divider } }
+
+    /// How many blocks fell back to their `alt` or were skipped.
+    public var fellBack: Int { blocks.count { if case .unknown = $0 { true } else { false } } }
+}
+
+/// A card over `Presentation.maxBytes`, or one that isn't a card, decodes as nil. The decoder hands over no bytes, so
+/// the size is the card's compact JSON, which is how the plugin sends it.
+private struct LossyPresentation: Decodable {
+    let value: Presentation?
+
+    init(from decoder: Decoder) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .withoutEscapingSlashes
+        guard let raw = try? JSONValue(from: decoder), let size = try? encoder.encode(raw).count, size <= Presentation.maxBytes else {
+            value = nil
+            return
+        }
+        value = try? Presentation(from: decoder)
     }
 }
 
@@ -440,9 +638,10 @@ public struct HistoryItem: Codable, Equatable, Sendable {
     public var attachments: [Attachment]?
     public var replyTo: ReplyTo?
     public var reactions: Reactions?
+    public var presentation: Presentation?
 
     public init(kind: Kind, id: String, seq: Int, ts: Int64, text: String? = nil, tools: [Call]? = nil,
-        attachments: [Attachment]? = nil, replyTo: ReplyTo? = nil, reactions: Reactions? = nil) {
+        attachments: [Attachment]? = nil, replyTo: ReplyTo? = nil, reactions: Reactions? = nil, presentation: Presentation? = nil) {
         self.kind = kind
         self.id = id
         self.seq = seq
@@ -452,9 +651,10 @@ public struct HistoryItem: Codable, Equatable, Sendable {
         self.attachments = attachments
         self.replyTo = replyTo
         self.reactions = reactions
+        self.presentation = presentation
     }
 
-    /// A call whose status this client doesn't know is dropped; the item keeps the rest.
+    /// A call whose status this client doesn't know is dropped, and so is a card it can't read; the item keeps the rest.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         kind = try c.decode(Kind.self, forKey: .kind)
@@ -466,6 +666,7 @@ public struct HistoryItem: Codable, Equatable, Sendable {
         attachments = try c.decodeIfPresent([Attachment].self, forKey: .attachments)
         replyTo = try c.decodeIfPresent(ReplyTo.self, forKey: .replyTo)
         reactions = try c.decodeIfPresent(Reactions.self, forKey: .reactions)
+        presentation = try c.decodeIfPresent(LossyPresentation.self, forKey: .presentation)?.value
     }
 }
 
