@@ -540,6 +540,83 @@ test("sendPayload: the full text always, the card on the last chunk, an invalid 
   assert.equal(rows("presentation-index").has(threadId), false, "an explicit-target card is not stored");
 });
 
+test("sendPayload during a turn stores the last card reply and restores it after a tool-only transcript message", async () => {
+  const { convId, sessionId } = conversation(60);
+  host.transcripts.get(sessionId)![1].message.content = [{ type: "toolCall", id: "send", name: "message" }];
+  let live: Reply[] = [];
+  host.run = async () => {
+    const sent = await payloadSend({ threadId: convId, text, presentation: card(), cfg: { limit: 8 } });
+    live = sent.events.map((event) => event.data as Reply);
+    assert.equal(sent.id, live[0]!.messageId);
+  };
+  await handleMessage({ cfg: {}, agent: "main", presentationSdk: sdk, log } as never, { convId, messageId: userId, text: "Show me the costs" });
+  await stored();
+  assert.deepEqual(warnings, []);
+  assert.equal(live.length, 3);
+  const carrier = live.at(-1)!;
+  const key = turnCardKey(sessionId, userId, carrier.messageId);
+  assert.deepEqual(rows("presentation-index").get(convId), [key]);
+  assert.deepEqual(rows("presentations").get(key), {
+    presentation: carrier.presentation,
+    reply: { messageId: carrier.messageId, ts: carrier.ts, text: carrier.text },
+  });
+  const items = await page(convId);
+  assert.equal(items[0]?.kind, "user");
+  assert.deepEqual(items.filter((item) => item.kind === "agent"), [{
+    kind: "agent", id: carrier.messageId, seq: 1, ts: carrier.ts, text: carrier.text, presentation: carrier.presentation,
+  }]);
+});
+
+test("sendPayload stores no card for another conversation or after the turn ends", async () => {
+  const { convId } = conversation(61);
+  const other = conversation(62);
+  const before = rows("presentations").size;
+  host.run = async () => {
+    await payloadSend({ threadId: other.convId, text, presentation: card() });
+    await stored();
+    assert.deepEqual(warnings, [NOT_KEPT]);
+    assert.equal(rows("presentation-index").has(other.convId), false);
+    assert.equal(rows("presentation-index").has(convId), false);
+  };
+  await handleMessage({ cfg: {}, agent: "main", presentationSdk: sdk, log } as never, { convId, messageId: userId, text: "Show me the costs" });
+  await payloadSend({ threadId: convId, text, presentation: card() });
+  await stored();
+  assert.deepEqual(warnings, [NOT_KEPT]);
+  assert.equal(rows("presentation-index").has(convId), false);
+  assert.equal(rows("presentations").size, before);
+});
+
+test("an older turn ending keeps the replacement turn's outbound card association", async () => {
+  const { convId, sessionId } = conversation(63);
+  const first = Promise.withResolvers<void>();
+  const second = Promise.withResolvers<void>();
+  const entered = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+  let calls = 0;
+  host.run = async () => {
+    const n = calls++;
+    entered[n]!.resolve();
+    await (n === 0 ? first.promise : second.promise);
+  };
+  const ctx = { cfg: {}, agent: "main", presentationSdk: sdk, log } as never;
+  const oldTurn = handleMessage(ctx, { convId, messageId: userId, text: "First turn" });
+  await entered[0]!.promise;
+  const newUserId = uuid(6302);
+  const newTurn = handleMessage(ctx, { convId, messageId: newUserId, text: "Second turn" });
+  await entered[1]!.promise;
+  try {
+    first.resolve();
+    await oldTurn;
+    const sent = await payloadSend({ threadId: convId, text, presentation: card() });
+    await stored();
+    const reply = sent.events[0]!.data as Reply;
+    assert.deepEqual(warnings, []);
+    assert.deepEqual(rows("presentation-index").get(convId), [turnCardKey(sessionId, newUserId, reply.messageId)]);
+  } finally {
+    second.resolve();
+    await newTurn;
+  }
+});
+
 test("sendPayload without a card sends what sendText and sendMedia send for that text and file", async () => {
   const threadId = uuid(4400);
   const replyTo = { messageId: uuid(4401), text: "How much?" };

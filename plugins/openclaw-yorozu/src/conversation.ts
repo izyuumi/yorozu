@@ -78,6 +78,7 @@ function payloadCard(payload: { text?: string; presentation?: unknown }, sdk: Pr
 }
 
 const NOT_KEPT = "yorozu: a card went out without being stored; history will not show it";
+const runningTurns = new Map<string, { messageId: string; agentId: string; sessionKey: string }>();
 
 export function replyTarget(cfg: OpenClawConfig, agent: string, convId: string, id?: string | null, current?: Message): ReplyTo | undefined {
   const messageId = id?.trim().toLowerCase();
@@ -186,6 +187,8 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
 
   // As the app reads a turn's end: a reply is done, a reported failure failed, a retry still running, nothing gone.
   let ended: "failed" | "retrying" | undefined;
+  const turn = { messageId, agentId: route.agentId, sessionKey };
+  runningTurns.set(convId, turn);
   try {
     await runChannelInboundEvent({
       channel: CHANNEL_ID,
@@ -264,6 +267,7 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
     if (!retrying) send({ kind: "error", data: { code: "run_failed", message: String(error).slice(0, 500), convId, messageId } });
     ended = retrying ? "retrying" : "failed";
   } finally {
+    if (runningTurns.get(convId) === turn) runningTurns.delete(convId);
     setTyping(false);
     if (ended !== "retrying") activityTurn(convId, { kind: firstReply ? "done" : (ended ?? "gone") });
     if (firstReply) {
@@ -316,7 +320,7 @@ export async function sendConversationMedia(params: {
 
 /** An explicit-target payload OpenClaw hands to `sendPayload`: the id of its first reply, or "" when nothing was sent.
  * - With the card `renderPresentation` put in `channelData.yorozu`: chunked text, files and the card on the last
- *   chunk. It belongs to no turn, so the card is not stored for history.
+ *   chunk. During that conversation's running turn, the card is stored under the turn for history.
  * - Without a card (some other `channelData`, a location, or a card that was dropped): exactly what OpenClaw does
  *   for a channel with no `sendPayload` (`src/infra/outbound/deliver-core.ts:342-397`, `message-plan.ts`): one
  *   `sendText` per text chunk, or one `sendMedia` per file with the text on the first. Nothing sendable sends
@@ -359,7 +363,15 @@ export async function sendConversationPayload(params: {
   const text = [card.text, ...failures].filter((line) => line.trim()).join("\n\n");
   const replies = replyEvents(params.cfg, convId, text, params.accountId, undefined, attachments, replyTo, card.presentation);
   broadcast(replies);
-  params.log?.warn(NOT_KEPT);
+  const turn = runningTurns.get(convId);
+  const sessionId = turn && liveSessionId(turn.agentId, turn.sessionKey);
+  const carrier = replies.at(-1);
+  if (turn && sessionId && carrier?.kind === "reply") {
+    const { messageId, ts, text } = carrier.data;
+    void storeCard(convId, turnCardKey(sessionId, turn.messageId, messageId), {
+      presentation: card.presentation, reply: { messageId, ts, text },
+    }).catch((error: unknown) => params.log?.warn(`yorozu: a card was not stored (${errorTag(error)}); history will not show it`));
+  } else params.log?.warn(NOT_KEPT);
   const first = replies[0];
   return first?.kind === "reply" ? first.data.messageId : "";
 }
