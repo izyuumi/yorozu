@@ -1,11 +1,11 @@
 #!/bin/bash
-# Installs the PAIOS example vault into an existing Obsidian vault as <vault>/PAIOS,
-# writes <vault>/PAIOS/paios.env and runs the self-test. Never overwrites or merges.
+# Installs the PAIOS example (a plain folder of Markdown) into an existing folder as <folder>/PAIOS,
+# writes <folder>/PAIOS/paios.env and runs the self-test. Never overwrites or merges.
 #
 # From a checkout:
-#   bash examples/paios/install.sh "/path/to/your vault"
+#   bash examples/paios/install.sh "/path/to/your folder"
 # One-liner:
-#   curl -fsSL https://raw.githubusercontent.com/izyuumi/yorozu/main/examples/paios/install.sh | bash -s -- "/path/to/your vault"
+#   curl -fsSL https://raw.githubusercontent.com/izyuumi/yorozu/main/examples/paios/install.sh | bash -s -- "/path/to/your folder"
 #
 # Exit codes: 0 installed, 1 refused or failed, 2 usage error.
 set -euo pipefail
@@ -19,11 +19,12 @@ created=0
 
 usage() {
   cat <<'U'
-Usage: install.sh [--tz <IANA zone>] [--ref <git ref>] [--] [<vault path>]
+Usage: install.sh [--tz <IANA zone>] [--ref <git ref>] [--] [<folder>]
 
-Copies the PAIOS example into "<vault path>/PAIOS", writes paios.env there and
-runs the self-test. Refuses if "<vault path>/PAIOS" already exists.
-The vault folder must already exist. Without a path, the script asks for one when run on a terminal.
+Copies the PAIOS example into "<folder>/PAIOS", writes paios.env there and
+runs the self-test. Refuses if "<folder>/PAIOS" already exists.
+<folder> can be any folder (your home folder, a notes folder, a synced folder) and must
+already exist. Without a path, the script asks for one when run on a terminal.
 
   --tz <zone>   IANA time zone, e.g. Europe/Berlin
                 (default: $PAIOS_TZ, else the system zone, else UTC)
@@ -66,7 +67,7 @@ system_tz() {
 }
 
 refuse() {
-  printf 'install.sh: Refusing: %s already exists. The installer never overwrites or merges. Move it aside or pick another vault.\n' "$dest" >&2
+  printf 'install.sh: Refusing: %s already exists. The installer never overwrites or merges. Move it aside or pick another folder.\n' "$dest" >&2
   exit 1
 }
 
@@ -84,32 +85,32 @@ main() {
       -f|--force) usage_error "--force is not supported: the installer never overwrites an existing PAIOS folder" ;;
       --) shift; break ;;
       -*) usage_error "unknown option: $1" ;;
-      *) [ "$have_vault" = 0 ] || usage_error "more than one vault path given"
+      *) [ "$have_vault" = 0 ] || usage_error "more than one folder path given"
          vault="$1"; have_vault=1; shift ;;
     esac
   done
   if [ $# -gt 0 ]; then
-    { [ "$have_vault" = 0 ] && [ $# -eq 1 ]; } || usage_error "more than one vault path given"
+    { [ "$have_vault" = 0 ] && [ $# -eq 1 ]; } || usage_error "more than one folder path given"
     vault="$1"; have_vault=1
   fi
 
   # Piped through `curl | bash`, stdin is this script, so ask on the terminal instead.
   if [ "$have_vault" = 0 ]; then
     if [ -t 2 ] && { : </dev/tty; } 2>/dev/null; then
-      printf 'Vault path (the folder that will contain PAIOS/): ' >&2
+      printf 'Folder to create PAIOS/ in (any existing folder, for example ~): ' >&2
       IFS= read -r vault </dev/tty || vault=""
       case "$vault" in \~) vault="$HOME" ;; \~/*) vault="$HOME/${vault#\~/}" ;; esac
     else
-      usage_error "no vault path given"
+      usage_error "no folder path given"
     fi
   fi
-  [ -n "$vault" ] || usage_error "no vault path given"
+  [ -n "$vault" ] || usage_error "no folder path given"
 
   command -v python3 >/dev/null 2>&1 || die "Python 3.9 or newer is required; python3 was not found"
   python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' \
     || die "Python 3.9 or newer is required; found $(python3 -V 2>&1)"
 
-  [ -d "$vault" ] || die "not a folder: $vault (create it or open it in Obsidian first)"
+  [ -d "$vault" ] || die "not a folder: $vault (it must already exist; create it first)"
   vault="$(cd -- "$vault" && pwd -P)"
 
   # Refuse before downloading anything; the mkdir further down is what claims the folder.
@@ -167,7 +168,7 @@ main() {
   # Claim the folder with a plain mkdir, so two runs can't both win and nothing existing is touched.
   mkdir "$dest" 2>/dev/null || {
     if [ -e "$dest" ] || [ -L "$dest" ]; then refuse; fi
-    die "could not create $dest (check that the vault folder is writable)"
+    die "could not create $dest (check that the folder is writable)"
   }
   created=1
 
@@ -182,25 +183,40 @@ main() {
 import sys
 example, out, vault, tz = sys.argv[1:5]
 quote = lambda s: "'" + s.replace("'", "'\\''") + "'"
-values = {"PAIOS_VAULT": vault, "PAIOS_TZ": tz}
+# Drop any earlier export of the three keys and write them, in this order, at
+# the first of those keys (or at the end if the example has none). That keeps
+# later commented overrides such as PAIOS_LOGS="$PAIOS_ROOT/..." below the
+# definition, including when --ref fetches an older example.
+skip = {"PAIOS_ROOT", "PAIOS_VAULT", "PAIOS_TZ"}
+kept = []
+insert_at = None
 with open(example, encoding="utf-8") as f:
-    lines = f.read().splitlines()
-for i, line in enumerate(lines):
-    name = line.strip()
-    if name.startswith("export "):
-        name = name[len("export "):]
-    key = name.split("=", 1)[0].strip()
-    if key in values:
-        lines[i] = "export " + key + "=" + quote(values.pop(key))
-lines += ["export " + key + "=" + quote(value) for key, value in values.items()]
+    for line in f.read().splitlines():
+        name = line.strip()
+        if name.startswith("export "):
+            key = name[len("export "):].split("=", 1)[0].strip()
+            if key in skip:
+                if insert_at is None:
+                    insert_at = len(kept)
+                continue
+        kept.append(line)
+block = [
+    "export PAIOS_ROOT=" + quote(vault),
+    'export PAIOS_VAULT="$PAIOS_ROOT"',
+    "export PAIOS_TZ=" + quote(tz),
+]
+if insert_at is None:
+    kept.extend(block)
+else:
+    kept[insert_at:insert_at] = block
 with open(out, "w", encoding="utf-8", errors="surrogateescape") as f:
-    f.write("\n".join(lines) + "\n")
+    f.write("\n".join(kept) + "\n")
 PY
   # Read back from a child process, so the values must be exported.
   # shellcheck disable=SC1091,SC2016
-  ( set +u; unset PAIOS_VAULT PAIOS_TZ; . "$dest/paios.env"
-    "$BASH" -c '[ "$PAIOS_VAULT" = "$1" ] && [ "$PAIOS_TZ" = "$2" ]' _ "$vault" "$tz" ) \
-    || die "the written paios.env does not export the expected vault path and time zone"
+  ( set +u; unset PAIOS_ROOT PAIOS_VAULT PAIOS_TZ; . "$dest/paios.env"
+    "$BASH" -c '[ "$PAIOS_ROOT" = "$1" ] && [ "$PAIOS_VAULT" = "$1" ] && [ "$PAIOS_TZ" = "$2" ]' _ "$vault" "$tz" ) \
+    || die "the written paios.env does not export the expected folder path and time zone"
 
   # The self-test works on its own temporary copy and changes nothing in $dest.
   local out rc=0
@@ -212,11 +228,14 @@ PY
 
   printf '\nInstalled PAIOS into %s\nTime zone: %s\n\nNext steps:\n' "$dest" "$tz"
   printf '  1. source %q\n' "$dest/paios.env"
-  printf '     (exports PAIOS_VAULT and PAIOS_TZ; add the line to your shell profile or the agent'"'"'s environment)\n'
+  printf '     (exports PAIOS_ROOT, its older name PAIOS_VAULT, and PAIOS_TZ; add the line to your shell profile or the agent'"'"'s environment)\n'
   printf '  2. Tell your agent to start with %s\n' "$dest/AGENTS.md"
   printf '     (or give it System/Prompts/Agent Master Prompt.md as the system prompt)\n'
   printf '  3. Read System/Constitution.md and change what doesn'"'"'t fit.\n'
   printf '  4. Replace or delete the example files (Runtime/Now.md, Projects/Example Project.md, Execution/Queue.md, and so on).\n'
+  if [ -f "$dest/IMPORT_HISTORY.md" ]; then
+    printf '  5. Optional: to fill PAIOS from history your agent already has, paste the prompt in %s into it.\n' "$dest/IMPORT_HISTORY.md"
+  fi
 }
 
 # Called last, so a download cut off halfway runs nothing.

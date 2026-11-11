@@ -239,6 +239,39 @@ function fallback(parts: string[]): string {
   return result;
 }
 
+// Repair before core normalizes the message tool and silently drops invalid tables.
+export function prepareToolPresentation(raw: unknown): unknown {
+  try {
+    const encoded = typeof raw === "string";
+    if (encoded && (raw.length > MAX_PRESENTATION_BYTES || Buffer.byteLength(raw) > MAX_PRESENTATION_BYTES)) return raw;
+    const root = record(encoded ? JSON.parse(raw) : raw);
+    const blocks = root && own(root, "blocks");
+    if (!root || !array(blocks) || blocks.length > MAX_BLOCKS) return raw;
+    const checked = preflight({ chars: 0, exhausted: false });
+    let changed = false;
+    const prepared = blocks.map((entry) => {
+      const source = record(entry);
+      if (!source || optional(own(source, "type")).toLowerCase() !== "table") return entry;
+      const b = checked.copy(source);
+      if (!b) return entry;
+      b.title = checked.string(own(source, "title"));
+      const caption = own(source, "caption");
+      if (!optional(caption)) b.caption = b.title;
+      if (checked.exhausted()) throw new Error("presentation resource limit");
+      if (overflow(b) || !native(b)) {
+        changed = true;
+        return omitted(b, "table omitted: invalid data");
+      }
+      if (optional(caption)) return entry;
+      changed = true;
+      return { ...source, caption: own(source, "title") };
+    });
+    if (!changed) return raw;
+    const result = { ...root, blocks: prepared };
+    return encoded ? JSON.stringify(result) : result;
+  } catch { return raw; }
+}
+
 export function sanitizePresentation(raw: unknown, sdk: PresentationSdk): { presentation?: Presentation; fallbackText: string } {
   if (typeof raw === "string") {
     if (raw.length > MAX_PRESENTATION_BYTES || Buffer.byteLength(raw, "utf8") > MAX_PRESENTATION_BYTES) return { fallbackText: "" };

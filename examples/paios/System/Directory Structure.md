@@ -3,6 +3,7 @@
 ```text
 PAIOS/
 ├── README.md
+├── docs/            (optional guides)
 ├── System/
 │   ├── Constitution.md
 │   ├── Architecture.md
