@@ -8,6 +8,7 @@ import {
   patchSessionEntry,
 } from "openclaw/plugin-sdk/session-store-runtime";
 import { isId, type ConvPatch, type ConvUpdate, type Event } from "./envelope.js";
+import { forgetCards } from "./presentations.js";
 import { forgetCursor } from "./reads.js";
 import { broadcast } from "./relay.js";
 import { yorozuRuntime } from "./runtime.js";
@@ -103,6 +104,8 @@ export async function applyPatch(agent: string, patch: ConvPatch, log?: ChannelG
     }
     if (patch.deleted) {
       if (entry.archivedAt === undefined) await archive(agent, sessionKey, true);
+      // Cards first: a failure here leaves a conversation that can be deleted again, never cards without one.
+      await forgetCards(convId);
       await deleteSessionEntry({ agentId: agent, sessionKey, archiveTranscript: true });
       await forgetCursor(convId);
     } else {

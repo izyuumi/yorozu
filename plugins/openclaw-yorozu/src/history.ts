@@ -9,6 +9,7 @@ import {
 } from "openclaw/plugin-sdk/session-store-runtime";
 import { messageTime, revOf } from "./activity.js";
 import { attachmentAt, attachmentsOf } from "./attachments.js";
+import { cardKey } from "./cards.js";
 import { DEFAULT_CHUNK_LIMIT } from "./conversation.js";
 import {
   isId,
@@ -22,6 +23,7 @@ import {
   type HistoryTool,
   type ToolStatus,
 } from "./envelope.js";
+import { cardKeys, storedCard } from "./presentations.js";
 import { reactionsOf } from "./reactions.js";
 import { replyOf } from "./replies.js";
 import { prefix, titleOf } from "./sessions.js";
@@ -32,17 +34,19 @@ const PAGE_BYTES = 192 * 1024;
 const ITEM_CHARS = 60_000;
 const LIST_MAX = 2000;
 const CACHE_MAX = 8;
-const cache = new Map<string, { sessionId: string; rev: number; items: HistoryItem[] }>();
+// `cards`: the card key of each agent message's last chunk, by item id.
+type Built = { items: HistoryItem[]; cards: Map<string, string> };
+const cache = new Map<string, Built & { sessionId: string; rev: number }>();
 
-export function answerRequest(
+export async function answerRequest(
   cfg: OpenClawConfig,
   agent: string,
   request: Event,
   log?: ChannelGatewayContext["log"],
-): Event | undefined {
+): Promise<Event | undefined> {
   try {
     if (request.kind === "conv_list") return { kind: "conv_list", data: listConversations(agent) };
-    if (request.kind === "history") return { kind: "history", data: historyPage(cfg, agent, request.data) };
+    if (request.kind === "history") return { kind: "history", data: await historyPage(cfg, agent, request.data) };
   } catch (error) {
     log?.warn(`yorozu: ${request.kind} failed: ${String(error)}`);
     const convId = request.kind === "history" ? request.data.convId : undefined;
@@ -73,7 +77,7 @@ export function listConversations(agent: string): ConvList {
   return { conversations: conversations.slice(0, LIST_MAX) };
 }
 
-export function historyPage(cfg: OpenClawConfig, agent: string, request: HistoryRequest): History {
+export async function historyPage(cfg: OpenClawConfig, agent: string, request: HistoryRequest): Promise<History> {
   const { convId, before, after } = request;
   const empty: History = { convId, items: [], more: false, rev: 0, ...(before !== undefined ? { before } : {}), ...(after !== undefined ? { after } : {}) };
   const built = itemsOf(cfg, agent, convId);
@@ -92,24 +96,33 @@ export function historyPage(cfg: OpenClawConfig, agent: string, request: History
   const picked: HistoryItem[][] = [];
   let bytes = 0;
   let more = false;
-  const take = (group: HistoryItem[]) => {
+  const listed = built.cards.size ? await cardKeys(convId) : new Set<string>();
+  // The group with its stored cards, which count toward the page's size; nothing when the page is full.
+  const take = async (bare: HistoryItem[]) => {
+    const group = listed.size ? await Promise.all(bare.map(async (item) => {
+      const key = built.cards.get(item.id);
+      const presentation = key && listed.has(key) ? await storedCard(key) : undefined;
+      return presentation && item.kind === "agent" ? { ...item, presentation } : item;
+    })) : bare;
     const size = group.reduce((n, item) => n + Buffer.byteLength(JSON.stringify(item)), 0);
     const count = picked.reduce((n, g) => n + g.length, 0);
-    if (picked.length && (count + group.length > PAGE_ITEMS || bytes + size > PAGE_BYTES)) return false;
+    if (picked.length && (count + group.length > PAGE_ITEMS || bytes + size > PAGE_BYTES)) return undefined;
     bytes += size;
-    return true;
+    return group;
   };
   if (after !== undefined) {
-    for (const group of groups) {
-      if (group[0]!.seq <= after) continue;
-      if (!take(group)) { more = true; break; }
+    for (const bare of groups) {
+      if (bare[0]!.seq <= after) continue;
+      const group = await take(bare);
+      if (!group) { more = true; break; }
       picked.push(group);
     }
   } else {
     for (let i = groups.length - 1; i >= 0; i--) {
-      const group = groups[i]!;
-      if (before !== undefined && group[0]!.seq >= before) continue;
-      if (!take(group)) { more = true; break; }
+      const bare = groups[i]!;
+      if (before !== undefined && bare[0]!.seq >= before) continue;
+      const group = await take(bare);
+      if (!group) { more = true; break; }
       picked.unshift(group);
     }
   }
@@ -125,7 +138,7 @@ function itemsOf(cfg: OpenClawConfig, agent: string, convId: string) {
   let built = cache.get(sessionKey);
   if (!built || built.sessionId !== entry.sessionId || built.rev !== rev) {
     const events = loadTranscriptEventsSync({ agentId: agent, sessionId: entry.sessionId, sessionKey });
-    built = { sessionId: entry.sessionId, rev, items: buildItems(cfg, entry.sessionId, events) };
+    built = { sessionId: entry.sessionId, rev, ...buildItems(cfg, entry.sessionId, events) };
     cache.delete(sessionKey);
     cache.set(sessionKey, built);
     for (const key of cache.keys()) if (cache.size > CACHE_MAX) cache.delete(key);
@@ -150,7 +163,7 @@ export function liveReplyIds(
   sessionKey: string,
   messageId: string,
   used: Set<string>,
-): { id: (chunk: number) => string; ts: number } | undefined {
+): { id: (chunk: number) => string; ts: number; sessionId: string; eventId: string } | undefined {
   try {
     const sessionId = getSessionEntry({ agentId: agent, sessionKey })?.sessionId;
     if (!sessionId) return undefined;
@@ -164,7 +177,7 @@ export function liveReplyIds(
       else if (inTurn && message.role === "assistant" && textOf(message.content).trim() && !used.has(event.id)) {
         used.add(event.id);
         const eventId = event.id;
-        return { id: (k) => chunkId(sessionId, eventId, k), ts: timeOf(event, message) || Date.now() };
+        return { id: (k) => chunkId(sessionId, eventId, k), ts: timeOf(event, message) || Date.now(), sessionId, eventId };
       }
     }
   } catch {
@@ -227,9 +240,10 @@ function timeOf(event: Fields, message?: Fields): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): HistoryItem[] {
+function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): Built {
   const limit = resolveTextChunkLimit(cfg, CHANNEL_ID, undefined, { fallbackLimit: DEFAULT_CHUNK_LIMIT });
   const items: HistoryItem[] = [];
+  const cards = new Map<string, string>();
   let tools: Extract<HistoryItem, { kind: "tools" }> | undefined;
   let lastUser: string | undefined;
   const pending = new Map<string, { status: ToolStatus }>();
@@ -291,10 +305,11 @@ function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): 
         const last = k === chunks.length - 1 && files.length;
         items.push({ kind: "agent", id, seq, ts, text: cut(chunk), ...(last ? { attachments: files } : {}) });
       });
+      cards.set(chunkId(sessionId, eventId, chunks.length - 1), cardKey(sessionId, eventId));
     } else if (message.role === "toolResult" && typeof message.toolCallId === "string") {
       const call = pending.get(message.toolCallId);
       if (call) call.status = message.isError === true ? "failed" : "done";
     }
   });
-  return items;
+  return { items, cards };
 }

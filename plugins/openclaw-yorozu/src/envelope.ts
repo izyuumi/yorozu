@@ -1,4 +1,5 @@
 import { validReport, type ActivityReport } from "./liveactivity.js";
+import type { Presentation } from "./presentation.js";
 
 export const PROTOCOL_VERSION = 3;
 
@@ -27,12 +28,14 @@ export const PUSH_PROXY = "push-proxy";
 /** Feature flag `unversioned-wire` (#532 wire migration step 1): accepts unversioned frames and the `yorozu|…` prologue.
  * Clients may send unversioned only to a plugin listing it; this plugin always lists it. */
 export const UNVERSIONED_WIRE = "unversioned-wire";
+/** Read-only cards: `presentation` on a `reply` and on `agent` history items, only for a client that lists it too. */
+export const PRESENTATION = "presentation";
 
 export const PEER_INFO: PeerInfo = {
   protocolMin: PROTOCOL_VERSION,
   protocolMax: PROTOCOL_VERSION,
   app: "0.1.0",
-  capabilities: [ATTACHMENTS, DEVICES, INVITE, REPLIES, REACTIONS, RESUME, UNVERSIONED_WIRE],
+  capabilities: [ATTACHMENTS, DEVICES, INVITE, REPLIES, REACTIONS, RESUME, UNVERSIONED_WIRE, PRESENTATION],
 };
 
 export const CHUNK_BYTES = 160 * 1024;
@@ -45,7 +48,8 @@ export type Reaction = { convId: string; messageId: string; emoji: string; remov
 export type Reactions = { user?: string; agent?: string };
 export type MessageRef = { convId: string; messageId: string };
 export type Typing = { convId: string; active: boolean };
-export type Reply = { convId: string; messageId: string; text: string; ts: number; attachments?: Attachment[]; replyTo?: ReplyTo };
+// Capability `presentation`: a sanitized card (presentation.ts), on a reply's last chunk.
+export type Reply = { convId: string; messageId: string; text: string; ts: number; attachments?: Attachment[]; replyTo?: ReplyTo; presentation?: Presentation };
 export type ErrorInfo = { code: string; message: string; convId?: string; messageId?: string; attachmentId?: string };
 export type Upload = {
   attachmentId: string;
@@ -73,7 +77,7 @@ export type HistoryRequest = { convId: string; before?: number; after?: number }
 export type History = HistoryRequest & { items: HistoryItem[]; more: boolean; rev: number };
 export type HistoryTool = { callId: string; name: string; status: ToolStatus };
 export type HistoryItem =
-  | { kind: "user" | "agent"; id: string; seq: number; ts: number; text: string; attachments?: Attachment[]; replyTo?: ReplyTo; reactions?: Reactions }
+  | { kind: "user" | "agent"; id: string; seq: number; ts: number; text: string; attachments?: Attachment[]; replyTo?: ReplyTo; reactions?: Reactions; presentation?: Presentation }
   | { kind: "tools"; id: string; seq: number; ts: number; tools: HistoryTool[] }
   | { kind: "reset"; id: string; seq: number; ts: number };
 export type ReadCursor = { convId: string; messageId: string; ts: number; unread: boolean };

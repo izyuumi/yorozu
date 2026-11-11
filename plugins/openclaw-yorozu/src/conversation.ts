@@ -11,8 +11,11 @@ import { createTypingCallbacks } from "openclaw/plugin-sdk/channel-outbound";
 import { chunkMarkdownText, resolveTextChunkLimit } from "openclaw/plugin-sdk/reply-runtime";
 import { resolveAgentRoute, resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
 import { stageOutbound, uploadedFiles, type MediaAccess } from "./attachments.js";
+import { cardFor, withCard } from "./cards.js";
 import { isId, type Attachment, type Event, type Message, type ReplyTo, type ToolStatus } from "./envelope.js";
 import { itemText, liveReplyIds } from "./history.js";
+import type { Presentation, PresentationSdk } from "./presentation.js";
+import { storeCard } from "./presentations.js";
 import { noteReply } from "./replies.js";
 import { noteFirstMessage } from "./push.js";
 import { activityTurn, broadcast, notifyReply } from "./relay.js";
@@ -45,11 +48,12 @@ export function replyEvents(
   ids?: { id: (chunk: number) => string; ts: number },
   attachments: Attachment[] = [],
   replyTo?: ReplyTo,
+  presentation?: Presentation,
 ): Event[] {
   const limit = resolveTextChunkLimit(cfg, CHANNEL_ID, accountId, { fallbackLimit: DEFAULT_CHUNK_LIMIT });
   const chunks = chunkMarkdownText(text, limit).filter((chunk) => chunk.trim());
-  if (attachments.length && !chunks.length) chunks.push("");
-  return chunks.map((chunk, k) => {
+  if ((attachments.length || presentation) && !chunks.length) chunks.push("");
+  const events = chunks.map((chunk, k): Event => {
     const messageId = ids?.id(k) ?? randomUUID();
     return {
       kind: "reply",
@@ -63,6 +67,14 @@ export function replyEvents(
       },
     };
   });
+  return withCard(events, presentation);
+}
+
+/** A payload's text and card as sent (`cardFor`), with one content-free line for a card that was dropped. */
+function payloadCard(payload: { text?: string; presentation?: unknown }, sdk: PresentationSdk, log?: ChannelGatewayContext["log"]) {
+  const card = cardFor(payload.presentation, payload.text, sdk);
+  if (card.dropped) log?.warn("yorozu: dropped a card that cannot be shown; its text was sent");
+  return card;
 }
 
 export function replyTarget(cfg: OpenClawConfig, agent: string, convId: string, id?: string | null, current?: Message): ReplyTo | undefined {
@@ -76,7 +88,11 @@ export function mediaUrls(...urls: (string | null | undefined)[]): string[] {
   return [...new Set(urls.map((url) => url?.trim()).filter((url): url is string => !!url))];
 }
 
-type TurnContext = Pick<ChannelGatewayContext, "cfg" | "accountId" | "log"> & { agent: string; mediaMaxBytes: number };
+type TurnContext = Pick<ChannelGatewayContext, "cfg" | "accountId" | "log"> & {
+  agent: string;
+  mediaMaxBytes: number;
+  presentationSdk: PresentationSdk;
+};
 
 export async function handleMessage(ctx: TurnContext, message: Message, attempt = 0): Promise<void> {
   const { cfg, accountId, log } = ctx;
@@ -187,13 +203,20 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
           delivery: {
             deliver: async (payload, info) => {
               const urls = mediaUrls(payload.mediaUrl, ...(payload.mediaUrls ?? []));
-              if (info.kind === "tool" || (!payload.text?.trim() && !urls.length)) return;
+              if (info.kind === "tool") return;
+              // OpenClaw hands a message-tool card here as it came; this is the only place it is checked.
+              const card = payloadCard(payload, ctx.presentationSdk, log);
+              if (!card.text.trim() && !urls.length && !card.presentation) return;
               runStarted();
               const ids = liveReplyIds(route.agentId, sessionKey, messageId, usedReplies);
               const { attachments, failures } = await stageOutbound(urls, ctx.mediaMaxBytes, access, ids?.id(0));
-              const body = [payload.text ?? "", ...failures].filter((line) => line.trim()).join("\n\n");
+              const body = [card.text, ...failures].filter((line) => line.trim()).join("\n\n");
               const replyTo = replyTarget(cfg, ctx.agent, convId, payload.replyToId, message);
-              const replies = replyEvents(cfg, convId, body, route.accountId, ids, attachments, replyTo);
+              // Only a reply with its transcript ids can be found again by a history page.
+              if (card.presentation && ids) {
+                await storeCard(convId, ids, card.presentation).catch(() => log?.warn("yorozu: a card was not stored; history will show its text"));
+              }
+              const replies = replyEvents(cfg, convId, body, route.accountId, ids, attachments, replyTo, card.presentation);
               const first = replies[0];
               if (!firstReply && first?.kind === "reply") firstReply = { messageId: first.data.messageId, text: body || "📎" };
               send(...replies);
@@ -272,4 +295,30 @@ export async function sendConversationMedia(params: {
   };
   broadcast([reply]);
   return messageId;
+}
+
+/** An explicit-target payload carrying a card (`renderPresentation` put it in `channelData.yorozu`): chunked text,
+ * files and the card on the last chunk. Its ids are random, so the card is not stored for history. */
+export async function sendConversationPayload(params: {
+  cfg: OpenClawConfig;
+  accountId?: string | null;
+  threadId?: string | number | null;
+  text?: string;
+  mediaUrls: string[];
+  presentation?: unknown;
+  sdk: PresentationSdk;
+  maxBytes: number;
+  access: MediaAccess;
+  replyTo?: ReplyTo;
+  log?: ChannelGatewayContext["log"];
+}): Promise<string> {
+  const convId = deliveryConv(params.threadId);
+  const card = payloadCard(params, params.sdk, params.log);
+  const { attachments, failures } = await stageOutbound(params.mediaUrls, params.maxBytes, params.access);
+  const text = [card.text, ...failures].filter((line) => line.trim()).join("\n\n");
+  const replies = replyEvents(params.cfg, convId, text, params.accountId, undefined, attachments, params.replyTo, card.presentation);
+  const first = replies[0];
+  if (first?.kind !== "reply") throw new Error("yorozu: a delivery needs text, a file or a card");
+  broadcast(replies);
+  return first.data.messageId;
 }
