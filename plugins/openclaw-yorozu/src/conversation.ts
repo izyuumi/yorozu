@@ -22,7 +22,6 @@ import { maybeTitle } from "./sessions.js";
 import { PEER } from "./target.js";
 
 const CHANNEL_ID = "yorozu";
-export { PEER };
 export const DEFAULT_CHUNK_LIMIT = 4000;
 const TYPING_KEEPALIVE_MS = 8_000;
 const TYPING_MAX_MS = 30 * 60 * 1000;
@@ -236,9 +235,13 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
   void maybeTitle(cfg, route.agentId, convId, log);
 }
 
+// "no conversation reference found" is one of OpenClaw's permanent delivery errors
+// (src/infra/outbound/delivery-queue-recovery-policy.ts), so a send without a conversation is not queued for retries.
+export const NO_CONVERSATION = "yorozu: no conversation reference found; a delivery needs the conversation id as threadId";
+
 const deliveryConv = (threadId: string | number | null | undefined): string => {
   const convId = String(threadId ?? "").toLowerCase();
-  if (!isId(convId)) throw new Error("yorozu: a delivery needs the conversation id as threadId");
+  if (!isId(convId)) throw new Error(NO_CONVERSATION);
   return convId;
 };
 
