@@ -74,7 +74,7 @@ export const runChannelInboundEvent = async ({ adapter }) => {
   const turn = adapter.resolveTurn();
   const start = () => turn.replyOptions?.onAgentRunStart?.("run");
   if (!host.queued) start();
-  await host.run?.(turn.delivery.deliver, start);
+  await host.run?.(turn.delivery.deliver, start, turn.ctxPayload);
 };
 
 // What channel.ts takes from openclaw/plugin-sdk/*: the plugin object as declared, and the presentation SDK as in

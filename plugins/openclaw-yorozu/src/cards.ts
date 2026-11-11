@@ -19,6 +19,10 @@ export const MESSAGE_TOOL_HINTS = [
   "- A `table` needs `caption`, `headers` and `rows` (each row as long as `headers`).",
 ];
 
+// OpenClaw's Codex app-server harness never shows agentPrompt.messageToolHints, so every Yorozu turn carries them via conversation.ts supplemental.groupSystemPrompt.
+// Embedded and claude-cli runs see the hints twice; keep both copies so every harness receives them.
+export const CARD_GUIDANCE = ["## Yorozu app", ...MESSAGE_TOOL_HINTS].join("\n");
+
 const shows = (card: Presentation): boolean => !!card.title || card.blocks.some((block) => block.type !== "divider");
 
 /** A payload's text and card as sent: the text always goes, and a card that cannot be shown changes nothing about it.

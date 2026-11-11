@@ -11,7 +11,7 @@ import { createTypingCallbacks } from "openclaw/plugin-sdk/channel-outbound";
 import { chunkMarkdownText, chunkMarkdownTextWithMode, resolveChunkMode, resolveTextChunkLimit } from "openclaw/plugin-sdk/reply-runtime";
 import { resolveAgentRoute, resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
 import { stageOutbound, uploadedFiles, type MediaAccess } from "./attachments.js";
-import { cardFor, cardKey, DROPPED, errorTag, replyChunks, turnCardKey, withCard } from "./cards.js";
+import { CARD_GUIDANCE, cardFor, cardKey, DROPPED, errorTag, replyChunks, turnCardKey, withCard } from "./cards.js";
 import { isId, type Attachment, type Event, type Message, type ReplyTo, type ToolStatus } from "./envelope.js";
 import { itemText, liveReplyIds, liveSessionId } from "./history.js";
 import type { Presentation, PresentationSdk } from "./presentation.js";
@@ -181,7 +181,10 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
     reply: { to: PEER, originatingTo: PEER, messageThreadId: convId },
     message: { body: text, bodyForAgent: text, rawBody: text, commandBody: text },
     media,
-    ...(quote && { supplemental: { quote: { id: quote.messageId, fullId: quote.messageId, body: quote.text, senderAllowed: true } } }),
+    supplemental: {
+      groupSystemPrompt: CARD_GUIDANCE,
+      ...(quote && { quote: { id: quote.messageId, fullId: quote.messageId, body: quote.text, senderAllowed: true } }),
+    },
     access: { commands: { authorized: true } },
   });
 
