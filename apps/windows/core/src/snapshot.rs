@@ -58,7 +58,8 @@ pub struct OpenConv {
     pub conv_id: String,
     pub items: Vec<Item>,
     pub older_more: bool,
-    pub marks: Vec<String>,
+    pub title: String,
+    pub typing: bool,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -66,6 +67,10 @@ pub struct OpenConv {
 pub struct Item {
     pub id: String,
     pub text: String,
+    pub kind: String,
+    pub tools: Vec<crate::model::ToolCall>,
+    pub mark: Option<crate::outbox::Mark>,
+    pub run_failed: bool,
 }
 
 impl Snapshot {
@@ -114,7 +119,8 @@ mod tests {
             conv_id: "c".to_owned(),
             items: Vec::new(),
             older_more: true,
-            marks: Vec::new(),
+            title: "t".into(),
+            typing: false,
         });
         let got = serde_json::to_string(&snapshot).unwrap();
         assert!(got.contains(r#""notice":{"seq":1,"text":"n"}"#), "{got}");
@@ -122,7 +128,8 @@ mod tests {
             got.contains(r#""list":[{"convId":"c","title":"t"}]"#),
             "{got}"
         );
-        let open = r#""open":{"convId":"c","items":[],"olderMore":true,"marks":[]}"#;
+        let open =
+            r#""open":{"convId":"c","items":[],"olderMore":true,"title":"t","typing":false}"#;
         assert!(got.contains(open), "{got}");
     }
 }

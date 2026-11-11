@@ -3,6 +3,8 @@ import { existsSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import type { Message, Event, HistoryItem, ConvUpdate } from "../../../../plugins/openclaw-yorozu/src/envelope.ts";
+import { randomUUID } from "node:crypto";
 import type { Link } from "../../../../plugins/openclaw-yorozu/src/hub.ts";
 registerHooks({
   resolve(specifier, context, next) {
@@ -27,7 +29,9 @@ export async function fakeHost() {
   const keys = { static: x25519Keypair(), room: roomId(signing.publicKey) };
   const pending = new PendingPairings();
   const devices = new Map<string, string>();
-  const messages: unknown[] = [];
+  const messages: Message[] = [];
+  const store = new Map<string,{title?:string;updatedAt:number;items:HistoryItem[]}>();
+  const cursors = new Map<string, Extract<Event,{kind:"read_cursor"}>["data"]>();
   let mac: Awaited<ReturnType<typeof connectMac>>;
   let link: Link;
   const announce = () => mac.send({ type: "devices", devices: [...devices.keys()] });
@@ -36,11 +40,26 @@ export async function fakeHost() {
     keys, peerInfo: () => ({ app: "conformance", protocolMin: 3, protocolMax: 3, capabilities: ["devices", "unversioned-wire"] }),
     staticKeyOf: async key => devices.get(key), pair,
     refused: pubkey => mac.send({ type: "revoke", pubkey }),
-    onMessage: message => { messages.push(message); hub.broadcast([{ kind: "run_started", data: message }, { kind: "reply", data: { ...message, text: "echo: " + message.text, ts: Date.now() } }]); },
+    onMessage: message => {
+      messages.push(message);
+      const row=store.get(message.convId) ?? {updatedAt:Date.now(),items:[]};
+      const seq=(row.items.at(-1)?.seq ?? 0)+1,ts=Date.now();
+      const reply={convId:message.convId,messageId:randomUUID(),text:"echo: "+message.text,ts};
+      row.items.push({kind:"user",id:message.messageId,seq,ts,text:message.text},{kind:"agent",id:reply.messageId,seq:seq+1,ts,text:reply.text});row.updatedAt=ts;store.set(message.convId,row);
+      hub.broadcast([{kind:"run_started",data:message},{kind:"reply",data:reply}]);
+    },
     dispatch: async ({ event, reply }) => {
-      if (event.kind === "conv_list") { reply([{ kind: "conv_list", data: { conversations: [] } }]); return true; }
-      if (event.kind === "history") { reply([{ kind: "history", data: { convId: event.data.convId, items: [], more: false, rev: 0 } }]); return true; }
-      if (event.kind === "read_cursor") { reply([event]); return true; }
+      if (event.kind === "conv_list") { reply([{ kind: "conv_list", data: { conversations: [...store].map(([convId,row])=>({convId,updatedAt:row.updatedAt,rev:row.items.length,...(row.title ? {title:row.title}:{})})).sort((a,b)=>b.updatedAt-a.updatedAt).slice(0,2000) } }]); return true; }
+      if (event.kind === "history") {
+        const {convId,before}=event.data;
+        const all=(store.get(convId)?.items ?? []).filter(i=>before===undefined || i.seq<before);
+        const items=all.slice(-60);
+        reply([{kind:"history",data:{convId,...(before===undefined ? {}:{before}),items,more:all.length>items.length,rev:store.get(convId)?.items.length ?? 0}}]);return true;
+      }
+      if (event.kind === "read_cursor") {
+        const old=cursors.get(event.data.convId);const data={...event.data,ts:Math.max(old?.ts ?? 0,event.data.ts)};
+        cursors.set(data.convId,data);reply([{kind:"read_cursor",data}]);return true;
+      }
       return false;
     },
     directHints: undefined, onPeer: undefined, log: undefined,
@@ -73,6 +92,13 @@ export async function fakeHost() {
   await reconnect();
   return {
     relay, hub, devices, messages, reconnect,
+    broadcast(events: Event[]) {return hub.broadcast(events);},
+    seed(convId: string, items: HistoryItem[]) {store.set(convId,{items,updatedAt:items.at(-1)?.ts ?? 0});},
+    update(data: ConvUpdate) {
+      if (data.deleted || data.archived) store.delete(data.convId);
+      else {const row=store.get(data.convId) ?? {items:[],updatedAt:Date.now()};row.title=data.title;store.set(data.convId,row);}
+      hub.broadcast([{kind:"conv_update",data}]);
+    },
     async link() { return "yorozu://pair?" + pairingQuery({ relayUrl: `ws://127.0.0.1:${relay.port}`, hostStatic: keys.static.publicKey, token: await mintToken({ ...mac, next: async () => { while (true) { const value = await mac.next(); if (value.type === "token") return value; } } }), room: keys.room, secret: pending.add(Date.now() + 600_000) }); },
     async close() { const closed = mac.closed; mac.ws.close(); await closed; },
     async stop() { await relay.close(); },

@@ -2,10 +2,15 @@
 use crate::{
     connection::{self, Effect, Event, EventKind, Machine, Payload, State, Timer},
     events::{Envelope, PeerInfo},
+    events::{Message as ChatMessage, ReadCursor},
     frame::{b64, Frame},
+    model::valid_id,
+    outbox,
     pairing::{self, Effect as PairEffect, Event as PairEvent},
     platform::Platform,
+    reads,
     store::{FileStore, Loaded, Pairing, Protector, Standing},
+    sync,
     wire::{self, ClientHandshake, Session},
     Notice, PairingView, Snapshot,
 };
@@ -32,10 +37,24 @@ pub enum Command {
     Retry,
     Drop,
     Quit,
+    NewConversation,
+    OpenConversation(Option<String>),
+    LoadOlder(String),
+    SendMessage {
+        conv_id: String,
+        text: String,
+        drop_on_accepted: bool,
+    },
+    RetryMessage {
+        conv_id: String,
+        message_id: String,
+    },
+    Focus(bool),
 }
 #[derive(Clone, Debug)]
 pub enum Notification {
     Changed(&'static str),
+    Chat(Value),
     Notice {
         state: &'static str,
         text: String,
@@ -97,6 +116,10 @@ pub struct Driver {
     timers: HashMap<Timer, JoinHandle<()>>,
     handshake: Option<ClientHandshake>,
     session: Option<Session>,
+    chat: sync::Machine,
+    outbox: outbox::Machine,
+    reads: reads::Machine,
+    drop_on_accepted: Option<String>,
 }
 impl Driver {
     pub fn new(
@@ -127,6 +150,10 @@ impl Driver {
             timers: HashMap::new(),
             handshake: None,
             session: None,
+            chat: sync::Machine::default(),
+            outbox: outbox::Machine::default(),
+            reads: reads::Machine::default(),
+            drop_on_accepted: None,
         };
         (handle, driver)
     }
@@ -139,7 +166,12 @@ impl Driver {
         }
         self.pair_event(PairEvent::Launch(loaded));
         self.publish();
-        while let Some(input) = self.rx.recv().await {
+        let mut tick = tokio::time::interval(Duration::from_secs(1));
+        loop {
+            let input = tokio::select! {
+                input = self.rx.recv() => match input { Some(input) => input, None => break },
+                _ = tick.tick() => { self.sync_event(sync::Event::Tick); self.publish(); continue; }
+            };
             match input {
                 Input::Command(Command::Quit) => break,
                 Input::Command(cmd) => match cmd {
@@ -157,6 +189,49 @@ impl Driver {
                         }
                     }
                     Command::Drop => self.conn_event(EventKind::Error, None),
+                    Command::NewConversation => {
+                        let id = uuid::Uuid::new_v4().to_string();
+                        self.sync_event(sync::Event::New(id.clone()));
+                        (self.notify)(Notification::Chat(json!({"ev":"conv","convId":id})));
+                    }
+                    Command::OpenConversation(id) => {
+                        if id.as_deref().is_none_or(valid_id) {
+                            self.sync_event(sync::Event::Open(id));
+                        }
+                    }
+                    Command::LoadOlder(id) => {
+                        if valid_id(&id) {
+                            self.sync_event(sync::Event::Older(id));
+                        }
+                    }
+                    Command::SendMessage {
+                        conv_id,
+                        text,
+                        drop_on_accepted,
+                    } => {
+                        if valid_id(&conv_id) {
+                            let id = uuid::Uuid::new_v4().to_string();
+                            if drop_on_accepted {
+                                self.drop_on_accepted = Some(id.clone());
+                            }
+                            self.outbox_event(outbox::Event::Send(ChatMessage {
+                                conv_id,
+                                message_id: id,
+                                text,
+                            }));
+                        }
+                    }
+                    Command::RetryMessage {
+                        conv_id,
+                        message_id,
+                    } => {
+                        self.outbox_event(outbox::Event::Retry {
+                            conv_id,
+                            message_id,
+                            new_id: uuid::Uuid::new_v4().to_string(),
+                        });
+                    }
+                    Command::Focus(focused) => self.read_event(reads::Event::Focus(focused)),
                     Command::Quit => unreachable!(),
                 },
                 Input::Timer(timer, generation) => {
@@ -217,6 +292,10 @@ impl Driver {
                         self.notice(pairing::S13);
                     }
                     self.record = None;
+                    self.chat = sync::Machine::default();
+                    self.outbox = outbox::Machine::default();
+                    self.reads = reads::Machine::default();
+                    self.drop_on_accepted = None;
                 }
                 PairEffect::Notice(text) => self.notice(text),
                 PairEffect::PersistKnown => {
@@ -292,6 +371,11 @@ impl Driver {
             self.session = None;
             self.handshake = None;
         }
+        if before == State::Open && self.conn.state != State::Open {
+            self.outbox_event(outbox::Event::SessionLost);
+            self.read_event(reads::Event::SessionLost);
+            self.sync_event(sync::Event::SessionLost);
+        }
         for effect in effects {
             self.execute(effect);
         }
@@ -365,48 +449,216 @@ impl Driver {
                     }
                 }
             }
-            Effect::PeerInfo => {
-                let bytes = serde_json::to_vec(&Envelope::PeerInfo(PeerInfo::client(
-                    &self.platform.computer_name(),
-                )))
-                .unwrap();
-                if let Some(frame) = self.session.as_mut().and_then(|s| s.seal(&bytes)) {
-                    self.send_frame(&frame);
+            Effect::PeerInfo => self.send_envelope(&Envelope::PeerInfo(PeerInfo::client(
+                &self.platform.computer_name(),
+            ))),
+            Effect::SendFlowAck(ack) => {
+                if let Ok(value) = serde_json::to_value(ack) {
+                    self.send(value);
                 }
             }
-            Effect::SendFlowAck(ack) => self.send(serde_json::to_value(ack).unwrap()),
             Effect::Ping => self.send(json!({"type":"ping"})),
             Effect::SessionOpened => {
-                self.pair_event(PairEvent::SessionOpened(self.platform.now_ms()))
+                self.pair_event(PairEvent::SessionOpened(self.platform.now_ms()));
+                self.outbox_event(outbox::Event::SessionOpened);
+                self.read_event(reads::Event::SessionOpened);
+                self.sync_event(sync::Event::SessionOpened);
             }
             Effect::Terminal(terminal) => self.pair_event(PairEvent::Terminal(terminal)),
             Effect::SessionLost => {
                 self.handshake = None;
                 self.session = None;
             }
-            Effect::Accepted(_) | Effect::Chat(_) => {}
+            Effect::Accepted(sig) => {
+                let drop = self.drop_on_accepted.as_ref().is_some_and(|id| {
+                    self.outbox
+                        .rows
+                        .iter()
+                        .any(|r| r.message.message_id == *id && r.sig.as_ref() == Some(&sig))
+                });
+                self.outbox_event(outbox::Event::Accepted(sig));
+                if drop {
+                    self.drop_on_accepted = None;
+                    self.conn_event(EventKind::Error, None);
+                }
+            }
+            Effect::Chat(event) => {
+                match &event {
+                    Envelope::Delivered(r) => {
+                        self.outbox_event(outbox::Event::Delivered(r.clone()))
+                    }
+                    Envelope::RunStarted(r) => self.outbox_event(outbox::Event::Read(r.clone())),
+                    Envelope::MessageError(e) => self.outbox_event(outbox::Event::Error(e.clone())),
+                    Envelope::ReadCursor(c) => self.read_event(reads::Event::Answer(c.clone())),
+                    Envelope::Reply(r) => {
+                        use sha2::{Digest, Sha256};
+                        (self.notify)(Notification::Chat(
+                            json!({"ev":"reply","convId":r.conv_id,"messageId":r.message_id,"length":r.text.encode_utf16().count(),"sha256":format!("{:x}",Sha256::digest(r.text.as_bytes()))}),
+                        ));
+                    }
+                    _ => {}
+                }
+                let reply = matches!(&event, Envelope::Reply(r) if self.chat.open.as_ref().is_some_and(|o|o.conv_id==r.conv_id));
+                self.sync_event(sync::Event::Live(event));
+                if reply {
+                    if let Some(cursor) = self.newest_cursor() {
+                        self.read_event(reads::Event::Reply(cursor));
+                    }
+                }
+            }
         }
     }
+    fn outbox_event(&mut self, event: outbox::Event) {
+        let before: Vec<_> = self
+            .outbox
+            .rows
+            .iter()
+            .map(|r| (r.message.message_id.clone(), r.mark.clone()))
+            .collect();
+        let effects = self.outbox.step(event);
+        let added: Vec<_> = self
+            .outbox
+            .rows
+            .iter()
+            .filter(|r| !before.iter().any(|(id, _)| *id == r.message.message_id))
+            .map(|r| r.message.clone())
+            .collect();
+        for message in added {
+            self.sync_event(sync::Event::Outgoing(message));
+        }
+        for row in &self.outbox.rows {
+            if !before
+                .iter()
+                .any(|(id, mark)| *id == row.message.message_id && *mark == row.mark)
+            {
+                let mut value = json!({"ev":"mark","convId":row.message.conv_id,"messageId":row.message.message_id,"mark":row.mark.name()});
+                if let outbox::Mark::Failed(reason) = &row.mark {
+                    value["reason"] = json!(reason);
+                }
+                (self.notify)(Notification::Chat(value));
+            }
+        }
+        for effect in effects {
+            match effect {
+                outbox::Effect::Refused(reason) => {
+                    self.notice(&reason);
+                    (self.notify)(Notification::Chat(
+                        json!({"ev":"refused","reason":"too_long"}),
+                    ));
+                }
+                outbox::Effect::Send(message) => {
+                    if self.conn.state != State::Open {
+                        continue;
+                    }
+                    let frame = serde_json::to_vec(&Envelope::Message(message.clone()))
+                        .ok()
+                        .and_then(|bytes| self.session.as_mut().and_then(|s| s.seal(&bytes)));
+                    if let Some(frame) = frame {
+                        if let Some(value) = self.frame_value(&frame) {
+                            let encoded = value.to_string();
+                            if outbox::relay_fits(&encoded) {
+                                if let Some(sig) = value.get("sig").and_then(Value::as_str) {
+                                    self.outbox.step(outbox::Event::Frame {
+                                        message_id: message.message_id,
+                                        sig: sig.into(),
+                                    });
+                                }
+                                self.send(value);
+                            } else {
+                                self.outbox_event(outbox::Event::RefusedFrame(message.message_id));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    fn newest_cursor(&self) -> Option<ReadCursor> {
+        let o = self.chat.open.as_ref()?;
+        let i = o.items.iter().rev().find(|i| i.kind == "agent")?;
+        Some(ReadCursor {
+            conv_id: o.conv_id.clone(),
+            message_id: i.id.clone(),
+            ts: i.ts,
+            unread: false,
+        })
+    }
+    fn read_event(&mut self, event: reads::Event) {
+        for cursor in self.reads.step(event) {
+            self.send_envelope(&Envelope::ReadCursor(cursor));
+        }
+    }
+    fn sync_event(&mut self, event: sync::Event) {
+        for effect in self.chat.step(event, &self.outbox, self.platform.now_ms()) {
+            match effect {
+                sync::Effect::Send(e) => self.send_envelope(&e),
+                sync::Effect::Notice(text) => self.notice(text),
+                sync::Effect::Listed => (self.notify)(Notification::Chat(
+                    json!({"ev":"list","convIds":self.chat.list.iter().map(|c|&c.conv_id).collect::<Vec<_>>()}),
+                )),
+                sync::Effect::Page {
+                    conv_id,
+                    items,
+                    more,
+                    newest,
+                } => {
+                    (self.notify)(Notification::Chat(
+                        json!({"ev":"history","convId":conv_id,"items":items,"more":more}),
+                    ));
+                    if newest {
+                        if let Some(cursor) = self.newest_cursor() {
+                            self.read_event(reads::Event::Opened(cursor));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    fn send_envelope(&mut self, envelope: &Envelope) {
+        if let Some(frame) = serde_json::to_vec(envelope)
+            .ok()
+            .and_then(|bytes| self.session.as_mut().and_then(|s| s.seal(&bytes)))
+        {
+            self.send_frame(&frame);
+        }
+    }
+    fn frame_value(&self, frame: &Frame) -> Option<Value> {
+        let (ed, _, _) = self.record.as_ref().and_then(Pairing::keys)?;
+        let payload = frame.encode();
+        Some(json!({"type":"frame","sig":wire::sign(&ed,&payload),"payload":payload}))
+    }
     fn relay(&mut self, value: Value, generation: u64) {
-        let kind = match value["type"].as_str() {
-            Some("nonce") => value["nonce"].as_str().map(|s| EventKind::Nonce(s.into())),
+        let kind = match value.get("type").and_then(Value::as_str) {
+            Some("nonce") => value
+                .get("nonce")
+                .and_then(Value::as_str)
+                .map(|s| EventKind::Nonce(s.into())),
             Some("joined") => Some(EventKind::Joined {
-                owner_online: value["ownerOnline"] == true,
-                flow_control: value["flowControl"] == true,
+                owner_online: value.get("ownerOnline").and_then(Value::as_bool) == Some(true),
+                flow_control: value.get("flowControl").and_then(Value::as_bool) == Some(true),
             }),
-            Some("owner") => value["online"].as_bool().map(EventKind::Owner),
+            Some("owner") => value
+                .get("online")
+                .and_then(Value::as_bool)
+                .map(EventKind::Owner),
             Some("pong") => Some(EventKind::Pong),
-            Some("accepted") => value["sig"].as_str().map(|s| EventKind::Accepted(s.into())),
+            Some("accepted") => value
+                .get("sig")
+                .and_then(Value::as_str)
+                .map(|s| EventKind::Accepted(s.into())),
             Some("frame") => {
                 // Ack at the relay layer before decoding or touching handshake/session state.
                 self.conn_event(
                     EventKind::RelayFrame {
-                        flow_bytes: value["flowBytes"].as_u64(),
+                        flow_bytes: value.get("flowBytes").and_then(Value::as_u64),
                         payload: Payload::Ignored,
                     },
                     Some(generation),
                 );
-                let frame = value["payload"].as_str().and_then(Frame::decode);
+                let frame = value
+                    .get("payload")
+                    .and_then(Value::as_str)
+                    .and_then(Frame::decode);
                 let payload = match (&self.conn.state, frame.as_ref()) {
                     (State::Handshaking { keys: false }, Some(frame @ Frame::Response { .. })) => {
                         match self.handshake.as_mut().and_then(|h| h.finish(frame)) {
@@ -445,9 +697,8 @@ impl Driver {
         }
     }
     fn send_frame(&self, frame: &Frame) {
-        if let Some((ed, _, _)) = self.record.as_ref().and_then(Pairing::keys) {
-            let payload = frame.encode();
-            self.send(json!({"type":"frame","sig":wire::sign(&ed,&payload),"payload":payload}));
+        if let Some(value) = self.frame_value(frame) {
+            self.send(value);
         }
     }
     fn send(&self, value: Value) {
@@ -516,6 +767,53 @@ impl Driver {
             .snapshot
             .write()
             .unwrap_or_else(|e| e.into_inner());
+        snapshot.list = self
+            .chat
+            .list
+            .iter()
+            .map(|c| crate::ConvSummary {
+                conv_id: c.conv_id.clone(),
+                title: self.chat.title(c),
+            })
+            .collect();
+        snapshot.open = self.chat.open.as_ref().map(|o| crate::OpenConv {
+            conv_id: o.conv_id.clone(),
+            title: self
+                .chat
+                .list
+                .iter()
+                .find(|c| c.conv_id == o.conv_id)
+                .map_or_else(|| "New conversation".into(), |c| self.chat.title(c)),
+            items: o
+                .items
+                .iter()
+                .map(|i| crate::Item {
+                    id: i.id.clone(),
+                    kind: i.kind.clone(),
+                    text: i.display_text(),
+                    tools: i.tools.clone(),
+                    mark: self
+                        .outbox
+                        .rows
+                        .iter()
+                        .find(|r| {
+                            i.kind == "user"
+                                && r.message.conv_id == o.conv_id
+                                && r.message.message_id == i.id
+                        })
+                        .map(|r| r.mark.clone()),
+                    run_failed: i.run_failed
+                        || self.outbox.rows.iter().any(|r| {
+                            i.kind == "user"
+                                && r.message.conv_id == o.conv_id
+                                && r.message.message_id == i.id
+                                && r.run_failed
+                        }),
+                })
+                .collect(),
+            older_more: o.older_more,
+            typing: o.typing_until.is_some(),
+        });
         snapshot.pairing = match &self.pairing {
             pairing::State::Unpaired => PairingView::Unpaired,
             pairing::State::Confirming(link) => PairingView::Confirming {
@@ -543,5 +841,6 @@ impl Driver {
         drop(snapshot);
         (self.notify)(Notification::Changed("pairing"));
         (self.notify)(Notification::Changed("status"));
+        (self.notify)(Notification::Changed("chat"));
     }
 }

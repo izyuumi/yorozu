@@ -79,6 +79,11 @@ pub fn run() {
                         _ => {}
                     },
                 );
+                let focused = app
+                    .get_webview_window("main")
+                    .and_then(|w| w.is_focused().ok())
+                    .unwrap_or(false);
+                let _ = handle.command(yorozu_core::driver::Command::Focus(focused));
                 tauri::async_runtime::spawn(driver.run());
                 Some(handle)
             } else {
@@ -88,6 +93,15 @@ pub fn run() {
             app.manage(smoke);
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Focused(focused) = event {
+                if let Some(core) = window.try_state::<commands::Core>() {
+                    if let Some(handle) = &core.0 {
+                        let _ = handle.command(yorozu_core::driver::Command::Focus(*focused));
+                    }
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::snapshot,
             commands::submit_link,
@@ -95,7 +109,12 @@ pub fn run() {
             commands::cancel_pairing,
             commands::forget_pairing,
             commands::pair_again,
-            commands::retry_connection
+            commands::retry_connection,
+            commands::open_conversation,
+            commands::new_conversation,
+            commands::load_older,
+            commands::send_message,
+            commands::retry_message
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Yorozu");

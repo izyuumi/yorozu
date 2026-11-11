@@ -19,3 +19,8 @@ pub mod platform;
 pub mod status;
 pub mod store;
 pub mod wire;
+
+pub mod model;
+pub mod outbox;
+pub mod reads;
+pub mod sync;

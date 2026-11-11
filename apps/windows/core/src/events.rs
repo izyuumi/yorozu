@@ -13,11 +13,23 @@ pub struct ErrorInfo {
     pub code: String,
     pub message: String,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum Envelope {
     PeerInfo(PeerInfo),
     Error(ErrorInfo),
+    #[serde(rename = "error")]
+    MessageError(ChatError),
+    Message(Message),
+    Reply(Reply),
+    Delivered(MessageRef),
+    RunStarted(MessageRef),
+    Typing(Typing),
+    Tool(Tool),
+    ConvList(ConvList),
+    History(History),
+    ConvUpdate(crate::model::Conversation),
+    ReadCursor(ReadCursor),
     #[serde(other)]
     Unknown,
 }
@@ -48,7 +60,21 @@ impl Envelope {
         let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
         let object = value.as_object()?;
         let kind = object.get("kind")?.as_str()?;
-        if !matches!(kind, "peer_info" | "error") {
+        if !matches!(
+            kind,
+            "peer_info"
+                | "error"
+                | "message"
+                | "reply"
+                | "delivered"
+                | "run_started"
+                | "typing"
+                | "tool"
+                | "conv_list"
+                | "history"
+                | "conv_update"
+                | "read_cursor"
+        ) {
             return Some(Self::Unknown);
         }
         let data = object.get("data")?.as_object()?;
@@ -67,17 +93,55 @@ impl Envelope {
                 return None;
             }
             Some(Self::PeerInfo(
-                serde_json::from_value(object["data"].clone()).ok()?,
+                serde_json::from_value(object.get("data")?.clone()).ok()?,
             ))
-        } else {
+        } else if kind == "error" {
             for key in ["convId", "messageId", "attachmentId"] {
                 if data.get(key).is_some_and(|v| !v.is_string()) {
                     return None;
                 }
             }
-            Some(Self::Error(
-                serde_json::from_value(object["data"].clone()).ok()?,
-            ))
+            if data.contains_key("messageId") {
+                Some(Self::MessageError(
+                    serde_json::from_value(object.get("data")?.clone()).ok()?,
+                ))
+            } else {
+                Some(Self::Error(
+                    serde_json::from_value(object.get("data")?.clone()).ok()?,
+                ))
+            }
+        } else {
+            for key in ["convId", "messageId"] {
+                if let Some(v) = data.get(key) {
+                    if !v.as_str().is_some_and(crate::model::valid_id) {
+                        return None;
+                    }
+                }
+            }
+            if ["ts", "before", "after"]
+                .iter()
+                .filter_map(|key| data.get(*key))
+                .any(|v| {
+                    v.as_i64()
+                        .is_none_or(|n| n.unsigned_abs() > crate::frame::MAX_COUNTER)
+                })
+            {
+                return None;
+            }
+            let d = object.get("data")?.clone();
+            match kind {
+                "message" => serde_json::from_value(d).ok().map(Self::Message),
+                "reply" => serde_json::from_value(d).ok().map(Self::Reply),
+                "delivered" => serde_json::from_value(d).ok().map(Self::Delivered),
+                "run_started" => serde_json::from_value(d).ok().map(Self::RunStarted),
+                "typing" => serde_json::from_value(d).ok().map(Self::Typing),
+                "tool" => serde_json::from_value(d).ok().map(Self::Tool),
+                "conv_list" => serde_json::from_value(d).ok().map(Self::ConvList),
+                "history" => serde_json::from_value(d).ok().map(Self::History),
+                "conv_update" => serde_json::from_value(d).ok().map(Self::ConvUpdate),
+                "read_cursor" => serde_json::from_value(d).ok().map(Self::ReadCursor),
+                _ => None,
+            }
         }
     }
 }
@@ -123,4 +187,123 @@ mod tests {
         assert_eq!(Envelope::decode(br#"{"kind":"error","data":{"code":"update_required","message":"update","extra":1}}"#),Some(Envelope::Error(ErrorInfo {code:"update_required".into(),message:"update".into()})));
         assert_eq!(PeerInfo::client("").name.as_deref(), Some("Windows PC"));
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageRef {
+    pub conv_id: String,
+    pub message_id: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Message {
+    pub conv_id: String,
+    pub message_id: String,
+    pub text: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Reply {
+    pub conv_id: String,
+    pub message_id: String,
+    pub text: String,
+    pub ts: i64,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Typing {
+    pub conv_id: String,
+    pub active: bool,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Tool {
+    pub conv_id: String,
+    pub message_id: String,
+    #[serde(flatten)]
+    pub call: crate::model::ToolCall,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConvList {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "conversations"
+    )]
+    pub conversations: Option<Vec<crate::model::Conversation>>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct History {
+    pub conv_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub before: Option<i64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "history_items"
+    )]
+    pub items: Option<Vec<crate::model::Item>>,
+    #[serde(default)]
+    pub more: bool,
+}
+fn conversations<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Vec<crate::model::Conversation>>, D::Error> {
+    let values = Vec::<serde_json::Value>::deserialize(d)?;
+    Ok(Some(
+        values
+            .into_iter()
+            .filter_map(|v| {
+                let at = v.get("updatedAt")?.as_i64()?;
+                let c: crate::model::Conversation = serde_json::from_value(v).ok()?;
+                (crate::model::valid_id(&c.conv_id)
+                    && at.unsigned_abs() <= crate::frame::MAX_COUNTER)
+                    .then_some(c)
+            })
+            .collect(),
+    ))
+}
+fn history_items<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Vec<crate::model::Item>>, D::Error> {
+    let values = Vec::<serde_json::Value>::deserialize(d)?;
+    Ok(Some(
+        values
+            .into_iter()
+            .filter_map(|v| {
+                let mut item: crate::model::Item = serde_json::from_value(v).ok()?;
+                if !matches!(item.kind.as_str(), "user" | "agent" | "tools" | "reset")
+                    || !crate::model::valid_id(&item.id)
+                    || item
+                        .seq
+                        .is_none_or(|n| n.unsigned_abs() > crate::frame::MAX_COUNTER)
+                    || item.ts.unsigned_abs() > crate::frame::MAX_COUNTER
+                {
+                    return None;
+                }
+                item.tools.retain(crate::model::ToolCall::known);
+                Some(item)
+            })
+            .collect(),
+    ))
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadCursor {
+    pub conv_id: String,
+    pub message_id: String,
+    pub ts: i64,
+    pub unread: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatError {
+    #[serde(rename = "convId", skip_serializing_if = "Option::is_none")]
+    pub conv_id: Option<String>,
+    #[serde(rename = "messageId", skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
+    pub code: String,
+    pub message: String,
 }

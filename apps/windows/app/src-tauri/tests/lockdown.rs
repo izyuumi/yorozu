@@ -37,6 +37,11 @@ fn permissions_are_exact() {
         "allow-forget-pairing",
         "allow-pair-again",
         "allow-retry-connection",
+        "allow-open-conversation",
+        "allow-new-conversation",
+        "allow-load-older",
+        "allow-send-message",
+        "allow-retry-message",
     ];
     assert_eq!(capability["permissions"], json!(want));
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities");

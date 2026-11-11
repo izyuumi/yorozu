@@ -1,0 +1,23 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { fakeHost, probe } from "./fake-host.ts";
+test("list, history paging, host update, open new conversation survives reconnect", async t => {
+  const host=await fakeHost();t.after(()=>host.stop());
+  const convId=randomUUID();host.seed(convId,Array.from({length:61},(_,seq)=>({kind:"agent" as const,id:randomUUID(),seq,ts:seq,text:`row ${seq}`})));
+  const dir=await mkdtemp(join(tmpdir(),"yorozu-sync-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const p=probe(dir);t.after(()=>p.quit());p.send({cmd:"pair",link:await host.link()});
+  assert.deepEqual((await p.wait(e=>e.ev==="list")).convIds,[convId]);
+  p.send({cmd:"open",convId});await p.wait(e=>e.ev==="history" && e.convId===convId && e.items===60 && e.more);
+  p.send({cmd:"older",convId});await p.wait(e=>e.ev==="history" && e.items===1 && !e.more);
+  const updated=randomUUID();const from=p.events.length;host.update({convId:updated,title:"Host title"});
+  await p.wait(e=>e.ev==="list" && e.convIds.includes(updated),from);
+  p.send({cmd:"new"});const fresh=await p.wait(e=>e.ev==="conv");assert.match(fresh.convId,/^[a-f0-9-]{36}$/);
+  const reconnect=p.events.length;p.send({cmd:"drop"});
+  await p.wait(e=>e.ev==="conn" && e.state==="Open",reconnect);
+  await p.wait(e=>e.ev==="list" && e.convIds.includes(fresh.convId),reconnect);
+  await p.wait(e=>e.ev==="history" && e.convId===fresh.convId && e.items===0,reconnect);
+});

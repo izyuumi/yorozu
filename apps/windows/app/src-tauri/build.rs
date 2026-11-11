@@ -14,6 +14,11 @@ fn main() {
         "forget_pairing",
         "pair_again",
         "retry_connection",
+        "open_conversation",
+        "new_conversation",
+        "load_older",
+        "send_message",
+        "retry_message",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("tauri-build failed");
