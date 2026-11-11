@@ -17,6 +17,7 @@ jobs:
       mcp: ${{ steps.diff.outputs.mcp }}
       web: ${{ steps.diff.outputs.web }}
       plugin: ${{ steps.diff.outputs.plugin }}
+      windows: ${{ steps.diff.outputs.windows }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
@@ -34,6 +35,8 @@ jobs:
           # The website's Worker serves the help MCP server, so its tests run for both.
           echo "web=$(match '^(apps/web/|apps/mcp/|pnpm-lock\.yaml$|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
           echo "plugin=$(match '^(plugins/openclaw-yorozu/|apps/ios/Tests/Fixtures/|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
+          # The Windows client shares the wire fixtures and follows the plugin's and relay's wire code.
+          echo "windows=$(match '^(apps/windows/|packages/YorozuWire/Tests/YorozuWireTests/Fixtures/|plugins/openclaw-yorozu/src/(wire|envelope|hub|direct)\.ts$|apps/relay/src/index\.ts$|pnpm-workspace\.yaml$|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
 
   app:
     needs: changes
@@ -139,3 +142,18 @@ jobs:
       - run: pnpm install --frozen-lockfile --filter "@yorozu/web..."
       - run: pnpm --filter @yorozu/web build
       - run: pnpm --filter @yorozu/web test
+
+  # The Windows client (apps/windows); W1 adds the UI build and conformance steps.
+  windows:
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+      - run: node apps/windows/scripts/filter-dry-run.mjs
+      - run: cargo test --manifest-path apps/windows/Cargo.toml --workspace
+      - run: cargo build --manifest-path apps/windows/Cargo.toml --workspace
