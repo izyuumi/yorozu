@@ -1,0 +1,25 @@
+/* Chat owns its scrolling; shell notices and connection status remain visible. */
+main:has(.chat) { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; padding: 1rem 2rem; overflow: hidden; min-height: 0; gap: .5rem; }
+.chat { display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; max-width: 60rem; align-self: center; }
+.chat button, .chat textarea { font: inherit; }
+.chat button { padding: .35rem .75rem; cursor: pointer; }
+.chat button:disabled { cursor: default; }
+.chat button:focus-visible, .chat textarea:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+.chat header { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; padding-block: .75rem; }
+.chat h1 { font-size: 1.25rem; margin: 0; overflow-wrap: anywhere; }
+.conversations { overflow: auto; }
+.conversations ul, .transcript ol, .tools ul { padding: 0; list-style: none; margin: 0; }
+.conversations li button { width: 100%; text-align: left; margin-block: .25rem; overflow-wrap: anywhere; }
+.conversation { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.transcript { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; padding: .5rem; }
+.message { margin-block: 1rem; padding: .75rem 1rem; max-width: 72ch; overflow-wrap: anywhere; }
+.message.user { margin-left: 2rem; background: Canvas; border: 1px solid GrayText; border-radius: .5rem; }
+.message p { white-space: pre-wrap; margin: .25rem 0; }
+.speaker { font-weight: 600; }
+.mark, .tools { font-size: .85rem; }
+.tools { padding: .5rem 1rem; overflow-wrap: anywhere; }
+.session-divider { text-align: center; margin-block: 1.5rem; border-block: 1px solid GrayText; padding: .5rem; }
+.composer { display: flex; flex-direction: column; gap: .5rem; padding-top: .75rem; }
+.composer textarea { box-sizing: border-box; width: 100%; resize: vertical; min-height: 4rem; max-height: 25vh; padding: .5rem; }
+.composer button { align-self: flex-end; }
+.composer p { margin: 0; }

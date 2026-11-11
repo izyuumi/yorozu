@@ -1,0 +1,25 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { test } from "node:test";
+import { fakeHost, probe } from "./fake-host.ts";
+test("chat marks and echo; accepted disconnect resends one host message", async t => {
+  const host = await fakeHost(); t.after(() => host.stop());
+  const dir = await mkdtemp(join(tmpdir(), "yorozu-chat-")); t.after(() => rm(dir, {recursive:true,force:true}));
+  const p=probe(dir); t.after(()=>p.quit()); p.send({cmd:"pair",link:await host.link()});
+  await p.wait(e=>e.ev==="conn" && e.state==="Open");
+  p.send({cmd:"new"}); const {convId}=await p.wait(e=>e.ev==="conv");
+  p.send({cmd:"send",convId,text:"hello"});
+  const {messageId}=await p.wait(e=>e.ev==="mark" && e.mark==="queued");
+  for (const mark of ["sent","delivered","read"]) await p.wait(e=>e.ev==="mark" && e.messageId===messageId && e.mark===mark);
+  const echo=await p.wait(e=>e.ev==="reply" && e.convId===convId && e.length===11);
+  assert.equal(echo.sha256,createHash("sha256").update("echo: hello").digest("hex"));
+  const from=p.events.length;
+  p.send({cmd:"send",convId,text:"disconnect",dropOn:"accepted"});
+  const next=await p.wait(e=>e.ev==="mark" && e.mark==="queued",from);
+  await p.wait(e=>e.ev==="conn" && e.state==="Backoff",from);
+  await p.wait(e=>e.ev==="mark" && e.mark==="delivered" && e.messageId===next.messageId,from);
+  assert.equal(host.messages.filter(m=>m.messageId===next.messageId).length,1);
+});

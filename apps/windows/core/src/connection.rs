@@ -296,7 +296,8 @@ pub fn step(mut m: Machine, event: Event) -> (Machine, Vec<Effect>) {
                 ..
             },
         ) if matches!(envelope, Envelope::PeerInfo(peer) if !peer.compatible())
-            || matches!(envelope, Envelope::Error(error) if error.code == "update_required") =>
+            || matches!(envelope, Envelope::Error(error) if error.code == "update_required")
+            || matches!(envelope, Envelope::MessageError(error) if error.code == "update_required") =>
         {
             // C8
             m.end_session(event.now_ms);
@@ -341,7 +342,9 @@ pub fn step(mut m: Machine, event: Event) -> (Machine, Vec<Effect>) {
             if state.socket() && close_outcome(*code, reason, m.standing).is_some() =>
         {
             // C13
-            let terminal = close_outcome(*code, reason, m.standing).unwrap();
+            let Some(terminal) = close_outcome(*code, reason, m.standing) else {
+                return (m, effects);
+            };
             m.last_close = Some((*code, reason.clone()));
             m.state = S::Idle(Some(terminal));
             m.socket_generation += 1;

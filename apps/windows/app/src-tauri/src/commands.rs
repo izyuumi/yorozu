@@ -64,3 +64,40 @@ pub fn pair_again(core: State<'_, Core>) -> Result<(), String> {
 pub fn retry_connection(core: State<'_, Core>) -> Result<(), String> {
     send(core, Command::Retry)
 }
+#[tauri::command]
+pub fn open_conversation(core: State<'_, Core>, conv_id: Option<String>) -> Result<(), String> {
+    send(core, Command::OpenConversation(conv_id))
+}
+#[tauri::command]
+pub fn new_conversation(core: State<'_, Core>) -> Result<(), String> {
+    send(core, Command::NewConversation)
+}
+#[tauri::command]
+pub fn load_older(core: State<'_, Core>, conv_id: String) -> Result<(), String> {
+    send(core, Command::LoadOlder(conv_id))
+}
+#[tauri::command]
+pub fn send_message(core: State<'_, Core>, conv_id: String, text: String) -> Result<(), String> {
+    send(
+        core,
+        Command::SendMessage {
+            conv_id,
+            text,
+            drop_on_accepted: false,
+        },
+    )
+}
+#[tauri::command]
+pub fn retry_message(
+    core: State<'_, Core>,
+    conv_id: String,
+    message_id: String,
+) -> Result<(), String> {
+    send(
+        core,
+        Command::RetryMessage {
+            conv_id,
+            message_id,
+        },
+    )
+}

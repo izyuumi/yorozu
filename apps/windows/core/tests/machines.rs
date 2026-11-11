@@ -3,7 +3,7 @@ use yorozu_core::{
         self as c, Effect as F, Event, EventKind as E, Machine, Payload, State as S, Terminal as T,
         Timer,
     },
-    events::{Envelope, ErrorInfo, PeerInfo},
+    events::{ChatError, Envelope, ErrorInfo, PeerInfo},
     frame::b64,
     link::Link,
     pairing::{self as p, Effect as PF, Event as PE, Removed, State as PS},
@@ -140,7 +140,7 @@ fn pairing_rows_p1_through_p18() {
 #[test]
 fn connection_state_event_grid_every_row_and_default() {
     // Columns: start stop open nonce joined-off joined-on owner-on owner-off response
-    // peer-good peer-bad update-error other-box ignored accepted unknown-token revoked
+    // peer-good peer-bad update-error update-error-with-messageId other-box ignored accepted unknown-token revoked
     // transient-close error backoff-timer connect-timer handshake-timer ping-timer pong-timer pong.
     let states = [
         S::Idle(None),
@@ -186,6 +186,12 @@ fn connection_state_event_grid_every_row_and_default() {
             code: "update_required".into(),
             message: "upgrade".into(),
         })),
+        frame(Envelope::MessageError(ChatError {
+            code: "update_required".into(),
+            message: "upgrade".into(),
+            conv_id: None,
+            message_id: Some("m".into()),
+        })),
         frame(Envelope::Unknown),
         E::RelayFrame {
             flow_bytes: None,
@@ -213,42 +219,43 @@ fn connection_state_event_grid_every_row_and_default() {
         E::Pong,
     ];
     // 0 = explicit default. Each nonzero cell names the spec row, not implementation output.
-    let rows: [[_; 25]; 12] = [
+    let rows: [[_; 26]; 12] = [
         [
-            1, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            1, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         ],
         [
-            1, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            1, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         ],
         [
-            1, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            1, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         ],
         [
-            1, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            1, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         ],
         [
-            1, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
+            1, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
         ],
         [
-            0, 16, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13, 13, 14, 14, 0, 14, 0, 0, 14, 0,
+            0, 16, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13, 13, 14, 14, 0, 14, 0, 0, 14, 0,
         ],
         [
-            0, 16, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13, 13, 14, 14, 0, 14, 0, 0, 14, 0,
+            0, 16, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13, 13, 14, 14, 0, 14, 0, 0, 14, 0,
         ],
         [
-            0, 16, 0, 0, 4, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13, 13, 14, 14, 0, 14, 0, 0, 14, 0,
+            0, 16, 0, 0, 4, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13, 13, 14, 14, 0, 14, 0, 0, 14, 0,
         ],
         [
-            0, 16, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 12, 13, 13, 14, 14, 0, 14, 0, 15, 14, 15,
+            0, 16, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 12, 13, 13, 14, 14, 0, 14, 0, 15, 14, 15,
         ],
         [
-            0, 16, 0, 0, 0, 0, 0, 10, 6, 0, 0, 0, 0, 0, 12, 13, 13, 14, 14, 0, 14, 9, 15, 14, 15,
+            0, 16, 0, 0, 0, 0, 0, 10, 6, 0, 0, 0, 0, 0, 0, 12, 13, 13, 14, 14, 0, 14, 9, 15, 14, 15,
         ],
         [
-            0, 16, 0, 0, 0, 0, 0, 10, 0, 7, 8, 8, 0, 0, 12, 13, 13, 14, 14, 0, 14, 9, 15, 14, 15,
+            0, 16, 0, 0, 0, 0, 0, 10, 0, 7, 8, 8, 8, 0, 0, 12, 13, 13, 14, 14, 0, 14, 9, 15, 14, 15,
         ],
         [
-            0, 16, 0, 0, 0, 0, 0, 10, 0, 11, 8, 8, 11, 0, 12, 13, 13, 14, 14, 0, 14, 0, 15, 14, 15,
+            0, 16, 0, 0, 0, 0, 0, 10, 0, 11, 8, 8, 8, 11, 0, 12, 13, 13, 14, 14, 0, 14, 0, 15, 14,
+            15,
         ],
     ];
     for (i, state) in states.iter().enumerate() {
@@ -328,7 +335,7 @@ fn connection_state_event_grid_every_row_and_default() {
                 }
                 13 => {
                     assert!(matches!(after.state, S::Idle(Some(_))));
-                    assert!(effects.contains(&F::Terminal(if j == 15 {
+                    assert!(effects.contains(&F::Terminal(if j == 16 {
                         T::PairingFailed
                     } else {
                         T::Revoked
@@ -344,7 +351,7 @@ fn connection_state_event_grid_every_row_and_default() {
                 }
                 15 => {
                     assert_eq!(after.state, *state);
-                    if j == 24 {
+                    if j == 25 {
                         assert_eq!(effects, vec![F::Cancel(Timer::Pong)]);
                     } else {
                         assert!(effects.contains(&F::Ping));

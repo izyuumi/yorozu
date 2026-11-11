@@ -3,6 +3,9 @@ import { fetchSnapshot, onChanged, type Snapshot } from "./api";
 import { Pairing } from "./screens/Pairing";
 import { Status } from "./screens/Status";
 import { Removed } from "./screens/Removed";
+import { List } from "./screens/List";
+import { Conversation } from "./screens/Conversation";
+import "./components/chat.css";
 import { strings } from "./strings";
 export function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -21,7 +24,7 @@ export function App() {
     <main>
       {snapshot.notice && snapshot.notice.seq > dismissed && <button role="status" onClick={() => setDismissed(snapshot.notice!.seq)}>{snapshot.notice.text}</button>}
       {error && <button role="alert" onClick={() => setError(null)}>{error}</button>}
-      {snapshot.pairing.state === "removed" ? <Removed reason={snapshot.pairing.reason} act={act} /> : snapshot.pairing.state === "paired" ? <Status snapshot={snapshot} act={act} /> : <>
+      {snapshot.pairing.state === "removed" ? <Removed reason={snapshot.pairing.reason} act={act} /> : snapshot.pairing.state === "paired" ? <div className="chat"><Status snapshot={snapshot} act={act} />{snapshot.open ? <Conversation key={snapshot.open.convId} conversation={snapshot.open} act={act} /> : <List conversations={snapshot.list} act={act} />}</div> : <>
         <Pairing pairing={snapshot.pairing} act={act} />
         {snapshot.pairing.state === "pairing" && <Status snapshot={snapshot} act={act} />}
       </>}
