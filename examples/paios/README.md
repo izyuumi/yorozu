@@ -16,6 +16,8 @@ Every file is either part of the framework (rules, schemas, templates, workflows
 
 ## How to adopt it
 
+Prefer to let an agent do it? Paste the prompt in [INSTALL_WITH_AGENT.md](INSTALL_WITH_AGENT.md) into your coding agent.
+
 ### One command
 
 ```bash
@@ -55,7 +57,7 @@ This needs Node.js.
 npx degit izyuumi/yorozu/examples/paios "/path/to/your vault/PAIOS"
 ```
 
-Then delete `install.sh` from the copy and follow the steps below from step 2.
+Then delete `install.sh` and `INSTALL_WITH_AGENT.md` from the copy and follow the steps below from step 2.
 
 ### By hand
 
@@ -63,7 +65,7 @@ Then delete `install.sh` from the copy and follow the steps below from step 2.
    ```bash
    cp -R examples/paios "/path/to/your vault/PAIOS"
    ```
-   Then delete `PAIOS/install.sh`.
+   Then delete `PAIOS/install.sh` and `PAIOS/INSTALL_WITH_AGENT.md`.
 2. Set the environment variables your agents and scripts use (see `paios.env.example`):
    ```bash
    export PAIOS_VAULT="/path/to/your vault"   # the folder that contains PAIOS/
@@ -109,7 +111,7 @@ The scripts under `System/Scripts/` are standard-library Python 3.9+ or bash, ta
 | `System/Scripts/vault-preflight/preflight.sh` + `compare.py` | Tells an agent whether the vault is reachable and which rule files changed since it last read them. |
 | `System/Scripts/handoff/handoff.py` | Writes, claims, closes and checks handoff files in `Handover/`. |
 | `System/Scripts/selftest.sh` | Runs all of the above against a temporary copy and prints `SELFTEST PASS`. |
-| `install.sh` | Copies this folder into `<vault>/PAIOS`, writes `paios.env` and runs the self-test. Refuses if `PAIOS` already exists. The installer leaves itself out of the copy. |
+| `install.sh` | Copies this folder into `<vault>/PAIOS`, writes `paios.env` and runs the self-test. Refuses if `PAIOS` already exists. The installer leaves itself and `INSTALL_WITH_AGENT.md` out of the copy. |
 
 | Variable | Used by | Default |
 |---|---|---|

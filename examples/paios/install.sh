@@ -172,7 +172,7 @@ main() {
   created=1
 
   cp -R "$src/." "$dest/"
-  rm -f "$dest/install.sh" "$dest/paios.env"
+  rm -f "$dest/install.sh" "$dest/paios.env" "$dest/INSTALL_WITH_AGENT.md"
   # Junk a checkout may hold.
   find "$dest" -name __pycache__ -type d -prune -exec rm -rf {} +
   find "$dest" \( -name '*.pyc' -o -name .DS_Store \) -type f -exec rm -f {} +
