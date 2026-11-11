@@ -6,18 +6,27 @@ import {
   type ChannelPlugin,
   type OpenClawConfig,
 } from "openclaw/plugin-sdk/channel-core";
+import {
+  normalizeMessagePresentation,
+  renderMessagePresentationChartFallbackText,
+  renderMessagePresentationTableFallbackText,
+} from "openclaw/plugin-sdk/interactive-runtime";
 import { chunkMarkdownText } from "openclaw/plugin-sdk/reply-runtime";
 import { resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
 import { channelReadyPatch, channelStoppedPatch } from "openclaw/plugin-sdk/gateway-runtime";
 import { loadAttachmentIndex, mediaMaxBytes } from "./attachments.js";
+import { channelCard, MESSAGE_TOOL_HINTS, PRESENTATION_CAPABILITIES, renderedPayload } from "./cards.js";
 import {
   DEFAULT_CHUNK_LIMIT,
   handleMessage,
+  mediaUrls,
   replyTarget,
   resolveOwnerRoute,
   sendConversationMedia,
+  sendConversationPayload,
   sendConversationText,
 } from "./conversation.js";
+import type { PresentationSdk } from "./presentation.js";
 import { isId } from "./envelope.js";
 import { answerRequest } from "./history.js";
 import { listCronJobs } from "./cron.js";
@@ -73,11 +82,22 @@ function resolveAccount(cfg: OpenClawConfig): YorozuAccount {
   };
 }
 
+// OpenClaw's own block rules and fallback text, behind the sanitizer's allowlist (presentation.ts).
+const presentationSdk: PresentationSdk = {
+  normalize: normalizeMessagePresentation,
+  tableAlt: renderMessagePresentationTableFallbackText,
+  chartAlt: renderMessagePresentationChartFallbackText,
+};
+
+/** The running account's log, for sends through the outbound adapter, which is handed none. */
+let outboundLog: ChannelGatewayContext["log"];
+
 const deliveryReplyTo = (cfg: OpenClawConfig, threadId?: string | number | null, replyToId?: string | null) =>
   replyTarget(cfg, resolveOwnerRoute(cfg, resolveAccount(cfg).agent).agentId, String(threadId ?? "").toLowerCase(), replyToId);
 
 async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<void> {
   const { account, abortSignal } = ctx;
+  outboundLog = ctx.log;
   // The agent and thread keys OpenClaw routes Yorozu to; bindings and identity links can differ from the config.
   const route = resolveOwnerRoute(ctx.cfg, account.agent, account.accountId);
   const agent = route.agentId;
@@ -91,7 +111,7 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
   ctx.log?.info?.(`[${account.accountId}] yorozu started (agent ${agent}, room ${keys.room})`);
   ctx.setStatus({ accountId: account.accountId, running: true, connected: false, lifecycle: "starting" });
   watchSessions(agent, abortSignal, ctx.log);
-  const turn = { cfg: ctx.cfg, accountId: account.accountId, log: ctx.log, agent, mediaMaxBytes: maxBytes };
+  const turn = { cfg: ctx.cfg, accountId: account.accountId, log: ctx.log, agent, mediaMaxBytes: maxBytes, presentationSdk };
   runParked(abortSignal, (message, attempt) => void handleMessage(turn, message, attempt));
   void announceGatewayState(turn, agent).catch((error: unknown) => ctx.log?.warn?.(`yorozu: gateway notice failed: ${String(error)}`));
   try {
@@ -157,6 +177,7 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
     capabilities: { chatTypes: ["direct"], media: true, reply: true, reactions: true, reactionSlots: "single" },
     gateway: { startAccount },
     actions: reactionActions,
+    agentPrompt: { messageToolHints: () => [...MESSAGE_TOOL_HINTS] },
     messaging: {
       normalizeTarget: () => PEER,
       // Explicit owner resolves on every host; the adapter still requires a UUID threadId to deliver.
@@ -200,6 +221,29 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
         threadId,
         text,
         mediaUrl,
+        maxBytes: mediaMaxBytes(cfg, accountId),
+        access: { mediaAccess, localRoots: mediaLocalRoots, readFile: mediaReadFile },
+        replyTo: deliveryReplyTo(cfg, threadId, replyToId),
+      }),
+    }),
+    presentationCapabilities: PRESENTATION_CAPABILITIES,
+    // Explicit-target sends only (cron, a message tool send naming a target); a turn's own reply goes through
+    // `deliver` in conversation.ts. OpenClaw calls `sendPayload` only for a payload with presentation, interactive,
+    // channelData, location, audioAsVoice or videoAsNote; plain text and media still use sendText and sendMedia.
+    // `outboundLog` is unset until `startAccount` runs; a dropped card then goes without its log line.
+    renderPresentation: ({ payload, presentation }) => renderedPayload(payload, presentation, presentationSdk, outboundLog),
+    sendPayload: async ({ cfg, accountId, threadId, payload, mediaAccess, mediaLocalRoots, mediaReadFile, replyToId }) => ({
+      channel: CHANNEL_ID,
+      messageId: await sendConversationPayload({
+        cfg,
+        accountId,
+        threadId,
+        text: payload.text,
+        mediaUrls: mediaUrls(payload.mediaUrl, ...(payload.mediaUrls ?? [])),
+        // Sanitized again: channelData can also come straight from a caller.
+        presentation: channelCard(payload),
+        sdk: presentationSdk,
+        log: outboundLog,
         maxBytes: mediaMaxBytes(cfg, accountId),
         access: { mediaAccess, localRoots: mediaLocalRoots, readFile: mediaReadFile },
         replyTo: deliveryReplyTo(cfg, threadId, replyToId),

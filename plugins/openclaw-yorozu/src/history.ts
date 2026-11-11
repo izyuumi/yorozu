@@ -9,6 +9,7 @@ import {
 } from "openclaw/plugin-sdk/session-store-runtime";
 import { messageTime, revOf } from "./activity.js";
 import { attachmentAt, attachmentsOf } from "./attachments.js";
+import { cardKey, errorTag, turnCards, type StoredCard } from "./cards.js";
 import { DEFAULT_CHUNK_LIMIT } from "./conversation.js";
 import {
   isId,
@@ -22,6 +23,7 @@ import {
   type HistoryTool,
   type ToolStatus,
 } from "./envelope.js";
+import { cardKeys, storedCard } from "./presentations.js";
 import { reactionsOf } from "./reactions.js";
 import { replyOf } from "./replies.js";
 import { prefix, titleOf } from "./sessions.js";
@@ -32,17 +34,28 @@ const PAGE_BYTES = 192 * 1024;
 const ITEM_CHARS = 60_000;
 const LIST_MAX = 2000;
 const CACHE_MAX = 8;
-const cache = new Map<string, { sessionId: string; rev: number; items: HistoryItem[] }>();
+// `cards`: the card key of each agent message's last chunk, by item id. `turns`: the key prefix of a turn's other
+// cards (`turnCards`), by the `seq` of the turn's last items. `turnOf`: that prefix by the `seq` of each of the
+// turn's items. `replies`: by prefix, the turn's agent messages and their chunk count, full text and card key.
+type TurnReply = { eventId: string; seq: number; chunks: number; text: string; key: string };
+type Built = {
+  items: HistoryItem[];
+  cards: Map<string, string>;
+  turns: Map<number, string>;
+  turnOf: Map<number, string>;
+  replies: Map<string, TurnReply[]>;
+};
+const cache = new Map<string, Built & { sessionId: string; rev: number }>();
 
-export function answerRequest(
+export async function answerRequest(
   cfg: OpenClawConfig,
   agent: string,
   request: Event,
   log?: ChannelGatewayContext["log"],
-): Event | undefined {
+): Promise<Event | undefined> {
   try {
     if (request.kind === "conv_list") return { kind: "conv_list", data: listConversations(agent) };
-    if (request.kind === "history") return { kind: "history", data: historyPage(cfg, agent, request.data) };
+    if (request.kind === "history") return { kind: "history", data: await historyPage(cfg, agent, request.data, log) };
   } catch (error) {
     log?.warn(`yorozu: ${request.kind} failed: ${String(error)}`);
     const convId = request.kind === "history" ? request.data.convId : undefined;
@@ -73,7 +86,12 @@ export function listConversations(agent: string): ConvList {
   return { conversations: conversations.slice(0, LIST_MAX) };
 }
 
-export function historyPage(cfg: OpenClawConfig, agent: string, request: HistoryRequest): History {
+export async function historyPage(
+  cfg: OpenClawConfig,
+  agent: string,
+  request: HistoryRequest,
+  log?: ChannelGatewayContext["log"],
+): Promise<History> {
   const { convId, before, after } = request;
   const empty: History = { convId, items: [], more: false, rev: 0, ...(before !== undefined ? { before } : {}), ...(after !== undefined ? { after } : {}) };
   const built = itemsOf(cfg, agent, convId);
@@ -92,28 +110,104 @@ export function historyPage(cfg: OpenClawConfig, agent: string, request: History
   const picked: HistoryItem[][] = [];
   let bytes = 0;
   let more = false;
-  const take = (group: HistoryItem[]) => {
+  // A card store that fails or does not answer in time still allows a page of transcript items.
+  let storeDown = false;
+  const read = async <T>(get: () => Promise<T>): Promise<T | undefined> => {
+    if (storeDown) return undefined;
+    try {
+      return await get();
+    } catch (error) {
+      if (storeDown) return undefined;
+      storeDown = true;
+      log?.warn(`yorozu: the card store did not answer (${errorTag(error)}); this history page goes out without cards`);
+      return undefined;
+    }
+  };
+  const listed = built.cards.size || built.turns.size ? ((await read(() => cardKeys(convId))) ?? []) : [];
+  const has = new Set(listed);
+  // A turn's turn-keyed cards, read once per page. A card whose reply's text is that of one of the turn's agent
+  // messages without a card of its own (core mirrors an outbound send into the transcript) replaces every chunk
+  // of that message at its seq. Any other comes back after the turn's other items. Both use the live chunks and ids.
+  // A card-only reply has no transcript text (core mirrors nothing for empty text): store failure, timeout or
+  // eviction loses its whole bubble from history, not just its card.
+  const turnCardsRead = new Map<string, Promise<{ replace: Map<string, HistoryItem[]>; extra: HistoryItem[] }>>();
+  const endOf = new Map([...built.turns].map(([seq, turn]) => [turn, seq]));
+  const turnCardsOf = (turn: string) => {
+    let found = turnCardsRead.get(turn);
+    if (!found) {
+      const seq = endOf.get(turn)!;
+      found = (async () => {
+        const replace = new Map<string, HistoryItem[]>();
+        const extra: HistoryItem[] = [];
+        for (const key of listed.filter((key) => key.startsWith(turn))) {
+          const card = await read(() => storedCard(key));
+          const chunks = chunksOf(card?.reply);
+          if (!card?.presentation || !chunks) continue;
+          const full = chunks.map((chunk) => chunk.text).join("");
+          const mirrored = built.replies.get(turn)?.find((reply) => !replace.has(chunkId(built.sessionId, reply.eventId, 0)) && !has.has(reply.key)
+            && sameText(reply.text, typeof card.mirrorText === "string" ? card.mirrorText : full));
+          const restored: HistoryItem[] = chunks.map(({ messageId, ts, text }, k) => {
+            const replyTo = replyOf(messageId);
+            const reactions = reactionsOf(messageId);
+            return {
+              kind: "agent", id: messageId, seq: mirrored?.seq ?? seq, ts, text: cut(text), ...(replyTo && { replyTo }), ...(reactions && { reactions }),
+              ...(k === chunks.length - 1 && { presentation: card.presentation }),
+            };
+          });
+          if (mirrored) {
+            for (let k = 0; k < mirrored.chunks; k++) replace.set(chunkId(built.sessionId, mirrored.eventId, k), k === 0 ? restored : []);
+          } else extra.push(...restored);
+        }
+        return { replace, extra };
+      })();
+      turnCardsRead.set(turn, found);
+    }
+    return found;
+  };
+  // The group with its stored cards, which count toward the page's size; nothing when the page is full.
+  const take = async (bare: HistoryItem[]) => {
+    let group = bare;
+    if (listed.length) {
+      const seq = bare[0]!.seq;
+      const turn = built.turnOf.get(seq);
+      const last = built.turns.get(seq);
+      const fromTurn = turn && endOf.has(turn) && listed.some((key) => key.startsWith(turn)) ? await turnCardsOf(turn) : undefined;
+      group = (await Promise.all(bare.map(async (item) => {
+        const key = built.cards.get(item.id);
+        const replacement = fromTurn?.replace.get(item.id);
+        if (replacement) return replacement;
+        const presentation = key && has.has(key) ? (await read(() => storedCard(key)))?.presentation : undefined;
+        return [presentation && item.kind === "agent" ? { ...item, presentation } : item];
+      }))).flat();
+      if (fromTurn && last === turn) group = [...group, ...fromTurn.extra];
+    }
     const size = group.reduce((n, item) => n + Buffer.byteLength(JSON.stringify(item)), 0);
     const count = picked.reduce((n, g) => n + g.length, 0);
-    if (picked.length && (count + group.length > PAGE_ITEMS || bytes + size > PAGE_BYTES)) return false;
+    if (picked.length && (count + group.length > PAGE_ITEMS || bytes + size > PAGE_BYTES)) return undefined;
     bytes += size;
-    return true;
+    return group;
   };
   if (after !== undefined) {
-    for (const group of groups) {
-      if (group[0]!.seq <= after) continue;
-      if (!take(group)) { more = true; break; }
+    for (const bare of groups) {
+      if (bare[0]!.seq <= after) continue;
+      const group = await take(bare);
+      if (!group) { more = true; break; }
       picked.push(group);
     }
   } else {
     for (let i = groups.length - 1; i >= 0; i--) {
-      const group = groups[i]!;
-      if (before !== undefined && group[0]!.seq >= before) continue;
-      if (!take(group)) { more = true; break; }
+      const bare = groups[i]!;
+      if (before !== undefined && bare[0]!.seq >= before) continue;
+      const group = await take(bare);
+      if (!group) { more = true; break; }
       picked.unshift(group);
     }
   }
-  const page = picked.flat();
+  const page = picked.flat().map((item) => {
+    if (!storeDown || item.kind !== "agent" || !item.presentation) return item;
+    const { presentation: _, ...plain } = item;
+    return plain;
+  });
   return { ...empty, items: page, more, rev };
 }
 
@@ -125,7 +219,7 @@ function itemsOf(cfg: OpenClawConfig, agent: string, convId: string) {
   let built = cache.get(sessionKey);
   if (!built || built.sessionId !== entry.sessionId || built.rev !== rev) {
     const events = loadTranscriptEventsSync({ agentId: agent, sessionId: entry.sessionId, sessionKey });
-    built = { sessionId: entry.sessionId, rev, items: buildItems(cfg, entry.sessionId, events) };
+    built = { sessionId: entry.sessionId, rev, ...buildItems(cfg, entry.sessionId, events) };
     cache.delete(sessionKey);
     cache.set(sessionKey, built);
     for (const key of cache.keys()) if (cache.size > CACHE_MAX) cache.delete(key);
@@ -145,12 +239,15 @@ export function itemText(cfg: OpenClawConfig, agent: string, convId: string, id:
 const chunkId = (sessionId: string, eventId: string, k: number) =>
   k === 0 && isId(eventId) ? eventId : derivedId(sessionId, eventId, `${k}`);
 
+/** The ids of the turn's first unused transcript assistant message with text. With `text`, only one whose text is
+ * that text (`sameText`): a card goes only on the message that says what its reply says. */
 export function liveReplyIds(
   agent: string,
   sessionKey: string,
   messageId: string,
   used: Set<string>,
-): { id: (chunk: number) => string; ts: number } | undefined {
+  text?: string,
+): { id: (chunk: number) => string; ts: number; sessionId: string; eventId: string } | undefined {
   try {
     const sessionId = getSessionEntry({ agentId: agent, sessionKey })?.sessionId;
     if (!sessionId) return undefined;
@@ -161,10 +258,13 @@ export function liveReplyIds(
       const message = obj(event?.message);
       if (event?.type !== "message" || !message || typeof event.id !== "string") continue;
       if (message.role === "user") inTurn = obj(obj(message.__openclaw)?.transport)?.messageId === messageId;
-      else if (inTurn && message.role === "assistant" && textOf(message.content).trim() && !used.has(event.id)) {
+      else if (
+        inTurn && message.role === "assistant" && textOf(message.content).trim() && !used.has(event.id) &&
+        (text === undefined || sameText(textOf(message.content), text))
+      ) {
         used.add(event.id);
         const eventId = event.id;
-        return { id: (k) => chunkId(sessionId, eventId, k), ts: timeOf(event, message) || Date.now() };
+        return { id: (k) => chunkId(sessionId, eventId, k), ts: timeOf(event, message) || Date.now(), sessionId, eventId };
       }
     }
   } catch {
@@ -172,6 +272,14 @@ export function liveReplyIds(
   return undefined;
 }
 
+/** The conversation's current session, which with the user's message names a turn (`turnCardKey`). */
+export function liveSessionId(agent: string, sessionKey: string): string | undefined {
+  try {
+    return getSessionEntry({ agentId: agent, sessionKey })?.sessionId || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 type Fields = Record<string, unknown>;
 const obj = (v: unknown): Fields | undefined => (typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Fields) : undefined);
@@ -203,6 +311,21 @@ function userFiles(message: Fields): Attachment[] {
 
 const withoutMedia = (text: string): string => text.replace(MEDIA_LINE, "").replace(/\n{3,}/g, "\n\n").trim();
 
+/** Whether a reply's text is a transcript message's text, as history shows it (`MEDIA:` lines out), whitespace aside:
+ * a reply's chunks joined may lack the whitespace the chunker cut at. Empty text matches nothing. */
+export function sameText(transcript: string, reply: string): boolean {
+  const flat = (text: string) => withoutMedia(text).replace(/\s+/g, "");
+  const said = flat(transcript);
+  return !!said && said === flat(reply);
+}
+
+/** A stored turn-keyed card's chunks, or nothing when the record is not a list of chunks. */
+function chunksOf(reply: unknown): NonNullable<StoredCard["reply"]> | undefined {
+  if (!Array.isArray(reply) || !reply.length) return undefined;
+  const ok = reply.every((chunk) => isId(obj(chunk)?.messageId) && typeof obj(chunk)?.text === "string" && Number.isSafeInteger(obj(chunk)?.ts));
+  return ok ? (reply as NonNullable<StoredCard["reply"]>) : undefined;
+}
+
 const cut = (text: string) => (text.length > ITEM_CHARS ? `${text.slice(0, ITEM_CHARS)}…` : text);
 
 function lastMessageTime(agent: string, sessionKey: string, sessionId: string): number | undefined {
@@ -227,16 +350,30 @@ function timeOf(event: Fields, message?: Fields): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): HistoryItem[] {
+function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): Built {
   const limit = resolveTextChunkLimit(cfg, CHANNEL_ID, undefined, { fallbackLimit: DEFAULT_CHUNK_LIMIT });
   const items: HistoryItem[] = [];
+  const cards = new Map<string, string>();
   let tools: Extract<HistoryItem, { kind: "tools" }> | undefined;
   let lastUser: string | undefined;
   const pending = new Map<string, { status: ToolStatus }>();
+  // A turn runs from the owner's message to the next user-role message or reset, as `liveReplyIds` reads it. A
+  // message id seen twice (a retried run) names its last turn only, so a card comes back once.
+  const turnEnds = new Map<string, number>();
+  const turnOf = new Map<number, string>();
+  const replies = new Map<string, TurnReply[]>();
+  let turn: { user: string; from: number } | undefined;
+  const endTurn = () => {
+    if (!turn || items.length <= turn.from) return;
+    turnEnds.set(turn.user, items.at(-1)!.seq);
+    for (const item of items.slice(turn.from)) turnOf.set(item.seq, turnCards(sessionId, turn.user));
+  };
   const closeRun = () => {
     for (const call of pending.values()) if (call.status === "running") call.status = "failed";
     pending.clear();
     tools = undefined;
+    endTurn();
+    turn = undefined;
   };
   events.forEach((raw, index) => {
     const event = obj(raw);
@@ -266,6 +403,8 @@ function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): 
       const sent = obj(obj(obj(message.__openclaw)?.transport))?.messageId;
       const id = isId(sent) ? sent : isId(eventId) ? eventId : derivedId(sessionId, eventId);
       lastUser = id;
+      turn = { user: id, from: items.length };
+      replies.set(turnCards(sessionId, id), []);
       if (text.trim() || files.length) {
         items.push({ kind: "user", id, seq, ts, text: cut(text), ...(files.length ? { attachments: files } : {}) });
       }
@@ -291,10 +430,15 @@ function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): 
         const last = k === chunks.length - 1 && files.length;
         items.push({ kind: "agent", id, seq, ts, text: cut(chunk), ...(last ? { attachments: files } : {}) });
       });
+      const lastId = chunkId(sessionId, eventId, chunks.length - 1);
+      cards.set(lastId, cardKey(sessionId, eventId));
+      if (turn) replies.get(turnCards(sessionId, turn.user))?.push({ eventId, seq, chunks: chunks.length, text, key: cardKey(sessionId, eventId) });
     } else if (message.role === "toolResult" && typeof message.toolCallId === "string") {
       const call = pending.get(message.toolCallId);
       if (call) call.status = message.isError === true ? "failed" : "done";
     }
   });
-  return items;
+  endTurn();
+  const turns = new Map([...turnEnds].map(([user, seq]) => [seq, turnCards(sessionId, user)]));
+  return { items, cards, turns, turnOf, replies };
 }
