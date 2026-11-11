@@ -15,7 +15,7 @@ import { chunkMarkdownText } from "openclaw/plugin-sdk/reply-runtime";
 import { resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
 import { channelReadyPatch, channelStoppedPatch } from "openclaw/plugin-sdk/gateway-runtime";
 import { loadAttachmentIndex, mediaMaxBytes } from "./attachments.js";
-import { cardFor, MESSAGE_TOOL_HINTS, PRESENTATION_CAPABILITIES } from "./cards.js";
+import { channelCard, MESSAGE_TOOL_HINTS, PRESENTATION_CAPABILITIES, renderedPayload } from "./cards.js";
 import {
   DEFAULT_CHUNK_LIMIT,
   handleMessage,
@@ -89,11 +89,15 @@ const presentationSdk: PresentationSdk = {
   chartAlt: renderMessagePresentationChartFallbackText,
 };
 
+/** The running account's log, for sends through the outbound adapter, which is handed none. */
+let outboundLog: ChannelGatewayContext["log"];
+
 const deliveryReplyTo = (cfg: OpenClawConfig, threadId?: string | number | null, replyToId?: string | null) =>
   replyTarget(cfg, resolveOwnerRoute(cfg, resolveAccount(cfg).agent).agentId, String(threadId ?? "").toLowerCase(), replyToId);
 
 async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<void> {
   const { account, abortSignal } = ctx;
+  outboundLog = ctx.log;
   // The agent and thread keys OpenClaw routes Yorozu to; bindings and identity links can differ from the config.
   const route = resolveOwnerRoute(ctx.cfg, account.agent, account.accountId);
   const agent = route.agentId;
@@ -224,13 +228,9 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
     }),
     presentationCapabilities: PRESENTATION_CAPABILITIES,
     // Explicit-target sends only (cron, a message tool send naming a target); a turn's own reply goes through
-    // `deliver` in conversation.ts. Core strips `presentation` from what this returns, so the card rides in
-    // channelData; nothing to show returns null, and core sends its text fallback.
-    renderPresentation: ({ payload, presentation }) => {
-      const card = cardFor(presentation, payload.text, presentationSdk);
-      if (!card.presentation) return null;
-      return { ...payload, text: card.text, channelData: { ...payload.channelData, [CHANNEL_ID]: { presentation: card.presentation } } };
-    },
+    // `deliver` in conversation.ts. OpenClaw calls `sendPayload` only for a payload with presentation, interactive,
+    // channelData, location, audioAsVoice or videoAsNote; plain text and media still use sendText and sendMedia.
+    renderPresentation: ({ payload, presentation }) => renderedPayload(payload, presentation, presentationSdk),
     sendPayload: async ({ cfg, accountId, threadId, payload, mediaAccess, mediaLocalRoots, mediaReadFile, replyToId }) => ({
       channel: CHANNEL_ID,
       messageId: await sendConversationPayload({
@@ -240,8 +240,9 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
         text: payload.text,
         mediaUrls: mediaUrls(payload.mediaUrl, ...(payload.mediaUrls ?? [])),
         // Sanitized again: channelData can also come straight from a caller.
-        presentation: (payload.channelData?.[CHANNEL_ID] as { presentation?: unknown } | undefined)?.presentation,
+        presentation: channelCard(payload),
         sdk: presentationSdk,
+        log: outboundLog,
         maxBytes: mediaMaxBytes(cfg, accountId),
         access: { mediaAccess, localRoots: mediaLocalRoots, readFile: mediaReadFile },
         replyTo: deliveryReplyTo(cfg, threadId, replyToId),

@@ -6,7 +6,7 @@ import { test } from "node:test";
 import "./genui-hooks.ts";
 import { host } from "./genui-host.js";
 
-const { replyEvents } = await import("../src/conversation.ts");
+const { handleMessage, replyEvents } = await import("../src/conversation.ts");
 const { historyPage } = await import("../src/history.ts");
 const { downgrade } = await import("../src/hub.ts");
 const { encodeEvent } = await import("../src/envelope.ts");
@@ -40,6 +40,24 @@ test("a reply without a card goes to each kind of session byte-identical to befo
   assert.deepEqual(events.map((event) => json(downgrade(event, oldest))), [
     `{"kind":"reply","data":{"convId":"${convId}","messageId":"${agentId}","text":"Total:","ts":1700000000000}}`,
     `{"kind":"reply","data":{"convId":"${convId}","messageId":"${chunkId}","text":" 200\\n\\n(Attachment: costs.pdf; update Yorozu to open it.)","ts":1700000000000}}`,
+  ]);
+});
+
+test("a turn's reply without a card, through handleMessage and deliver, is byte-identical to before", async () => {
+  const liveConv = "66666666-6666-4666-8666-666666666666";
+  const liveAgent = "88888888-8888-4888-8888-888888888888";
+  host.sessions.set(`agent:main:yorozu:direct:owner:thread:${liveConv}`, { sessionId: "golden-live" });
+  host.transcripts.set("golden-live", [
+    { type: "message", id: "e1", message: { role: "user", content: "What did the trip cost?", timestamp: 1_700_000_000_000, __openclaw: { transport: { messageId: userId } } } },
+    { type: "message", id: liveAgent, message: { role: "assistant", content: "Total: 200", timestamp: 1_700_000_001_000 } },
+  ]);
+  host.sent.length = 0;
+  host.run = async (deliver: (payload: unknown, info: { kind: string }) => Promise<void>) => {
+    await deliver({ text: "Total: 200", replyToId: userId }, { kind: "final" });
+  };
+  await handleMessage({ cfg: {}, accountId: "default", agent: "main", mediaMaxBytes: 1 } as never, { convId: liveConv, messageId: userId, text: "What did the trip cost?" });
+  assert.deepEqual(host.sent.filter((event: { kind: string }) => event.kind === "reply").map(json), [
+    `{"kind":"reply","data":{"convId":"${liveConv}","messageId":"${liveAgent}","text":"Total: 200","ts":1700000001000,"replyTo":{"messageId":"${userId}","text":"What did the trip cost?"}}}`,
   ]);
 });
 

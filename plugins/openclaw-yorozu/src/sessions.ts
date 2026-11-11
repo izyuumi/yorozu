@@ -98,6 +98,8 @@ export async function applyPatch(agent: string, patch: ConvPatch, log?: ChannelG
   try {
     const entry = getSessionEntry({ agentId: agent, sessionKey });
     if (!entry) {
+      // A conversation already gone from the session store may still have cards.
+      if (patch.deleted) await forgetCards(convId);
       sent.delete(convId);
       announce(agent, convId);
       return undefined;

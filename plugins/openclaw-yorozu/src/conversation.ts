@@ -212,14 +212,15 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
               const { attachments, failures } = await stageOutbound(urls, ctx.mediaMaxBytes, access, ids?.id(0));
               const body = [card.text, ...failures].filter((line) => line.trim()).join("\n\n");
               const replyTo = replyTarget(cfg, ctx.agent, convId, payload.replyToId, message);
-              // Only a reply with its transcript ids can be found again by a history page.
-              if (card.presentation && ids) {
-                await storeCard(convId, ids, card.presentation).catch(() => log?.warn("yorozu: a card was not stored; history will show its text"));
-              }
               const replies = replyEvents(cfg, convId, body, route.accountId, ids, attachments, replyTo, card.presentation);
               const first = replies[0];
               if (!firstReply && first?.kind === "reply") firstReply = { messageId: first.data.messageId, text: body || "📎" };
               send(...replies);
+              // After the reply and not awaited: a slow or failing store costs the history card, never the reply.
+              // Only a reply with its transcript ids can be found again by a history page.
+              if (card.presentation && ids) {
+                void storeCard(convId, ids, card.presentation).catch(() => log?.warn("yorozu: a card was not stored; history will show its text"));
+              }
             },
             onError: (error, info) => log?.warn(`yorozu: ${info.kind} reply failed: ${String(error)}`),
           },
@@ -297,8 +298,9 @@ export async function sendConversationMedia(params: {
   return messageId;
 }
 
-/** An explicit-target payload carrying a card (`renderPresentation` put it in `channelData.yorozu`): chunked text,
- * files and the card on the last chunk. Its ids are random, so the card is not stored for history. */
+/** An explicit-target payload OpenClaw hands to `sendPayload`, with the card `renderPresentation` put in
+ * `channelData.yorozu` if any: chunked text, files and the card on the last chunk. Its ids are random, so the card is
+ * not stored for history. */
 export async function sendConversationPayload(params: {
   cfg: OpenClawConfig;
   accountId?: string | null;

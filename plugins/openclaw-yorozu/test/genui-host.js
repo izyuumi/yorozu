@@ -10,6 +10,10 @@ export const host = {
   cap: undefined,
   /** Plays OpenClaw for one turn: gets the plugin's `deliver`. */
   run: undefined,
+  /** Overrides staging a reply's files: gets the media URLs. */
+  stage: undefined,
+  /** Makes a keyed store's `register` fail ("reject") or never finish ("hang"). */
+  register: undefined,
 };
 
 // The keyed state store as the plugin uses it: bounded, oldest row dropped.
@@ -17,6 +21,8 @@ const openKeyedStore = ({ namespace, maxEntries }) => {
   const rows = host.stores.get(namespace) ?? host.stores.set(namespace, new Map()).get(namespace);
   return {
     register: async (key, value) => {
+      if (host.register === "reject") throw new Error("store down");
+      if (host.register === "hang") await new Promise(() => {});
       rows.delete(key);
       rows.set(key, value);
       for (const old of rows.keys()) {
@@ -65,7 +71,7 @@ export const isTemporary = () => false;
 export const park = async () => false;
 export const messageTime = (_convId, _rev, read, fallback) => read() ?? fallback;
 export const revOf = (_agent, _sessionKey, sessionId) => (host.transcripts.get(sessionId) ?? []).length;
-export const stageOutbound = async () => ({ attachments: [], failures: [] });
+export const stageOutbound = async (urls) => host.stage?.(urls) ?? { attachments: [], failures: [] };
 export const uploadedFiles = async () => [];
 export const attachmentAt = () => undefined;
 export const attachmentsOf = () => [];
