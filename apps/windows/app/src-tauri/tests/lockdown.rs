@@ -1,4 +1,4 @@
-// The web view lock-down (spec section 9). Each test fails when a later change loosens it.
+// The web view lock-down (spec section 9). Each test pins one lock-down setting from spec section 9.
 
 use std::fs;
 use std::path::Path;
@@ -26,6 +26,7 @@ fn csp_is_exact() {
 fn permissions_are_exact() {
     let capability = json_file("capabilities/default.json");
     assert_eq!(capability["windows"], json!(["main"]));
+    assert!(capability.get("remote").is_none(), "no remote origins");
     let want = [
         "core:event:allow-listen",
         "core:event:allow-unlisten",
@@ -56,7 +57,6 @@ fn navigation_stays_in_the_app_origin() {
     let allowed = [
         "http://tauri.localhost",
         "http://tauri.localhost/",
-        "https://tauri.localhost/index.html",
         "tauri://localhost",
         "tauri://localhost/assets/index.js",
     ];
@@ -65,6 +65,7 @@ fn navigation_stays_in_the_app_origin() {
     }
     let refused = [
         "https://example.com",
+        "https://tauri.localhost/index.html",
         "file:///C:/Windows/System32/drivers/etc/hosts",
         "about:blank",
         "http://localhost:1420",

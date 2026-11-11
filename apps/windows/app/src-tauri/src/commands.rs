@@ -1,5 +1,6 @@
-//! Every command the web view may invoke. Each one is also declared in `build.rs` and
-//! granted in `capabilities/default.json`.
+//! Every command the web view may invoke. A command is declared in four places: here, in
+//! `lib.rs` (`invoke_handler`), in `build.rs` (`AppManifest`) and in
+//! `capabilities/default.json`, which grants it.
 //!
 //! | command    | does                                                          |
 //! |------------|---------------------------------------------------------------|

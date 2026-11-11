@@ -1,6 +1,6 @@
 //! `--smoke <file>`: CI's proof that the built app starts and its web view reaches the core.
 //! The run writes `ready <version>` to the file on the web view's first `snapshot` call and
-//! exits 0, or exits 1 after 60 seconds.
+//! exits 0, exits 1 at once if it can't write the file, or exits 1 after 60 seconds.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -17,8 +17,8 @@ pub fn from_args(args: impl Iterator<Item = String>) -> Option<Smoke> {
     let mut args = args.skip_while(|arg| arg != "--smoke").skip(1);
     let path = PathBuf::from(args.next()?);
 
-    // WebView2 reads this variable in preference to the folder Tauri passes it, so the smoke
-    // run's browser profile lands in a temporary folder and not in the real app data folder.
+    // WebView2 reads this variable in preference to the folder Tauri passes it, so this
+    // points WebView2's profile at a temporary folder and not at the real app data folder.
     let folder = format!("yorozu-smoke-{}", std::process::id());
     std::env::set_var(
         "WEBVIEW2_USER_DATA_FOLDER",
