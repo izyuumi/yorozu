@@ -165,7 +165,15 @@ jobs:
         with:
           node-version: 26
           cache: pnpm
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { workspaces: apps/windows }
+      # actions/cache, not Swatinem/rust-cache: the repository allows only GitHub-owned, verified and listed actions.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            apps/windows/target
+          key: windows-core-${{ runner.os }}-${{ hashFiles('apps/windows/Cargo.lock', 'apps/windows/rust-toolchain.toml') }}
+          restore-keys: windows-core-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile --filter @yorozu/relay
       - run: bash apps/windows/ci/core.sh
