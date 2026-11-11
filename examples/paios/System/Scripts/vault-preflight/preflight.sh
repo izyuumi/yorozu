@@ -1,11 +1,12 @@
 #!/bin/bash
-# vault-preflight (vault host side). Read-only. Prints one JSON line:
-# vault reachable, local time, and sha256/mtime of the PAIOS rule files, so an agent re-reads them only when changed.
-# Needs PAIOS_VAULT (the folder that contains PAIOS/). Time zone: PAIOS_TZ (default UTC).
-VAULT="${PAIOS_VAULT:?set PAIOS_VAULT to the folder that contains PAIOS/}"
+# vault-preflight (runs on the machine that holds the PAIOS folder). Read-only. Prints one JSON line:
+# folder reachable, local time, and sha256/mtime of the PAIOS rule files, so an agent re-reads them only when changed.
+# Needs PAIOS_ROOT (the folder that contains PAIOS/), or its older name PAIOS_VAULT. Time zone: PAIOS_TZ (default UTC).
+VAULT="${PAIOS_ROOT:-${PAIOS_VAULT:-}}"
+[ -n "$VAULT" ] || { echo "set PAIOS_ROOT to the folder that contains PAIOS/" >&2; exit 1; }
 export TZ="${PAIOS_TZ:-UTC}"
 if [ ! -d "$VAULT/PAIOS" ]; then
-  echo '{"ok":false,"error":"vault not found at PAIOS_VAULT"}'; exit 1
+  echo '{"ok":false,"error":"PAIOS folder not found at PAIOS_ROOT"}'; exit 1
 fi
 iso() { date "$@" '+%Y-%m-%dT%H:%M:%S%z' | sed -E 's/([0-9]{2})([0-9]{2})$/\1:\2/'; }
 sha() { if command -v shasum >/dev/null; then shasum -a 256 "$1"; else sha256sum "$1"; fi | cut -c1-16; }

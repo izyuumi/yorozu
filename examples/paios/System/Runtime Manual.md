@@ -18,7 +18,7 @@ At the beginning of a runtime session:
 - Update the existing canonical record when a verified outcome, explicit preference, decision, correction or commitment changes; do not defer a known correction until daily maintenance.
 - Link evidence by stable source locator.
 - Retrieve relevant prior knowledge before consequential answers or actions.
-- For owner-approved preference learning or correction-driven improvement, follow [[System/Workflows/Reflection#Bounded preference-learning loop]] and its scoped pilot record when relevant; this is conditional retrieval, not extra startup reading.
+- For owner-approved preference learning or correction-driven improvement, follow [System/Workflows/Reflection#Bounded preference-learning loop](<Workflows/Reflection.md#Bounded preference-learning loop>) and its scoped pilot record when relevant; this is conditional retrieval, not extra startup reading.
 - Surface important contradictions or remembered rationale when it changes the recommendation.
 - Never expose private imported material unnecessarily.
 
@@ -74,4 +74,4 @@ Follow `System/Workflows/Action Execution.md`. In particular:
 
 ## LLM wiki operations
 
-For document ingestion, knowledge questions, saved syntheses or wiki health checks, follow [[System/Workflows/LLM Wiki]] and start with [[PAIOS/index]]. Existing current-truth and conversation-coverage rules remain authoritative.
+For document ingestion, knowledge questions, saved syntheses or wiki health checks, follow [System/Workflows/LLM Wiki](<Workflows/LLM Wiki.md>) and start with [PAIOS/index](../index.md). Existing current-truth and conversation-coverage rules remain authoritative.

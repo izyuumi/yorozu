@@ -40,11 +40,11 @@ One short paragraph, with an as-of date and an evidence link.
 
 ## Decisions
 
-- [[Knowledge/Decisions/Example decision]]
+- [Knowledge/Decisions/Example decision](<../Knowledge/Decisions/Example decision.md>)
 
 ## Execution queue
 
-Task rows live in [[Execution/Queue]]; link them here.
+Task rows live in [Execution/Queue](../Execution/Queue.md); link them here.
 
 ## Risks and assumptions
 

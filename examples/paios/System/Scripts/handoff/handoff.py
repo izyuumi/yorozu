@@ -7,7 +7,7 @@
   handoff.py check [file ...]       (no files: every file under inbox/ and done/, plus a secret scan of transfers/)
 
 Settings (environment):
-  HANDOFF_ROOT   handoff folder (default: $PAIOS_VAULT/PAIOS/Handover)
+  HANDOFF_ROOT   handoff folder (default: $PAIOS_ROOT/PAIOS/Handover; $PAIOS_VAULT is the older name for PAIOS_ROOT)
   HANDOFF_ROLES  comma-separated role slugs (default: chief-of-staff,coder,product-owner)
   PAIOS_TZ       time zone for file names and stamps (default: UTC)
 
@@ -140,7 +140,7 @@ def cmd_check(a):
 
 def main(argv=None):
     if not ROOT:
-        print("usage: set HANDOFF_ROOT or PAIOS_VAULT"); return 2
+        print("usage: set HANDOFF_ROOT or PAIOS_ROOT"); return 2
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     s = p.add_subparsers(dest="cmd", required=True)
     n = s.add_parser("new")

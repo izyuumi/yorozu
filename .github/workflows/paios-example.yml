@@ -41,7 +41,8 @@ jobs:
           bash examples/paios/System/Scripts/selftest.sh
           /bin/bash examples/paios/System/Scripts/selftest.sh
 
-      - name: Install from the checkout
+      # The destination is a plain, empty temp folder: no notes app has ever opened it.
+      - name: Install from the checkout into a plain folder
         run: |
           set -euo pipefail
           vault=$(mktemp -d)
@@ -53,10 +54,43 @@ jobs:
           test -f "$vault/PAIOS/AGENTS.md"
           test ! -e "$vault/PAIOS/install.sh"
           test ! -e "$vault/PAIOS/INSTALL_WITH_AGENT.md"
+          test -f "$vault/PAIOS/IMPORT_HISTORY.md"
+          # Nothing but PAIOS/ (and this step's out.txt) appears in the folder, and the install
+          # holds no hidden file or folder, so no app-settings folder was created anywhere.
+          # Portable: macos find has no -printf. Count top-level entries without ls.
+          n=$(find "$vault" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')
+          [ "$n" = 2 ]
+          test -d "$vault/PAIOS"
+          test -f "$vault/out.txt"
+          [ -z "$(find "$vault" -mindepth 1 -name '.obsidian')" ]
           want=$(cd "$vault" && pwd -P)
           # shellcheck disable=SC1091,SC2016
-          ( set +u; unset PAIOS_VAULT PAIOS_TZ; . "$vault/PAIOS/paios.env"
-            /bin/bash -c '[ "$PAIOS_VAULT" = "$1" ] && [ "$PAIOS_TZ" = "$2" ]' _ "$want" UTC )
+          ( set +u; unset PAIOS_ROOT PAIOS_VAULT PAIOS_TZ; . "$vault/PAIOS/paios.env"
+            /bin/bash -c '[ "$PAIOS_ROOT" = "$1" ] && [ "$PAIOS_VAULT" = "$1" ] && [ "$PAIOS_TZ" = "$2" ]' _ "$want" UTC )
+
+      # An older install exports only PAIOS_VAULT, the earlier name for PAIOS_ROOT.
+      - name: PAIOS_VAULT alone still works
+        run: |
+          set -euo pipefail
+          want=$(cd "$vault" && pwd -P)
+          S="$want/PAIOS/System/Scripts"
+          old() { env -u PAIOS_ROOT -u PAIOS_LOGS -u HANDOFF_ROOT PAIOS_VAULT="$want" PAIOS_TZ=UTC "$@"; }
+          out=$(old /bin/bash "$S/selftest.sh")
+          echo "$out"
+          grep -q 'SELFTEST PASS' <<<"$out"
+          out=$(old /bin/bash "$S/vault-preflight/preflight.sh")
+          grep -q '"ok":true' <<<"$out"
+          out=$(old /bin/bash "$S/paios-log/log-receipt-check.sh")
+          grep -q 'CHECK PASS' <<<"$out"
+          out=$(old python3 -B "$S/handoff/handoff.py" check)
+          grep -q 'CHECK PASS' <<<"$out"
+          got=$(cd "$S" && old python3 -B -c 'import paios_env; print(paios_env.vault_path("Handover"))')
+          [ "$got" = "$want/PAIOS/Handover" ]
+          # PAIOS_ROOT wins when both are set.
+          got=$(cd "$S" && PAIOS_ROOT="$want" PAIOS_VAULT=/nonexistent python3 -B -c 'import paios_env; print(paios_env.vault_path())')
+          [ "$got" = "$want/PAIOS" ]
+          # The checks above leave the install as it was.
+          [ -z "$(find "$want/PAIOS" \( -name __pycache__ -o -name state \))" ]
 
       - name: Refuse an existing PAIOS folder
         run: |
@@ -95,7 +129,7 @@ jobs:
           [ "$(readlink "$v/PAIOS")" = "$v/no-such-target" ]
           [ ! -e "$v/no-such-target" ]
 
-      - name: No vault path and no terminal
+      - name: No folder path and no terminal
         run: |
           set -euo pipefail
           rc=0; /bin/bash examples/paios/install.sh </dev/null || rc=$?
@@ -141,8 +175,8 @@ jobs:
           grep -q 'SELFTEST PASS' "$base2/out.txt"
           want=$(cd "$vault2" && pwd -P)
           # shellcheck disable=SC1091,SC2016
-          ( set +u; unset PAIOS_VAULT PAIOS_TZ; . "$vault2/PAIOS/paios.env"
-            /bin/bash -c '[ "$PAIOS_VAULT" = "$1" ] && [ "$PAIOS_TZ" = "$2" ]' _ "$want" UTC )
+          ( set +u; unset PAIOS_ROOT PAIOS_VAULT PAIOS_TZ; . "$vault2/PAIOS/paios.env"
+            /bin/bash -c '[ "$PAIOS_ROOT" = "$1" ] && [ "$PAIOS_VAULT" = "$1" ] && [ "$PAIOS_TZ" = "$2" ]' _ "$want" UTC )
 
       - name: Failed self-test rolls back
         run: |
@@ -183,7 +217,7 @@ jobs:
           vault3=$(mktemp -d)
           private_tmp=$(mktemp -d)
           printf '%s\n' "$vault3" "$private_tmp" >> "$RUNNER_TEMP/paios-tmpdirs"
-          curl -fsSL "https://raw.githubusercontent.com/$REPO/$SHA/examples/paios/install.sh" \
+          curl -fsSL --retry 3 "https://raw.githubusercontent.com/$REPO/$SHA/examples/paios/install.sh" \
             | PAIOS_REPO="$REPO" PAIOS_REF="$SHA" TMPDIR="$private_tmp" /bin/bash -s -- --tz UTC "$vault3" \
             | tee "$vault3/out.txt"
           grep -q 'SELFTEST PASS' "$vault3/out.txt"
@@ -191,6 +225,12 @@ jobs:
           test -f "$vault3/PAIOS/AGENTS.md"
           test ! -e "$vault3/PAIOS/install.sh"
           test ! -e "$vault3/PAIOS/INSTALL_WITH_AGENT.md"
+          test -f "$vault3/PAIOS/IMPORT_HISTORY.md"
+          n=$(find "$vault3" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')
+          [ "$n" = 2 ]
+          test -d "$vault3/PAIOS"
+          test -f "$vault3/out.txt"
+          [ -z "$(find "$vault3" -mindepth 1 -name '.obsidian')" ]
           # The installer and the self-test leave nothing behind in the temp folder.
           [ -z "$(ls -A "$private_tmp")" ]
 
@@ -217,6 +257,22 @@ jobs:
           force=$(grep -E '(^|[^[:alnum:]_-])(--force|-f)([^[:alnum:]-]|$)' <<<"$prompt" | grep -vi 'not supported' || true)
           if [ -n "$force" ]; then
             echo "$doc names --force or -f without saying it is not supported:"; echo "$force"; exit 1
+          fi
+
+      - name: History-import prompt is one self-contained block
+        run: |
+          set -euo pipefail
+          doc=examples/paios/IMPORT_HISTORY.md
+          [ "$(grep -c '^```' "$doc")" -eq 2 ]
+          prompt=$(awk '/^```/ { n++; next } n == 1' "$doc")
+          [ -n "$prompt" ]
+
+      - name: Default files use plain Markdown links
+        run: |
+          set -euo pipefail
+          # Wiki-style [[links]] and query blocks need a particular app; only the optional guides under docs/ may show them.
+          if grep -rnF --include='*.md' --exclude-dir=docs -e '[[' -e '```dataview' examples/paios; then
+            echo "default files must use relative Markdown links and no plugin syntax"; exit 1
           fi
 
       - name: Clean up

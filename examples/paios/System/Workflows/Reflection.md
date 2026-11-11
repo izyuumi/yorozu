@@ -19,7 +19,7 @@ Reflection converts outcomes into better models and procedures. It does not inve
 
 ## Bounded preference-learning loop
 
-For an owner-approved learning pilot or a relevant correction, use this loop before performing the next matching task. Pilot state and source limits live in [[Projects/Example Project]] (or a dedicated pilot project you create); this workflow owns the procedure, not a second preference store.
+For an owner-approved learning pilot or a relevant correction, use this loop before performing the next matching task. Pilot state and source limits live in [Projects/Example Project](<../../Projects/Example Project.md>) (or a dedicated pilot project you create); this workflow owns the procedure, not a second preference store.
 
 1. Establish the permitted source scope. In a shared conversation, use supplied group evidence or exact same-group history only when its scope is proven. Do not load private runtime state, personal records or cross-session memory to fill a gap. Record source locator, speaker, event time, quote versus supplied summary, and missing evidence.
 2. Classify each signal as a durable preference, a task-local instruction, an execution failure, or unresolved. A repeated tool failure is not a user preference; diagnose the failed execution. Assistant examples are not owner preferences. An explicit preference can be supported by one direct statement, but a recurring correction requires at least two distinct corrective events with matching context, not duplicate imports or paraphrases of one event.
