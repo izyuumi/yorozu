@@ -166,7 +166,7 @@ struct ConversationsView: View {
     }
 
     private var compose: some View {
-        Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") { pane.wrappedValue = .chat(WireEvent.newId()) }
+        Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") { pane.wrappedValue = .chat(model.newConversationId()) }
             .keyboardShortcut("n")
             .help(String(localized: "New Conversation"))
             .accessibilityIdentifier("conversations.new")

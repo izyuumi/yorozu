@@ -222,7 +222,15 @@ struct ComposerTextView: UIViewRepresentable {
         view.takeData = onPasteData
         if let focusKey, context.coordinator.focusedKey != focusKey {
             context.coordinator.focusedKey = focusKey
-            DispatchQueue.main.async { view.becomeFirstResponder() }
+            DispatchQueue.main.async {
+                guard !view.becomeFirstResponder() else { return }
+                // One retry if the first call ran before the view was in the window; no loop.
+                guard view.window == nil else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    guard context.coordinator.focusedKey == focusKey, view.window != nil else { return }
+                    view.becomeFirstResponder()
+                }
+            }
         }
     }
 
