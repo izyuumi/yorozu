@@ -38,7 +38,8 @@ cargo build -p yorozu-probe --features yorozu-core/insecure-plaintext-store
 export YOROZU_PROBE_BIN="$(pwd)/target/debug/yorozu-probe"
 
 echo "== conformance"
-# The client's expectations of the real Node relay (pnpm install --filter @yorozu/relay first).
+# The client's expectations of the real Node relay and plugin Hub (pnpm install --filter @yorozu/relay first);
+# the probe tests need YOROZU_PROBE_BIN.
 node --test --test-timeout=60000 conformance/host/*.test.ts
 
 echo "== commit-type tests"

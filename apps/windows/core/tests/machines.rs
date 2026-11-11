@@ -474,7 +474,7 @@ fn backoff_caps_and_resets_only_after_ten_seconds_open_and_timers_are_stale() {
         );
         assert_eq!(next, m);
         assert!(effects.is_empty());
-        // joined must preserve attempt, even when the host immediately closes.
+        // 7.4: attempt never resets at joined, only after 10 s Open.
         m.state = S::Joining;
         let attempt = m.attempt;
         let (next, _) = step(
@@ -499,6 +499,22 @@ fn backoff_caps_and_resets_only_after_ten_seconds_open_and_timers_are_stale() {
     assert!(effects
         .iter()
         .any(|f| matches!(f, F::Arm(Timer::Backoff, _, 1000))));
+    // A timer from an earlier backoff is stale in a later one: only its generation stops C1.
+    let old_generation = m.timer_generations[Timer::Backoff.index()];
+    let (m, _) = step(m, E::Start, 0);
+    let (m, _) = step(m, E::Error, 0);
+    assert_eq!(m.state, S::Backoff);
+    assert_eq!(
+        c::step(
+            m.clone(),
+            Event {
+                kind: E::Timer(Timer::Backoff),
+                generation: Some(old_generation),
+                now_ms: 0
+            }
+        ),
+        (m, vec![])
+    );
 }
 
 #[test]
@@ -527,6 +543,23 @@ fn status_hints_and_owner_offline_ends_long_open_backoff_streak() {
         Some(p::S9)
     );
     assert_eq!(status::text(&machine(S::Open)), None);
+    // 7.2: the last close shows only on the "Connecting…" row.
+    for state in [
+        S::Idle(None),
+        S::Joined,
+        S::Handshaking { keys: false },
+        S::Open,
+    ] {
+        let mut m = machine(state);
+        m.last_close = Some((4011, "host offline".into()));
+        assert_eq!(status::last_close(&m), None);
+    }
+    let mut m = machine(S::Backoff);
+    assert_eq!(status::last_close(&m), None);
+    m.last_close = Some((4011, "host offline".into()));
+    assert_eq!(status::last_close(&m).as_deref(), Some("4011 host offline"));
+    m.last_close = Some((1005, String::new()));
+    assert_eq!(status::last_close(&m).as_deref(), Some("1005"));
     let mut m = machine(S::Open);
     m.attempt = 6;
     m.opened_at = Some(100);
@@ -565,10 +598,24 @@ fn token_join_flow_reset_and_handshake_retry_generations() {
     assert_eq!(m.flow.last_ack, 0);
     assert_eq!(m.flow.frames_since_ack, 0);
     for expected in [2, 3] {
+        let stale = m.timer_generations[Timer::Handshake.index()];
         let (next, effects) = step(m, E::Timer(Timer::Handshake), 0);
         m = next;
         assert_eq!(m.inits, expected);
         assert!(effects.contains(&F::Init));
+        // The timer armed before the C9 re-init is stale while still Handshaking.
+        assert_eq!(m.state, S::Handshaking { keys: false });
+        assert_eq!(
+            c::step(
+                m.clone(),
+                Event {
+                    kind: E::Timer(Timer::Handshake),
+                    generation: Some(stale),
+                    now_ms: 0
+                }
+            ),
+            (m.clone(), vec![])
+        );
     }
     let (m, _) = step(
         m,

@@ -5,7 +5,7 @@ export function Pairing({ pairing, act }: { pairing: PairingView; act: (task: Pr
   const [link, setLink] = useState("");
   if (pairing.state === "confirming") return (
     <section className="pairing">
-      <h1>Pair with this host?</h1>
+      <h1>{strings.pairingHeading}</h1>
       <p>{pairing.fingerprint}</p><p>{pairing.relayHost}</p><p>{strings.S1}</p>
       <button onClick={() => act(command("confirm_pairing"))}>Confirm</button>
       <button onClick={() => act(command("cancel_pairing"))}>Cancel</button>

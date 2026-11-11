@@ -14,8 +14,10 @@ test("pair removes token at joined and secret at Open; interrupted joined resume
   assert.equal((await p.wait(e => e.ev === "file" && !e.hasSecret)).hasToken, false);
   await p.quit();
   const dir2 = await mkdtemp(join(tmpdir(), "yorozu-resume-")); t.after(() => rm(dir2, { recursive: true, force: true }));
-  const interrupted = probe(dir2, ["--exit-after-joined-persist"]); interrupted.send({ cmd: "pair", link: await host.link() });
+  const interrupted = probe(dir2, ["--exit-after-joined-persist"]); t.after(() => interrupted.quit()); interrupted.send({ cmd: "pair", link: await host.link() });
   await interrupted.exited;
   const resumed = probe(dir2); t.after(() => resumed.quit()); await resumed.wait(e => e.ev === "conn" && e.state === "Open");
+  // A token join would have closed with 4001 unknown token before recovering by nonce.
+  assert.deepEqual(resumed.events.filter(e => e.ev === "close"), []);
   assert.equal((await resumed.wait(e => e.ev === "file" && !e.hasSecret)).hasToken, false);
 });
