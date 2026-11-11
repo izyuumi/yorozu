@@ -2,7 +2,8 @@ import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract
 import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
 import { sendDurableMessageBatch } from "openclaw/plugin-sdk/channel-outbound";
 import { resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
-import { PEER, resolveOwnerRoute } from "./conversation.js";
+import { resolveOwnerRoute } from "./conversation.js";
+import { PEER } from "./target.js";
 import { listConversations } from "./history.js";
 import { yorozuRuntime } from "./runtime.js";
 
