@@ -1,0 +1,3 @@
+# Its own workspace, so the repository's root workspace and lockfile stay untouched.
+packages: ['.']
+minimumReleaseAge: 4320

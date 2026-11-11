@@ -1,6 +1,18 @@
 # Yorozu for Windows
 
-The Windows client for Yorozu: a Tauri 2 app with a Rust core (`core`) that owns sockets, crypto and keys. Its v1 is cut down to pairing by pasted link and chat over the relay. So far this directory holds only the CI frame: an empty core crate and the scripts in `ci/`.
+The Windows client for Yorozu: a Tauri 2 app with a Rust core (`core`) that owns sockets, crypto and keys. Its v1 is cut down to pairing by pasted link and chat over the relay. So far the app is a shell: it installs, opens one window and shows the pairing screen, which isn't wired yet.
+
+## Install
+
+Every pull request and every merge to `main` that touches this directory or `.github/workflows/windows-installer.yml` builds an unsigned installer.
+
+1. On GitHub, open the pull request's checks or the repository's Actions tab, and pick the newest "Windows installer" run (of the pull request, or of `main`).
+2. Under Artifacts, download `yorozu-windows-<commit>` and unzip it. It holds `Yorozu_0.1.0_x64-setup.exe`. Artifacts are kept for 90 days; "Run workflow" on `main` builds a fresh one at any time. On a pull request build the app's footer shows the first 7 characters of the merge commit GitHub builds, not the head commit in the artifact name.
+3. Run the setup. The installer isn't signed, so Windows SmartScreen stops it: choose "More info", then "Run anyway".
+
+The app needs Windows 10 version 1803 or later and the WebView2 runtime. Windows 11 has the runtime built in; on Windows 10 the setup downloads it if it's missing. The app installs for the current user only, into `%LOCALAPPDATA%\Yorozu`, without asking for administrator rights.
+
+Uninstalling keeps the app's data folder (it holds the pairing once pairing lands), so a reinstall is still paired. To remove it too, tick "Delete the application data" in the uninstaller.
 
 ## Docs live here
 
@@ -16,6 +28,15 @@ bash apps/windows/ci/core.sh
 ```
 
 The install is for the conformance test (`conformance/host/`), which runs the real Node relay from `apps/relay` under Node 24 or later. The script also needs the toolchain pinned in `rust-toolchain.toml`, which rustup installs on first use. The pull request job `windows-core` in `.github/workflows/checks.yml` runs the same script.
+
+The app itself (`app/`: the React UI, and the Tauri shell in `app/src-tauri`) is built, tested, installed and smoke-run on Windows by `ci/app.ps1`, which the "Windows installer" workflow runs. To check the shell on macOS or Linux:
+
+```sh
+cd apps/windows/app && pnpm install --frozen-lockfile && pnpm build
+cd .. && cargo test -p yorozu-windows
+```
+
+The UI has to be built first: the shell embeds `app/dist` at compile time.
 
 ## CI isolation
 
