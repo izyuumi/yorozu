@@ -15,8 +15,8 @@ valid_to:
 confidence: 0.9
 epistemic_status: user_report
 source_refs: []
-created: 2026-07-31T12:00:00+00:00
-updated: 2026-07-31T12:00:00+00:00
+created: 2026-01-01T12:00:00+00:00
+updated: 2026-01-01T12:00:00+00:00
 ```
 
 Use directional names that read clearly from `from_id` to `to_id`. Preserve previous relationships as superseded or ended rather than deleting them.

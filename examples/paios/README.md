@@ -16,15 +16,60 @@ Every file is either part of the framework (rules, schemas, templates, workflows
 
 ## How to adopt it
 
+### One command
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/izyuumi/yorozu/main/examples/paios/install.sh | bash -s -- "/path/to/your vault"
+```
+
+Or from a checkout of this repository:
+
+```bash
+bash examples/paios/install.sh "/path/to/your vault"
+```
+
+The vault folder must already exist. The script copies this folder into `<vault>/PAIOS`, writes `PAIOS/paios.env` with your vault path and time zone, and runs the self-test. If `<vault>/PAIOS` already exists it refuses and changes nothing; it never overwrites or merges. Without a path, it asks for one when run on a terminal. It needs bash and Python 3.9+, plus curl and tar when not run from a checkout. When it finishes it prints the next steps: load the variables with `source "<vault>/PAIOS/paios.env"`, then steps 3 to 5 below.
+
+Options:
+
+- `--tz <zone>`: your IANA time zone, e.g. `--tz Europe/Berlin`. Default: `PAIOS_TZ` if set, else the system zone, else UTC.
+- `--ref <ref>` or `PAIOS_REF`: the branch, tag or commit to fetch when the script is not run from a checkout. Default: `main`.
+- `PAIOS_REPO`: `owner/name` of a fork to fetch from. Default: `izyuumi/yorozu`.
+- `-h`: show the help.
+
+You can read the script before running it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/izyuumi/yorozu/main/examples/paios/install.sh -o install.sh
+less install.sh
+bash install.sh "/path/to/your vault"
+```
+
+The script itself comes from `main`. Add `--ref <commit>` to pin the files it installs to that commit.
+
+### No script
+
+This needs Node.js.
+
+```bash
+npx degit izyuumi/yorozu/examples/paios "/path/to/your vault/PAIOS"
+```
+
+Then delete `install.sh` from the copy and follow the steps below from step 2.
+
+### By hand
+
 1. Copy this folder into your Obsidian vault and name it `PAIOS`:
    ```bash
    cp -R examples/paios "/path/to/your vault/PAIOS"
    ```
+   Then delete `PAIOS/install.sh`.
 2. Set the environment variables your agents and scripts use (see `paios.env.example`):
    ```bash
    export PAIOS_VAULT="/path/to/your vault"   # the folder that contains PAIOS/
    export PAIOS_TZ="UTC"                       # your IANA time zone, e.g. Europe/Berlin
    ```
+   Or copy `paios.env.example` to `paios.env`, fill it in and `source` it.
 3. Point your agent at it. Give it `System/Prompts/Agent Master Prompt.md` as its system prompt, or tell it to start with `AGENTS.md`.
 4. Read `System/Constitution.md` and change what doesn't fit you. Add your own amendments as dated, numbered sub-principles.
 5. Replace the example files (`Runtime/Now.md`, `Projects/Example Project.md`, `Execution/Queue.md`, and so on) with your own, or delete them.
@@ -55,7 +100,7 @@ Every file is either part of the framework (rules, schemas, templates, workflows
 
 ## Scripts
 
-All scripts are standard-library Python 3.9+ or bash, and take paths from environment variables. None of them sends anything anywhere.
+The scripts under `System/Scripts/` are standard-library Python 3.9+ or bash, take paths from environment variables, and make no network requests. `install.sh` takes the vault path as an argument and, when not run from a checkout, downloads this repository's tarball from GitHub.
 
 | Script | What it does |
 |---|---|
@@ -64,6 +109,7 @@ All scripts are standard-library Python 3.9+ or bash, and take paths from enviro
 | `System/Scripts/vault-preflight/preflight.sh` + `compare.py` | Tells an agent whether the vault is reachable and which rule files changed since it last read them. |
 | `System/Scripts/handoff/handoff.py` | Writes, claims, closes and checks handoff files in `Handover/`. |
 | `System/Scripts/selftest.sh` | Runs all of the above against a temporary copy and prints `SELFTEST PASS`. |
+| `install.sh` | Copies this folder into `<vault>/PAIOS`, writes `paios.env` and runs the self-test. Refuses if `PAIOS` already exists. The installer leaves itself out of the copy. |
 
 | Variable | Used by | Default |
 |---|---|---|
@@ -73,6 +119,8 @@ All scripts are standard-library Python 3.9+ or bash, and take paths from enviro
 | `HANDOFF_ROOT` | handoff | `$PAIOS_VAULT/PAIOS/Handover` |
 | `HANDOFF_ROLES` | handoff | `chief-of-staff,coder,product-owner` |
 | `PAIOS_PREFLIGHT_STATE` | vault-preflight | `state/` next to `compare.py` |
+| `PAIOS_REF` | `install.sh`, when not run from a checkout: the ref to fetch | `main` |
+| `PAIOS_REPO` | `install.sh`: the `owner/name` to fetch | `izyuumi/yorozu` |
 
 ## Privacy
 
