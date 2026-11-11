@@ -8,3 +8,9 @@ publish = false
 [features]
 # Gates the test-only plaintext key store (later PRs). Stays off in the app.
 insecure-plaintext-store = []
+
+[dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "=1.0.154"

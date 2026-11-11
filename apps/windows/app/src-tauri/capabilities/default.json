@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "Everything the web view may call: listening to events and the app's own commands.",
+  "windows": ["main"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten", "allow-snapshot"]
+}

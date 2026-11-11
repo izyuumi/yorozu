@@ -1,0 +1,67 @@
+:root {
+  color-scheme: light dark;
+  font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  overflow: auto;
+}
+
+footer {
+  padding: 0.5rem 1rem;
+  font-size: 0.8rem;
+  text-align: center;
+  opacity: 0.6;
+}
+
+.pairing {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: 32rem;
+}
+
+.pairing h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.pairing textarea {
+  font: inherit;
+  padding: 0.5rem;
+  resize: vertical;
+}
+
+.pairing button {
+  align-self: flex-start;
+  font: inherit;
+  padding: 0.4rem 1.5rem;
+}
+
+.note {
+  margin: 0;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
