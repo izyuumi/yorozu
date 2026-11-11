@@ -64,7 +64,23 @@ fn marks_loss_retry_and_failed_rows_never_resend() {
         }),
         vec![Effect::Send(message("d", "fail"))]
     );
-    assert_eq!(m.rows[2].mark, Mark::Queued);
+    // Retry replaces the failed row: no row keeps the old id, so a second Retry emits nothing.
+    assert_eq!(m.rows.len(), 2);
+    assert_eq!(m.rows[1].message, message("d", "fail"));
+    assert_eq!(m.rows[1].mark, Mark::Queued);
+    assert!(!m.rows[1].run_failed);
+    let again = m.step(Event::Retry {
+        conv_id: "c".into(),
+        message_id: "b".into(),
+        new_id: "e".into(),
+    });
+    assert!(again.is_empty());
+    assert_eq!(m.rows.len(), 2);
+    m.step(Event::SessionLost);
+    assert_eq!(
+        m.step(Event::SessionOpened),
+        vec![Effect::Send(message("d", "fail"))]
+    );
 }
 #[test]
 fn utf16_cap_empty_and_relay_byte_backstop() {
@@ -83,4 +99,10 @@ fn utf16_cap_empty_and_relay_byte_backstop() {
     );
     assert!(relay_fits(&"x".repeat(1_048_576)));
     assert!(!relay_fits(&"x".repeat(1_048_577)));
+    // The driver steps RefusedFrame for a frame over the limit: the row fails and is never resent.
+    m.step(Event::SessionOpened);
+    m.step(Event::RefusedFrame("ok".into()));
+    assert!(matches!(m.rows[0].mark, Mark::Failed(_)));
+    m.step(Event::SessionLost);
+    assert!(m.step(Event::SessionOpened).is_empty());
 }

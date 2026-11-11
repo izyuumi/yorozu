@@ -98,19 +98,23 @@ impl Machine {
                 message_id,
                 new_id,
             } => {
-                let message = self
-                    .rows
-                    .iter()
-                    .find(|r| {
-                        r.message.conv_id == conv_id
-                            && r.message.message_id == message_id
-                            && matches!(r.mark, Mark::Failed(_))
-                    })
-                    .map(|r| Message {
-                        message_id: new_id,
-                        ..r.message.clone()
-                    });
-                message.map_or(vec![], |m| self.step(Event::Send(m)))
+                // The failed row moves to the new id: a second Retry on the old id finds nothing.
+                let Some(row) = self.rows.iter_mut().find(|r| {
+                    r.message.conv_id == conv_id
+                        && r.message.message_id == message_id
+                        && matches!(r.mark, Mark::Failed(_))
+                }) else {
+                    return vec![];
+                };
+                row.message.message_id = new_id;
+                row.mark = Mark::Queued;
+                row.sig = None;
+                row.run_failed = false;
+                if self.open {
+                    vec![Effect::Send(row.message.clone())]
+                } else {
+                    vec![]
+                }
             }
             Event::SessionOpened => {
                 self.open = true;

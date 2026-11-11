@@ -136,7 +136,14 @@ impl Envelope {
                 "run_started" => serde_json::from_value(d).ok().map(Self::RunStarted),
                 "typing" => serde_json::from_value(d).ok().map(Self::Typing),
                 "tool" => serde_json::from_value(d).ok().map(Self::Tool),
-                "conv_list" => serde_json::from_value(d).ok().map(Self::ConvList),
+                "conv_list" => {
+                    let raw = d
+                        .get("conversations")
+                        .and_then(|v| v.as_array())
+                        .map_or(0, Vec::len);
+                    let list: ConvList = serde_json::from_value(d).ok()?;
+                    Some(Self::ConvList(ConvList { raw, ..list }))
+                }
                 "history" => serde_json::from_value(d).ok().map(Self::History),
                 "conv_update" => serde_json::from_value(d).ok().map(Self::ConvUpdate),
                 "read_cursor" => serde_json::from_value(d).ok().map(Self::ReadCursor),
@@ -232,6 +239,9 @@ pub struct ConvList {
         deserialize_with = "conversations"
     )]
     pub conversations: Option<Vec<crate::model::Conversation>>,
+    /// Rows the answer carried before invalid ones were dropped; the 2,000-row cap counts these.
+    #[serde(skip)]
+    pub raw: usize,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -245,7 +255,7 @@ pub struct History {
         deserialize_with = "history_items"
     )]
     pub items: Option<Vec<crate::model::Item>>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub more: bool,
 }
 fn conversations<'de, D: serde::Deserializer<'de>>(

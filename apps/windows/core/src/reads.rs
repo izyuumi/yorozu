@@ -15,6 +15,13 @@ pub enum Event {
     Focus(bool),
 }
 impl Machine {
+    /// Forgets the pairing's cursors and session; the window's focus outlives a pairing.
+    pub fn reset(&mut self) {
+        *self = Self {
+            focused: self.focused,
+            ..Self::default()
+        };
+    }
     pub fn step(&mut self, event: Event) -> Vec<ReadCursor> {
         match event {
             Event::SessionOpened => {

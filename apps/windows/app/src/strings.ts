@@ -5,6 +5,7 @@ export const strings = {
   "send": "Send",
   "message": "Message",
   "retry": "Retry",
+  "read": "Read",
   "runFailed": "Run failed",
   "newSession": "New session",
   "typing": "Typing…",

@@ -167,10 +167,18 @@ impl Driver {
         self.pair_event(PairEvent::Launch(loaded));
         self.publish();
         let mut tick = tokio::time::interval(Duration::from_secs(1));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             let input = tokio::select! {
                 input = self.rx.recv() => match input { Some(input) => input, None => break },
-                _ = tick.tick() => { self.sync_event(sync::Event::Tick); self.publish(); continue; }
+                _ = tick.tick() => {
+                    // Publish only when the tick expires a flight or clears typing.
+                    if self.chat.due(self.platform.now_ms()) {
+                        self.sync_event(sync::Event::Tick);
+                        self.publish();
+                    }
+                    continue;
+                }
             };
             match input {
                 Input::Command(Command::Quit) => break,
@@ -299,7 +307,7 @@ impl Driver {
                     self.record = None;
                     self.chat = sync::Machine::default();
                     self.outbox = outbox::Machine::default();
-                    self.reads = reads::Machine::default();
+                    self.reads.reset();
                     self.drop_on_accepted = None;
                 }
                 PairEffect::Notice(text) => self.notice(text),
@@ -528,6 +536,15 @@ impl Driver {
             .filter(|r| !before.iter().any(|(id, _)| *id == r.message.message_id))
             .map(|r| r.message.clone())
             .collect();
+        // A retried row moved to a new id; its old item goes before the new one is added.
+        let gone: Vec<_> = before
+            .iter()
+            .filter(|(id, _)| !self.outbox.rows.iter().any(|r| r.message.message_id == *id))
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in gone {
+            self.sync_event(sync::Event::Retried(id));
+        }
         for message in added {
             self.sync_event(sync::Event::Outgoing(message));
         }
@@ -605,12 +622,13 @@ impl Driver {
                     conv_id,
                     items,
                     more,
-                    newest,
+                    opened,
+                    ..
                 } => {
                     (self.notify)(Notification::Chat(
                         json!({"ev":"history","convId":conv_id,"items":items,"more":more}),
                     ));
-                    if newest {
+                    if opened {
                         if let Some(cursor) = self.newest_cursor() {
                             self.read_event(reads::Event::Opened(cursor));
                         }

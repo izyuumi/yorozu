@@ -12,7 +12,9 @@ export function Composer({ convId, act }: { convId: string; act: (task: Promise<
     act(command("send_message", { convId, text }).then(() => setText("")).finally(() => setSending(false)));
   }}>
     <label htmlFor="message">{strings.message}</label>
-    <textarea id="message" rows={3} value={text} aria-invalid={tooLong} aria-describedby={tooLong ? "message-limit" : undefined} onChange={e => setText(e.target.value)} />
+    <textarea id="message" rows={3} value={text} aria-invalid={tooLong} aria-describedby={tooLong ? "message-limit" : undefined} onChange={e => setText(e.target.value)} onKeyDown={e => {
+      if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); }
+    }} />
     {tooLong && <p id="message-limit" role="alert">{strings.tooLong}</p>}
     <button disabled={tooLong || !text.trim() || sending} type="submit">{strings.send}</button>
   </form>;

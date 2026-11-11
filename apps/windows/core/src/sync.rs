@@ -20,6 +20,8 @@ pub struct Open {
     pub items: Vec<Item>,
     pub older_more: bool,
     pub typing_until: Option<u64>,
+    /// The user opened this conversation and its first newest page is still owed.
+    pub fresh: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Request {
@@ -41,6 +43,8 @@ pub enum Event {
     New(String),
     Older(String),
     Outgoing(Message),
+    /// A retry moved the outbox row off this message id.
+    Retried(String),
     Live(Envelope),
     Tick,
 }
@@ -54,6 +58,8 @@ pub enum Effect {
         items: usize,
         more: bool,
         newest: bool,
+        /// The first newest page since the user opened the conversation.
+        opened: bool,
     },
 }
 impl Machine {
@@ -106,6 +112,7 @@ impl Machine {
                     items: vec![],
                     older_more: false,
                     typing_until: None,
+                    fresh: true,
                 });
                 if let Some(o) = &mut self.open {
                     for row in outbox
@@ -174,6 +181,11 @@ impl Machine {
                     Item::live("user", &message.message_id, &message.text, now as i64),
                 );
             }
+            Event::Retried(id) => {
+                if let Some(o) = &mut self.open {
+                    o.items.retain(|i| i.kind != "user" || i.id != id);
+                }
+            }
             Event::Tick => {
                 if self.flight.as_ref().is_some_and(|f| now >= f.deadline) {
                     self.flight = None;
@@ -188,12 +200,13 @@ impl Machine {
                 match event {
                     Envelope::ConvList(ConvList {
                         conversations: Some(rows),
+                        raw,
                     }) if matches!(
                         self.flight.as_ref().map(|f| &f.request),
                         Some(Request::List)
                     ) =>
                     {
-                        let capped = rows.len() >= 2000;
+                        let capped = raw.max(rows.len()) >= 2000;
                         self.list.retain(|c| {
                             !rows.iter().any(|r| r.conv_id == c.conv_id)
                                 && (capped
@@ -210,14 +223,17 @@ impl Machine {
                         conv_id,
                         items: Some(items),
                         more,
-                        ..
+                        before,
                     }) => {
                         if let Some(flight) = self.flight.as_ref().filter(|f| {
-                            matches!(&f.request, Request::History {conv_id:id,..} if *id==conv_id)
+                            matches!(&f.request, Request::History {conv_id:id,before:b} if *id==conv_id && *b==before)
                         }) {
-                            let newest = matches!(flight.request, Request::History {before:None,..});
+                            let newest = before.is_none();
                             if let Some(o) = self.open.as_mut().filter(|o|o.conv_id==conv_id) {
+                                let opened = newest && std::mem::take(&mut o.fresh);
                                 if newest {
+                                    // Their `before` was computed from items this page replaces.
+                                    self.queue.retain(|r| !matches!(r, Request::History {conv_id:id,before:Some(_)} if *id==conv_id));
                                     o.items.retain(|i| {
                                         (i.kind=="user" && outbox.pending(&conv_id,Some(&i.id)))
                                         || (i.seq.is_none() && i.arrival>flight.arrival && !items.iter().any(|p|p.same_key(i)))
@@ -228,7 +244,7 @@ impl Machine {
                                     o.items.push(item.clone());
                                 }
                                 o.older_more=more;
-                                effects.push(Effect::Page {conv_id,items:items.len(),more,newest});
+                                effects.push(Effect::Page {conv_id,items:items.len(),more,newest,opened});
                             }
                             self.flight=None;
                         }
@@ -337,6 +353,7 @@ impl Machine {
                 let envelope = match &request {
                     Request::List => Envelope::ConvList(ConvList {
                         conversations: None,
+                        raw: 0,
                     }),
                     Request::History { conv_id, before } => Envelope::History(History {
                         conv_id: conv_id.clone(),
@@ -354,6 +371,14 @@ impl Machine {
             }
         }
         effects
+    }
+    /// Whether a tick at `now` would change anything.
+    pub fn due(&self, now: u64) -> bool {
+        self.flight.as_ref().is_some_and(|f| now >= f.deadline)
+            || self
+                .open
+                .as_ref()
+                .is_some_and(|o| o.typing_until.is_some_and(|t| now >= t))
     }
     fn enqueue(&mut self, request: Request) {
         if self.online

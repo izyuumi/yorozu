@@ -9,7 +9,7 @@ export function Message({ item, convId, act }: { item: Item; convId: string; act
     <p>{item.text}</p>
     {mark && <div className="mark">{mark.state === "failed" ? <>
       <span>Not delivered: {mark.reason}</span>{" "}<button onClick={() => act(command("retry_message", { convId, messageId: item.id }))}>{strings.retry}</button>
-    </> : <span aria-label={mark.state}>{mark.state === "sent" ? "✓" : mark.state === "delivered" ? "✓✓" : mark.state === "read" ? "read" : ""}</span>}</div>}
+    </> : <span aria-label={mark.state}>{mark.state === "sent" ? "✓" : mark.state === "delivered" ? "✓✓" : mark.state === "read" ? strings.read : ""}</span>}</div>}
     {item.runFailed && <p role="status">{strings.runFailed}</p>}
   </li>;
 }
