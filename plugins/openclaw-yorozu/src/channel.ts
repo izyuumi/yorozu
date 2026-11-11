@@ -31,6 +31,7 @@ import { loadReplies } from "./replies.js";
 import { runParked } from "./retry.js";
 import { yorozuRuntime } from "./runtime.js";
 import { applyPatch, setThreadBase, watchSessions } from "./sessions.js";
+import { currentConversation, looksLikeOwner } from "./target.js";
 import { announceGatewayState } from "./updates.js";
 
 export const CHANNEL_ID = "yorozu";
@@ -159,6 +160,8 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
     actions: reactionActions,
     messaging: {
       normalizeTarget: () => PEER,
+      // The owner is the only target; without this core answers `Unknown target "owner"` to a message-tool send.
+      targetResolver: { looksLikeId: looksLikeOwner, hint: PEER },
       resolveOutboundSessionRoute: ({ cfg, agentId, accountId, threadId, currentSessionKey }) => {
         const route = resolveOwnerRoute(cfg, agentId, accountId);
         return buildThreadAwareOutboundSessionRoute({
@@ -178,7 +181,11 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
     },
   },
   // Only explicit [[reply_to…]] tags and the message tool's replyTo quote a message.
-  threading: { resolveReplyToMode: () => "off" },
+  threading: {
+    resolveReplyToMode: () => "off",
+    // Core hands a message-tool send no thread id of its own; one from a Yorozu turn belongs to that turn's conversation.
+    resolveAutoThreadId: currentConversation,
+  },
   outbound: {
     deliveryMode: "direct",
     chunker: chunkMarkdownText,

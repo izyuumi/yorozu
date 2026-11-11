@@ -19,9 +19,10 @@ import { activityTurn, broadcast, notifyReply } from "./relay.js";
 import { isTemporary, park } from "./retry.js";
 import { yorozuRuntime } from "./runtime.js";
 import { maybeTitle } from "./sessions.js";
+import { PEER } from "./target.js";
 
 const CHANNEL_ID = "yorozu";
-export const PEER = "owner";
+export { PEER };
 export const DEFAULT_CHUNK_LIMIT = 4000;
 const TYPING_KEEPALIVE_MS = 8_000;
 const TYPING_MAX_MS = 30 * 60 * 1000;
