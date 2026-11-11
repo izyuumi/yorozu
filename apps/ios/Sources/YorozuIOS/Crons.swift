@@ -118,7 +118,7 @@ struct HomeView: View {
                                 .toolbar {
                                     if model.conversations[convId]?.items.isEmpty == false {
                                         ToolbarItem(placement: .pinnedAction) {
-                                            Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") { selection = WireEvent.newId() }
+                                            Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") { selection = model.newConversationId() }
                                                 .accessibilityIdentifier("chat.new")
                                         }
                                     }
@@ -229,7 +229,7 @@ struct CronsView: View {
     }
 
     private func editInChat(_ job: CronJob) {
-        open(WireEvent.newId(), job)
+        open(model.newConversationId(), job)
     }
 }
 
