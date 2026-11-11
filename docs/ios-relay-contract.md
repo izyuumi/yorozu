@@ -283,7 +283,7 @@ Each side sends its own as its first box and acts on nothing else until it has t
 |---|---|---|
 | `app` | the app version | the plugin version (`0.1.0`) |
 | `name` | device model | the host's hostname |
-| `capabilities` | `attachments`, `devices`, `replies`, `reactions`, `resume`, `direct`, `unversioned-wire` | `attachments`, `devices`, `invite`, `replies`, `reactions`, `resume`, `unversioned-wire`, `presentation`, `liveActivityPush` while its relay's `registered` said `liveActivity: true`, `direct` while its direct listener is listening, and `push-proxy` while its relay's `registered` said `pushProxy: true` |
+| `capabilities` | `attachments`, `devices`, `replies`, `reactions`, `resume`, `direct`, `unversioned-wire`, `presentation` | `attachments`, `devices`, `invite`, `replies`, `reactions`, `resume`, `unversioned-wire`, `presentation`, `liveActivityPush` while its relay's `registered` said `liveActivity: true`, `direct` while its direct listener is listening, and `push-proxy` while its relay's `registered` said `pushProxy: true` |
 | `mediaMaxBytes`, `agent`, `hostVersion` | — | attachment limit; `channels.yorozu.agent`; OpenClaw version |
 
 `direct` and `push-proxy` were introduced by [#532](https://github.com/izyuumi/yorozu/issues/532) (`Direct.capability`, `DIRECT`; `PushProxy.capability`, `PUSH_PROXY`; [Direct path](#direct-path)). The client lists `direct`, which asks the plugin for [`direct_hints`](#direct-path), and not `push-proxy`; it trusts a direct listener for its probe, not for the plugin's capability. `protocolMin` and `protocolMax` stay 3; new behavior is gated on a capability, never on a version.
