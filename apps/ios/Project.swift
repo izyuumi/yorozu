@@ -253,6 +253,7 @@ let project = Project(
                 "Sources/Client/DeviceCodePairing.swift", "Sources/Client/Transfers.swift",
                 "Sources/ShareInbox/DeviceModel.swift", "Sources/ShareInbox/ShareInbox.swift",
                 "Sources/WidgetShared/Interface/Palette.swift", "Sources/YorozuIOS/Push.swift", "Sources/YorozuIOS/YorozuIntents.swift",
+                "Sources/YorozuIOS/ChatScrollEdge.swift",
             ],
             dependencies: [.package(product: "YorozuWire")],
             settings: .settings(base: ["DEVELOPMENT_TEAM": "AN5KM8QGEF", "CODE_SIGN_STYLE": "Automatic"])
