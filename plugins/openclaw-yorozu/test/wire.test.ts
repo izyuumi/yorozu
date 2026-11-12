@@ -77,7 +77,7 @@ for (const legacy of [false, true]) {
     const hub = new Hub({
       keys: { static: init.host, room: init.room },
       peerInfo: () => PEER_INFO,
-      staticKeyOf: async (key) => key === deviceKey ? b64u(init.device.publicKey) : undefined,
+      staticKeyOf: async (key) => key === deviceKey ? { staticPub: b64u(init.device.publicKey) } : { absent: true },
       onMessage: () => {},
       dispatch: async () => false,
     });

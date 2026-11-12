@@ -1,13 +1,24 @@
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
 import { ErrorCodes, errorShape, type GatewayRequestHandlerOptions } from "openclaw/plugin-sdk/gateway-runtime";
+import { CARD_GUIDANCE } from "./src/cards.js";
 import { yorozuPlugin } from "./src/channel.js";
 import { listDevices } from "./src/devices.js";
+import { isId } from "./src/envelope.js";
+import { prepareToolPresentation } from "./src/presentation.js";
 import { beginPairing, unpairDevice } from "./src/relay.js";
 import { yorozuRuntime } from "./src/runtime.js";
+import { prefix } from "./src/sessions.js";
 
 export { yorozuRuntime };
 
 export type DeviceRow = { id: string; name?: string; pairedAt: number };
+
+/** Whether the hook's session is a Yorozu conversation of its agent. */
+const ownSession = (ctx: { agentId?: string; sessionKey?: string }): boolean => {
+  const agent = ctx.agentId ?? ctx.sessionKey?.match(/^agent:([^:]+):/)?.[1];
+  const start = agent ? prefix(agent) : undefined;
+  return !!start && !!ctx.sessionKey?.startsWith(start) && isId(ctx.sessionKey.slice(start.length));
+};
 
 const method =
   (run: (params: Record<string, unknown>) => Promise<unknown>) =>
@@ -35,6 +46,13 @@ export default defineChannelPluginEntry({
     );
   },
   registerFull(api) {
+    api.on("before_tool_call", (event, ctx) => {
+      if (event.toolName !== "message") return;
+      const { params } = event;
+      if (params.channel !== "yorozu" && !(params.channel == null && ownSession(ctx))) return;
+      const presentation = prepareToolPresentation(params.presentation);
+      return presentation !== params.presentation ? { params: { ...params, presentation } } : undefined;
+    });
     const admin = { scope: "operator.admin" } as const;
     api.registerGatewayMethod("yorozu.pair.begin", method(beginPairing), admin);
     api.registerGatewayMethod(
@@ -55,5 +73,8 @@ export default defineChannelPluginEntry({
       }),
       admin,
     );
+    // Register last: if OpenClaw throws when it refuses this gated prompt hook, table repair and pairing methods still register.
+    // Another plugin's prompt hook may replace the developer instructions that carry groupSystemPrompt; appendSystemContext survives that.
+    api.on("before_prompt_build", (_event, ctx) => (ownSession(ctx) ? { appendSystemContext: CARD_GUIDANCE } : undefined));
   },
 });

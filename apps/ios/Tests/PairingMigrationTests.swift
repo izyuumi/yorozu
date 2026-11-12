@@ -1,13 +1,17 @@
 import Foundation
 import Testing
 
-private final class MemoryPairingStorage: PairingStorage {
+final class MemoryPairingStorage: PairingStorage {
     var items: [String: Data] = [:]
+    var failLoad = false
     var failSave = false
     var failClear = false
     var savedOverride: Data?
 
-    func load(_ account: String) throws -> Data? { items[account] }
+    func load(_ account: String) throws -> Data? {
+        if failLoad { throw CocoaError(.fileReadUnknown) }
+        return items[account]
+    }
     func save(_ data: Data, account: String) throws {
         if failSave { throw CocoaError(.fileWriteUnknown) }
         items[account] = savedOverride ?? data

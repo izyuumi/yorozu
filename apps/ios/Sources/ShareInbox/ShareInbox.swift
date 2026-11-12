@@ -15,8 +15,11 @@ enum ShareInbox {
 
     static let defaultMaxBytes = Attachment.defaultMaxBytes
 
+    /// Tests bind this for their own task, so they never touch the App Group container.
+    @TaskLocal static var testContainer: URL?
+
     private static var container: URL? {
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)
+        testContainer ?? FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)
     }
 
     static var directory: URL? { container?.appending(path: "ShareInbox", directoryHint: .isDirectory) }
@@ -87,5 +90,6 @@ enum ShareInbox {
 
     static func clear() {
         if let listFile { try? FileManager.default.removeItem(at: listFile) }
+        if let directory { try? FileManager.default.removeItem(at: directory) }
     }
 }

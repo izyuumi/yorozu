@@ -83,7 +83,7 @@ test("Hub sends hints immediately after peer_info and on change only to direct-c
   let hints: DirectHints | undefined = { port: 8738, lan: [{ address: "10.0.0.4", prefix: 24 }], tailscale: [] };
   const peer = { app: "test", protocolMin: 3, protocolMax: 3, capabilities: [] as string[] };
   const hub = new Hub({ keys: { static: x25519Keypair(), room: "test" }, peerInfo: () => peer,
-    staticKeyOf: async () => undefined, directHints: () => hints, onMessage: () => {}, dispatch: async () => false });
+    staticKeyOf: async () => ({ absent: true }), directHints: () => hints, onMessage: () => {}, dispatch: async () => false });
   const received: Record<string, unknown[][]> = {};
   for (const [key, capabilities] of [["old", []], ["new", ["direct"]]] as const) {
     received[key] = [];

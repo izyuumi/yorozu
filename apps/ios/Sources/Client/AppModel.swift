@@ -25,6 +25,8 @@ final class AppModel {
         set { pairingEntry.pendingPairing = newValue }
     }
     var pairingError: String?
+    /// The save error while storage lags the in-memory pairing; `resume` retries the save.
+    private var pairingSaveError: String?
     var requestedConversation: String?
     /// What a widget or control asked the opened conversation's composer to do.
     var composeRequest: ComposeRequest?
@@ -46,9 +48,16 @@ final class AppModel {
     @ObservationIgnored private var listener: Task<Void, Never>?
     @ObservationIgnored private var typingTimers: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var stallTimers: [String: Task<Void, Never>] = [:]
-    @ObservationIgnored private let cache = ConversationCache()
-    @ObservationIgnored private var requests: [WireEvent] = []
-    @ObservationIgnored private var inFlight: WireEvent?
+    @ObservationIgnored private let cache: ConversationCache
+    @ObservationIgnored private let storage: any PairingStorage
+    @ObservationIgnored private let migration: PairingMigration.State
+    @ObservationIgnored private let makeTransport: Transport
+    @ObservationIgnored private let pendingShares: () -> [(share: ShareInbox.Share, folder: URL)]
+    @ObservationIgnored private let authorizeNotifications: NotificationAuthorizer
+    /// Mirrors its `loadingOlder` into the observed property, so queue churn alone redraws nothing.
+    @ObservationIgnored private var queue = RequestQueue() {
+        didSet { if loadingOlder != queue.loadingOlder { loadingOlder = queue.loadingOlder } }
+    }
     @ObservationIgnored private var inFlightTimer: Task<Void, Never>?
     @ObservationIgnored private var unplacedReads: [String: ReadCursor] = [:]
     @ObservationIgnored private var badge: Int?
@@ -78,6 +87,7 @@ final class AppModel {
 
     @ObservationIgnored private var connectionGeneration = 0
     @ObservationIgnored private var liveStateLoaded = false
+    @ObservationIgnored private var pairingUnread = false
     @ObservationIgnored private var liveSnapshot: LiveSnapshot?
     private struct LiveSnapshot {
         var pairing: Pairing?
@@ -92,7 +102,22 @@ final class AppModel {
     static let stallTimeout: Duration = .seconds(5 * 60)
     static let requestTimeout: Duration = .seconds(30)
 
-    init() {
+    typealias Transport = @MainActor (Pairing, PeerInfo) throws -> any ClientTransport
+    typealias NotificationAuthorizer = @MainActor () async -> Void
+
+    init(demo: Bool = ProcessInfo.processInfo.arguments.contains("--demo"), storage: any PairingStorage = KeychainPairingStorage(),
+        migration: PairingMigration.State = .shared, cache: ConversationCache = ConversationCache(),
+        transport: @escaping Transport = AppModel.race,
+        shares: @escaping () -> [(share: ShareInbox.Share, folder: URL)] = { ShareInbox.pending() },
+        notifications: @escaping NotificationAuthorizer = {
+            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+        }) {
+        self.storage = storage
+        self.migration = migration
+        self.cache = cache
+        makeTransport = transport
+        pendingShares = shares
+        authorizeNotifications = notifications
         transfers.send = { [weak self] event in
             guard let self, !self.isDemo, let connection = self.connection else { return false }
             return await connection.send(event)
@@ -105,7 +130,7 @@ final class AppModel {
                 Task { @MainActor in model.shareSent() }
             }, ShareInbox.sentNotification as CFString, nil, .deliverImmediately)
         #endif
-        var demo = ProcessInfo.processInfo.arguments.contains("--demo")
+        var demo = demo
         #if DEBUG
         demo = demo || PreviewScene.current != nil
         #endif
@@ -117,18 +142,13 @@ final class AppModel {
             return
         }
         liveStateLoaded = true
-        do {
-            PairingMigration.run()
-            pairing = try Pairing.load()
-        } catch {
-            pairingError = String(localized: "Couldn’t read this device’s pairing: \(error.localizedDescription)")
-        }
+        PairingMigration.run(storage: storage, state: migration)
+        loadPairing()
         Task.detached(priority: .utility) {
             StoredNames.shared.migrate(.conversations)
             StoredNames.shared.migrate(.attachments)
         }
         guard pairing != nil else { return }
-        for conversation in cache.loadAll() { conversations[conversation.id] = conversation }
         updateBadge()
         publishWidgets()
         connect()
@@ -226,7 +246,7 @@ final class AppModel {
         payload.hints = nil
         let new = Pairing(pairing: payload, identity: .generate())
         do {
-            try new.save()
+            try new.save(storage: storage)
         } catch {
             pairingError = String(localized: "Couldn’t save the pairing: \(error.localizedDescription)")
             return
@@ -236,6 +256,7 @@ final class AppModel {
         if let hints, let room = payload.roomId { DirectHintStore().save(hints, room: room) }
         pairingRelayUnreachable = false
         pairing = new
+        pairingSaveError = nil
         publishWidgets()
         connect()
     }
@@ -255,7 +276,7 @@ final class AppModel {
         if isDemo { return exitDemo() }
         disconnect()
         if let room = pairing?.pairing.roomId { forgetDirectPath(room: room) }
-        try? Pairing.remove()
+        try? Pairing.remove(storage: storage)
         #if os(iOS)
         PreviewKeychain.clear()
         #endif
@@ -264,6 +285,7 @@ final class AppModel {
         ShareInbox.clear()
         WidgetPublisher.clear()
         pairing = nil
+        pairingSaveError = nil
         conversations = [:]
         typing = []
         unplacedReads = [:]
@@ -306,19 +328,25 @@ final class AppModel {
         liveSnapshot = nil
         if !liveStateLoaded {
             liveStateLoaded = true
-            do {
-                pairing = try Pairing.load()
-                if pairing != nil {
-                    for conversation in cache.loadAll() { conversations[conversation.id] = conversation }
-                }
-            } catch {
-                pairingError = String(localized: "Couldn’t read this device’s pairing: \(error.localizedDescription)")
-            }
+            loadPairing()
         }
         updateBadge()
         publishWidgets()
         Self.logger.debug("Leaving memory-only demo mode")
         connect()
+    }
+
+    private func loadPairing() {
+        do {
+            pairing = try Pairing.load(storage: storage, state: migration)
+            if pairingUnread { pairingError = nil }
+            pairingUnread = false
+        } catch {
+            pairingUnread = true
+            pairingError = String(localized: "Couldn’t read this device’s pairing: \(error.localizedDescription)")
+        }
+        guard pairing != nil else { return }
+        for conversation in cache.loadAll() { conversations[conversation.id] = conversation }
     }
 
     private func resetTransientState() {
@@ -330,9 +358,7 @@ final class AppModel {
         stalled = []
         inFlightTimer?.cancel()
         inFlightTimer = nil
-        inFlight = nil
-        requests = []
-        loadingOlder = []
+        queue = RequestQueue()
         unplacedReads = [:]
         transfers.sessionLost()
         finishCronWait()
@@ -360,12 +386,17 @@ final class AppModel {
         guard !isDemo, let pairing else { return }
         let local = PeerInfo(app: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
             name: DeviceModel.name, capabilities: [Attachment.capability, Devices.capability, ReplyTo.capability, Reaction.capability,
-                Attachment.resumeCapability, Direct.capability, UnversionedWire.capability])
-        // The relay races the plugin's direct listener (#532): loopback on the Mac, the plugin's hints and Bonjour; with no
-        // usable candidate the race is relay-only. The racer keeps the `direct_hints` it receives.
-        let made = try? RacingConnection(pairing: pairing.pairing, identity: pairing.identity, relayKnows: pairing.relayKnows, local: local,
-            unversionedWire: pairing.unversionedWire == true)
-        guard let connection = made else { return failPairing(String(localized: "This pairing code can’t be used.")) }
+                Attachment.resumeCapability, Direct.capability, UnversionedWire.capability, Presentation.capability])
+        let connection: any ClientTransport
+        do {
+            connection = try makeTransport(pairing, local)
+        } catch {
+            Self.connectionLog.error("connect failed, pairing kept: \(String(describing: error), privacy: .public)")
+            pairingError = pairing.paired ? String(localized: "Couldn’t connect with this device’s pairing.")
+                : String(localized: "This pairing code can’t be used.")
+            return
+        }
+        pairingError = nil
         self.connection = connection
         #if os(iOS)
         if let hostKey = Data(base64URLEncoded: pairing.pairing.macPubkey),
@@ -374,6 +405,13 @@ final class AppModel {
         }
         #endif
         listen(to: connection)
+    }
+
+    /// The relay races the plugin's direct listener (#532): loopback on the Mac, the plugin's hints and Bonjour; with no
+    /// usable candidate the race is relay-only. The racer keeps the `direct_hints` it receives.
+    static func race(pairing: Pairing, local: PeerInfo) throws -> any ClientTransport {
+        try RacingConnection(pairing: pairing.pairing, identity: pairing.identity, relayKnows: pairing.relayKnows, local: local,
+            unversionedWire: pairing.unversionedWire == true)
     }
 
     private func listen(to connection: any ClientTransport) {
@@ -410,8 +448,13 @@ final class AppModel {
     }
 
     func resume() {
+        if !isDemo, pairing == nil, pairingUnread {
+            loadPairing()
+            updateBadge()
+        }
         setActive(true)
         takeShares()
+        if pairingSaveError != nil { updatePairing { _ in } }
         guard let connection else { return connect() }
         Task { await connection.reconnect() }
     }
@@ -541,7 +584,7 @@ final class AppModel {
     func requestNotifications() {
         guard !isDemo, paired else { return }
         Task {
-            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+            await authorizeNotifications()
             guard !isDemo else { return }
             badge = nil
             updateBadge()
@@ -614,7 +657,16 @@ final class AppModel {
         guard !isDemo, var pairing else { return }
         change(&pairing)
         self.pairing = pairing
-        try? pairing.save()
+        do {
+            try pairing.save(storage: storage)
+            if pairingSaveError != nil, pairingError == pairingSaveError { pairingError = nil }
+            pairingSaveError = nil
+        } catch {
+            // Kept in memory: a pairing whose first session completed is not dropped over a failed write.
+            Self.connectionLog.error("pairing save failed: \(String(describing: error), privacy: .public)")
+            pairingSaveError = String(localized: "Couldn’t save the pairing: \(error.localizedDescription)")
+            pairingError = pairingSaveError
+        }
     }
 
     func send(_ text: String, attachments: [ChatAttachment] = [], in convId: String, messageId: String = WireEvent.newId(),
@@ -755,8 +807,8 @@ final class AppModel {
                 }
             }
             let files = ChatAttachment.list(reply.attachments)
-            append(ChatItem(id: reply.messageId, kind: .agent, text: reply.text, ts: reply.ts, attachments: files, replyTo: reply.replyTo),
-                to: reply.convId)
+            append(ChatItem(id: reply.messageId, kind: .agent, text: reply.text, ts: reply.ts, attachments: files, replyTo: reply.replyTo,
+                presentation: reply.presentation), to: reply.convId)
             progressed(reply.convId)
         case .reaction(let reaction):
             receive(reaction)
@@ -770,7 +822,8 @@ final class AppModel {
         case .error(let error) where error.attachmentId != nil:
             transfers.receive(event)
         case .error(let error):
-            if ["internal", "bad_request", "unsupported"].contains(error.code), inFlight != nil { settle() }
+            if ["internal", "bad_request", "unsupported"].contains(error.code),
+                error.messageId.map({ queue.fail(messageId: $0) }) ?? queue.fail() { settle() }
             guard let convId = error.convId, WireEvent.isId(convId), let messageId = error.messageId else { return }
             reject(messageId, in: convId, error.message)
             let id = "error:\(messageId)"
@@ -838,8 +891,8 @@ final class AppModel {
     func loadOlder(_ convId: String) {
         guard let conversation = conversations[convId], conversation.complete != true, !loadingOlder.contains(convId) else { return }
         guard let oldest = conversation.oldestSeq else { return enqueue(catchUp(conversation), first: true) }
-        loadingOlder.insert(convId)
-        enqueue(.historyRequest(HistoryRequest(convId: convId, before: oldest)), first: true)
+        queue.loadOlder(convId, before: oldest)
+        pump()
     }
 
     private func catchUp(_ conversation: Conversation) -> WireEvent {
@@ -847,42 +900,32 @@ final class AppModel {
     }
 
     private func startSync() {
-        requests = [.convList(ConvList())]
-        loadingOlder = []
+        queue.restart()
         settle()
     }
 
     private func enqueue(_ request: WireEvent, first: Bool = false) {
-        guard request != inFlight else { return }
-        requests.removeAll { $0 == request }
-        if first { requests.insert(request, at: 0) } else { requests.append(request) }
+        queue.enqueue(request, first: first)
         pump()
     }
 
     private func settle() {
-        inFlight = nil
+        queue.finish()
         inFlightTimer?.cancel()
         inFlightTimer = nil
         pump()
     }
 
     private func pump() {
-        guard inFlight == nil, state == .ready, let connection, !requests.isEmpty else { return }
-        let request = requests.removeFirst()
-        inFlight = request
+        guard state == .ready, let connection, let request = queue.take() else { return }
         inFlightTimer = Task { [weak self] in
             try? await Task.sleep(for: Self.requestTimeout)
-            guard !Task.isCancelled, let self, self.inFlight == request else { return }
-            if case .historyRequest(let r) = request { self.loadingOlder.remove(r.convId) }
+            guard !Task.isCancelled, let self, self.queue.fail(request) else { return }
             self.settle()
         }
         Task {
             let sent = await connection.send(request)
-            if !sent, inFlight == request {
-                inFlight = nil
-                inFlightTimer?.cancel()
-                if case .historyRequest(let r) = request { loadingOlder.remove(r.convId) }
-            }
+            if !sent, queue.fail(request) { inFlightTimer?.cancel() }
         }
     }
 
@@ -946,7 +989,7 @@ final class AppModel {
         if let high = seqs.max(), page.before == nil { conversation.newestSeq = max(conversation.newestSeq ?? high, high) }
         if page.before != nil || page.after == nil {
             conversation.complete = !page.more
-            loadingOlder.remove(page.convId)
+            queue.loadedOlder(page.convId)
         }
         if page.before == nil {
             if page.after != nil && page.more {
@@ -1034,7 +1077,7 @@ final class AppModel {
 
     func takeShares() {
         guard !isDemo, paired else { return }
-        for (share, folder) in ShareInbox.pending() {
+        for (share, folder) in pendingShares() {
             let messageId = folder.lastPathComponent.lowercased()
             guard WireEvent.isId(messageId) else { continue }
             if let existing = conversations.values.flatMap(\.items).first(where: { $0.id == messageId && $0.kind == .user }) {
@@ -1089,6 +1132,13 @@ final class AppModel {
             accent: UserDefaults.standard.string(forKey: Accent.key), live: active))
     }
 
+    /// An explicit new conversation: allocates an id and requests text (not voice) composer focus.
+    func newConversationId() -> String {
+        let id = WireEvent.newId()
+        composeRequest = ComposeRequest(convId: id, talk: false)
+        return id
+    }
+
     /// Opens what a widget, a control or a Lock Screen accessory asked for. Without a pairing the app just comes forward.
     /// Demo mode opens only new conversations: it writes no snapshot, so no link names one of its conversations.
     func open(_ link: WidgetLink) {
@@ -1097,9 +1147,7 @@ final class AppModel {
         case .conversation(let convId):
             guard !isDemo, WireEvent.isId(convId) else { return }
             requestedConversation = convId
-        case .new:
-            requestedConversation = WireEvent.newId()
-        case .ask, .talk:
+        case .new, .ask, .talk:
             let convId = WireEvent.newId()
             composeRequest = ComposeRequest(convId: convId, talk: link == .talk)
             requestedConversation = convId
@@ -1122,8 +1170,11 @@ final class AppModel {
         patch(ConvPatch(convId: convId, pinned: pinned)) { $0.pinnedAt = pinned ? $0.pinnedAt ?? Self.now : nil }
     }
 
-    func delete(_ convId: String) {
+    @discardableResult
+    func delete(_ convId: String) -> Bool {
+        guard conversations[convId]?.archived == true else { return false }
         patch(ConvPatch(convId: convId, deleted: true)) { _ in }
+        return true
     }
 
     var canPatch: Bool { state == .ready }

@@ -22,7 +22,7 @@ struct SettingsView: View {
     @AppStorage(CommandReturnSends.key) private var commandReturnSends = false
     #else
     @AppStorage(WidgetStore.previewsKey, store: WidgetStore.defaults) private var widgetPreviews = false
-    @AppStorage(YorozuActivities.enabledKey) private var liveActivity = true
+    @AppStorage(LiveActivitySetting.key) private var liveActivities = false
     #endif
     @State private var permission: UNAuthorizationStatus?
     @State private var removing: DeviceInfo?
@@ -125,6 +125,7 @@ struct SettingsView: View {
             siri
             #if os(iOS)
             widgets
+            liveActivitySection
             #endif
         }
         #if os(macOS)
@@ -206,11 +207,24 @@ struct SettingsView: View {
                     model.publishWidgets()
                     YorozuActivities.shared?.previewsChanged()
                 }
-            Toggle(String(localized: "Show Live Activity"), isOn: $liveActivity)
         } header: {
-            Text("Widgets & Live Activities")
+            Text("Widgets")
         } footer: {
-            Text("Widgets show conversation titles and unread counts, hidden on the Lock Screen until you unlock. Previews add the first line of the latest reply. One Live Activity follows agent turns, voice recording and transcription, and approvals: what is running, what needs you and when each finished, with conversation titles only while previews are on and never message text.")
+            Text("Widgets show conversation titles and unread counts, hidden on the Lock Screen until you unlock. Previews add the first line of the latest reply.")
+        }
+    }
+
+    private var liveActivitySection: some View {
+        Section {
+            Toggle(String(localized: "Live Activities"), isOn: $liveActivities)
+                .accessibilityIdentifier("settings.liveActivities")
+                .onChange(of: liveActivities) { _, on in
+                    if !on { YorozuActivities.shared?.disable() }
+                }
+        } header: {
+            Text("Live Activities")
+        } footer: {
+            Text("Off by default. Shows running replies, recordings and approvals on the Lock Screen and in the Dynamic Island.")
         }
     }
     #endif

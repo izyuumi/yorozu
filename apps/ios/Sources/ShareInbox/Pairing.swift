@@ -25,10 +25,12 @@ struct Pairing: Codable, Equatable {
         return try JSONDecoder().decode(Pairing.self, from: data)
     }
 
-    func save() throws { try Keychain.save(JSONEncoder().encode(self), account: Self.account) }
+    func save(storage: any PairingStorage = KeychainPairingStorage()) throws {
+        try storage.save(JSONEncoder().encode(self), account: Self.account)
+    }
 
-    static func remove() throws {
-        try Keychain.clearRequired(account)
-        try Keychain.clearRequired(oldAccount)
+    static func remove(storage: any PairingStorage = KeychainPairingStorage()) throws {
+        try storage.clear(account)
+        try storage.clear(oldAccount)
     }
 }

@@ -67,7 +67,7 @@ let project = Project(
                 // The plugin's direct listener on the LAN (#532); browsed only once the owner allowed Local Network.
                 "NSBonjourServices": ["_yorozu._tcp"],
                 "NSLocalNetworkUsageDescription": "Yorozu connects directly to your host on the same network, for faster messages.",
-                // One device-local Live Activity: started in the app, updated by the app and the notification service, never by push.
+                // One Live Activity, opt-in (Settings › Live Activities): started in the app, updated by the app, the notification service and, with a host that supports it, counts-only relay pushes.
                 "NSSupportsLiveActivities": true,
                 // The voice model is an Apple-hosted asset pack on iPhone and iPad (YorozuAssets).
                 "BAAppGroupID": .string(appGroup),
@@ -246,13 +246,15 @@ let project = Project(
                 "Sources/Client/Store.swift", "Sources/Client/SupportDirectory.swift", "Sources/Client/StoredNamesMigration.swift",
                 "Sources/Client/WidgetPublisher.swift", "Sources/Client/ActivityReports.swift", "Sources/Client/CronSchedule.swift",
                 "Sources/Client/ConnectionRoute.swift", "Sources/Client/LocalPairingFile.swift", "Sources/Client/PairingEntry.swift",
-                "Sources/Client/SceneLifecycle.swift",
+                "Sources/Client/SceneLifecycle.swift", "Sources/Client/RequestQueue.swift", "Sources/Client/ConversationActions.swift",
+                "Sources/Client/ComposerFocus.swift",
                 "Sources/WidgetShared/Model/**", "Sources/WidgetShared/Interface/WidgetLink.swift",
                 "Sources/WidgetShared/Interface/Launcher.swift", "Sources/YorozuIOS/LaunchColumns.swift",
                 "Sources/Client/AppModel.swift", "Sources/Client/ClientTransport.swift", "Sources/Client/DemoData.swift",
                 "Sources/Client/DeviceCodePairing.swift", "Sources/Client/Transfers.swift",
                 "Sources/ShareInbox/DeviceModel.swift", "Sources/ShareInbox/ShareInbox.swift",
                 "Sources/WidgetShared/Interface/Palette.swift", "Sources/YorozuIOS/Push.swift", "Sources/YorozuIOS/YorozuIntents.swift",
+                "Sources/YorozuIOS/ChatScrollEdge.swift",
             ],
             dependencies: [.package(product: "YorozuWire")],
             settings: .settings(base: ["DEVELOPMENT_TEAM": "AN5KM8QGEF", "CODE_SIGN_STYLE": "Automatic"])

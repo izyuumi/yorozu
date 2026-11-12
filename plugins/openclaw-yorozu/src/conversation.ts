@@ -8,20 +8,23 @@ import {
 } from "openclaw/plugin-sdk/channel-inbound";
 import { getAgentScopedMediaLocalRoots } from "openclaw/plugin-sdk/media-local-roots";
 import { createTypingCallbacks } from "openclaw/plugin-sdk/channel-outbound";
-import { chunkMarkdownText, resolveTextChunkLimit } from "openclaw/plugin-sdk/reply-runtime";
+import { chunkMarkdownText, chunkMarkdownTextWithMode, resolveChunkMode, resolveTextChunkLimit } from "openclaw/plugin-sdk/reply-runtime";
 import { resolveAgentRoute, resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
 import { stageOutbound, uploadedFiles, type MediaAccess } from "./attachments.js";
+import { CARD_GUIDANCE, cardFor, cardKey, DROPPED, errorTag, replyChunks, turnCardKey, withCard } from "./cards.js";
 import { isId, type Attachment, type Event, type Message, type ReplyTo, type ToolStatus } from "./envelope.js";
-import { itemText, liveReplyIds } from "./history.js";
+import { itemText, liveReplyIds, liveSessionId } from "./history.js";
+import type { Presentation, PresentationSdk } from "./presentation.js";
+import { storeCard } from "./presentations.js";
 import { noteReply } from "./replies.js";
 import { noteFirstMessage } from "./push.js";
 import { activityTurn, broadcast, notifyReply } from "./relay.js";
 import { isTemporary, park } from "./retry.js";
 import { yorozuRuntime } from "./runtime.js";
 import { maybeTitle } from "./sessions.js";
+import { PEER } from "./target.js";
 
 const CHANNEL_ID = "yorozu";
-export const PEER = "owner";
 export const DEFAULT_CHUNK_LIMIT = 4000;
 const TYPING_KEEPALIVE_MS = 8_000;
 const TYPING_MAX_MS = 30 * 60 * 1000;
@@ -45,11 +48,12 @@ export function replyEvents(
   ids?: { id: (chunk: number) => string; ts: number },
   attachments: Attachment[] = [],
   replyTo?: ReplyTo,
+  presentation?: Presentation,
 ): Event[] {
   const limit = resolveTextChunkLimit(cfg, CHANNEL_ID, accountId, { fallbackLimit: DEFAULT_CHUNK_LIMIT });
   const chunks = chunkMarkdownText(text, limit).filter((chunk) => chunk.trim());
-  if (attachments.length && !chunks.length) chunks.push("");
-  return chunks.map((chunk, k) => {
+  if ((attachments.length || presentation) && !chunks.length) chunks.push("");
+  const events = chunks.map((chunk, k): Event => {
     const messageId = ids?.id(k) ?? randomUUID();
     return {
       kind: "reply",
@@ -63,7 +67,18 @@ export function replyEvents(
       },
     };
   });
+  return withCard(events, presentation);
 }
+
+/** A payload's text and card as sent (`cardFor`), with one content-free line for a card that was dropped. */
+function payloadCard(payload: { text?: string; presentation?: unknown }, sdk: PresentationSdk, log?: ChannelGatewayContext["log"]) {
+  const card = cardFor(payload.presentation, payload.text, sdk);
+  if (card.dropped) log?.warn(DROPPED);
+  return card;
+}
+
+const NOT_KEPT = "yorozu: a card went out without being stored; history will not show it";
+const runningTurns = new Map<string, { messageId: string; agentId: string; sessionKey: string }>();
 
 export function replyTarget(cfg: OpenClawConfig, agent: string, convId: string, id?: string | null, current?: Message): ReplyTo | undefined {
   const messageId = id?.trim().toLowerCase();
@@ -76,7 +91,11 @@ export function mediaUrls(...urls: (string | null | undefined)[]): string[] {
   return [...new Set(urls.map((url) => url?.trim()).filter((url): url is string => !!url))];
 }
 
-type TurnContext = Pick<ChannelGatewayContext, "cfg" | "accountId" | "log"> & { agent: string; mediaMaxBytes: number };
+type TurnContext = Pick<ChannelGatewayContext, "cfg" | "accountId" | "log"> & {
+  agent: string;
+  mediaMaxBytes: number;
+  presentationSdk: PresentationSdk;
+};
 
 type LiveTurn = { steps: number; startedAt: number };
 const liveTurns = new Map<string, Map<string, LiveTurn>>();
@@ -191,11 +210,15 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
       reply: { to: PEER, originatingTo: PEER, messageThreadId: convId },
       message: { body: text, bodyForAgent: text, rawBody: text, commandBody: text },
       media,
-      ...(quote && { supplemental: { quote: { id: quote.messageId, fullId: quote.messageId, body: quote.text, senderAllowed: true } } }),
+      supplemental: {
+        groupSystemPrompt: CARD_GUIDANCE,
+        ...(quote && { quote: { id: quote.messageId, fullId: quote.messageId, body: quote.text, senderAllowed: true } }),
+      },
       access: { commands: { authorized: true } },
     });
 
     // As the app reads a turn's end: a reply is done, a reported failure failed, a retry still running, nothing gone.
+    const turn = { messageId, agentId: route.agentId, sessionKey };
     try {
       await runChannelInboundEvent({
         channel: CHANNEL_ID,
@@ -215,16 +238,42 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
             delivery: {
               deliver: async (payload, info) => {
                 const urls = mediaUrls(payload.mediaUrl, ...(payload.mediaUrls ?? []));
-                if (info.kind === "tool" || (!payload.text?.trim() && !urls.length)) return;
+                if (info.kind === "tool") return;
+                // OpenClaw hands a message-tool card here as it came; this is the only place it is checked.
+                const card = payloadCard(payload, ctx.presentationSdk, log);
+                if (!card.text.trim() && !urls.length && !card.presentation) return;
                 runStarted();
-                const ids = liveReplyIds(route.agentId, sessionKey, messageId, usedReplies);
+                // A transcript message's ids only for a payload with text or a file of its own. With a card, only a
+                // message saying the payload's text: a card-only payload (a `message` tool send, whose transcript
+                // message holds a tool call and no text) or one whose text no message says must not take the ids of
+                // some other reply's text, and leaves that message to it.
+                const ids = !card.presentation
+                  ? payload.text?.trim() || urls.length ? liveReplyIds(route.agentId, sessionKey, messageId, usedReplies) : undefined
+                  : payload.text?.trim() ? liveReplyIds(route.agentId, sessionKey, messageId, usedReplies, payload.text) : undefined;
                 const { attachments, failures } = await stageOutbound(urls, ctx.mediaMaxBytes, access, ids?.id(0));
-                const body = [payload.text ?? "", ...failures].filter((line) => line.trim()).join("\n\n");
+                const body = [card.text, ...failures].filter((line) => line.trim()).join("\n\n");
                 const replyTo = replyTarget(cfg, ctx.agent, convId, payload.replyToId, message);
-                const replies = replyEvents(cfg, convId, body, route.accountId, ids, attachments, replyTo);
+                const replies = replyEvents(cfg, convId, body, route.accountId, ids, attachments, replyTo, card.presentation);
                 const first = replies[0];
                 if (!firstReply && first?.kind === "reply") firstReply = { messageId: first.data.messageId, text: body || "📎" };
                 send(...replies);
+                // After the reply and not awaited: a slow or failing store costs the history card, never the reply.
+                const carrier = replies.at(-1);
+                if (card.presentation && carrier?.kind === "reply") {
+                  const { presentation } = card;
+                  // With a transcript message's ids, history puts the card on that message. Without, the card is kept
+                  // by its turn with the reply that carried it, which history shows again under the same ids.
+                  const sessionId = ids?.sessionId ?? liveSessionId(route.agentId, sessionKey);
+                  const key = ids ? cardKey(ids.sessionId, ids.eventId) : sessionId && turnCardKey(sessionId, messageId, carrier.data.messageId);
+                  if (!key) log?.warn(NOT_KEPT);
+                  else {
+                    void storeCard(convId, key, ids ? { presentation } : {
+                      presentation, reply: replyChunks(replies), ...(failures.length && { mirrorText: card.text }),
+                    }).catch(
+                      (error: unknown) => log?.warn(`yorozu: a card was not stored (${errorTag(error)}); history will not show it`),
+                    );
+                  }
+                }
               },
               onError: (error, info) => log?.warn(`yorozu: ${info.kind} reply failed: ${String(error)}`),
             },
@@ -233,6 +282,9 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
               allowToolLifecycleWhenProgressHidden: true,
               suppressDefaultToolProgressMessages: true,
               onAgentRunStart: () => {
+                // The turn sendPayload stores cards under: from its agent run's start, so a message that waits in
+                // OpenClaw's queue behind a running turn does not take that turn's cards. One run per session at a time.
+                runningTurns.set(convId, turn);
                 runStarted();
                 return undefined;
               },
@@ -252,6 +304,7 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
       if (!retrying) send({ kind: "error", data: { code: "run_failed", message: String(error).slice(0, 500), convId, messageId } });
       ended = retrying ? "retrying" : "failed";
     } finally {
+      if (runningTurns.get(convId) === turn) runningTurns.delete(convId);
       setTyping(false);
       if (ended !== "retrying") {
         removeTurn(message, owner);
@@ -273,9 +326,13 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
   }
 }
 
+// "no conversation reference found" is one of OpenClaw's permanent delivery errors
+// (src/infra/outbound/delivery-queue-recovery-policy.ts), so a send without a conversation is not queued for retries.
+export const NO_CONVERSATION = "yorozu: no conversation reference found; a delivery needs the conversation id as threadId";
+
 const deliveryConv = (threadId: string | number | null | undefined): string => {
   const convId = String(threadId ?? "").toLowerCase();
-  if (!isId(convId)) throw new Error("yorozu: a delivery needs the conversation id as threadId");
+  if (!isId(convId)) throw new Error(NO_CONVERSATION);
   return convId;
 };
 
@@ -306,4 +363,62 @@ export async function sendConversationMedia(params: {
   };
   broadcast([reply]);
   return messageId;
+}
+
+/** An explicit-target payload OpenClaw hands to `sendPayload`: the id of its first reply, or "" when nothing was sent.
+ * - With the card `renderPresentation` put in `channelData.yorozu`: chunked text, files and the card on the last
+ *   chunk. During that conversation's running turn, the card is stored under the turn for history.
+ * - Without a card (some other `channelData`, a location, or a card that was dropped): exactly what OpenClaw does
+ *   for a channel with no `sendPayload` (`src/infra/outbound/deliver-core.ts:342-397`, `message-plan.ts`): one
+ *   `sendText` per text chunk, or one `sendMedia` per file with the text on the first. Nothing sendable sends
+ *   nothing and does not throw; OpenClaw records a result without an id as not delivered. */
+export async function sendConversationPayload(params: {
+  cfg: OpenClawConfig;
+  accountId?: string | null;
+  threadId?: string | number | null;
+  text?: string;
+  mediaUrls: string[];
+  presentation?: unknown;
+  sdk: PresentationSdk;
+  maxBytes: number;
+  access: MediaAccess;
+  replyTo?: ReplyTo;
+  log?: ChannelGatewayContext["log"];
+}): Promise<string> {
+  const convId = deliveryConv(params.threadId);
+  const card = payloadCard(params, params.sdk, params.log);
+  const { threadId, replyTo } = params;
+  if (!card.presentation) {
+    const text = params.text ?? "";
+    const sent: string[] = [];
+    for (const [k, mediaUrl] of params.mediaUrls.entries()) {
+      sent.push(await sendConversationMedia({ threadId, text: k === 0 ? text : "", mediaUrl, maxBytes: params.maxBytes, access: params.access, replyTo }));
+    }
+    if (!params.mediaUrls.length) {
+      // `planOutboundTextMessageUnits`, with the channel's chunker and limit as the outbound adapter declares them.
+      const limit = resolveTextChunkLimit(params.cfg, CHANNEL_ID, params.accountId, { fallbackLimit: DEFAULT_CHUNK_LIMIT });
+      const blocks = resolveChunkMode(params.cfg, CHANNEL_ID, params.accountId) === "newline" ? chunkMarkdownTextWithMode(text, limit, "newline") : [text];
+      if (!blocks.length && text) blocks.push(text);
+      for (const block of blocks) {
+        const chunks = chunkMarkdownText(block, limit);
+        for (const chunk of chunks.length || !block ? chunks : [block]) sent.push(sendConversationText({ threadId, text: chunk, replyTo }));
+      }
+    }
+    return sent[0] ?? "";
+  }
+  const { attachments, failures } = await stageOutbound(params.mediaUrls, params.maxBytes, params.access);
+  const text = [card.text, ...failures].filter((line) => line.trim()).join("\n\n");
+  const replies = replyEvents(params.cfg, convId, text, params.accountId, undefined, attachments, replyTo, card.presentation);
+  broadcast(replies);
+  const turn = runningTurns.get(convId);
+  const sessionId = turn && liveSessionId(turn.agentId, turn.sessionKey);
+  const carrier = replies.at(-1);
+  if (turn && sessionId && carrier?.kind === "reply") {
+    // Core mirrors text before attachment-failure lines; history replaces its chunks with the live reply's.
+    void storeCard(convId, turnCardKey(sessionId, turn.messageId, carrier.data.messageId), {
+      presentation: card.presentation, reply: replyChunks(replies), ...(failures.length && { mirrorText: card.text }),
+    }).catch((error: unknown) => params.log?.warn(`yorozu: a card was not stored (${errorTag(error)}); history will not show it`));
+  } else params.log?.warn(NOT_KEPT);
+  const first = replies[0];
+  return first?.kind === "reply" ? first.data.messageId : "";
 }

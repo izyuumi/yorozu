@@ -17,6 +17,11 @@ struct ChatView: View {
     @State private var dropFailure: String?
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var atBottom = true
+    /// A chat that just got its first content, until it rests at its newest message or the user drags.
+    @State private var opening = false
+    @State private var phase: ScrollPhase = .idle
+    @State private var edge: ChatScrollEdge?
+    @State private var settling: Task<Void, Never>?
     @State private var reveal = TimesReveal()
     @ScaledMetric(relativeTo: .caption2) private var timesWidth: CGFloat = 64
     @Environment(\.textZoom) private var zoom
@@ -49,7 +54,10 @@ struct ChatView: View {
                 if typing {
                     TypingIndicator().readableRow().id("typing")
                 }
+                // The end, as a row: what `scrollToEnd()` scrolls to.
+                Color.clear.frame(height: 1).id(Self.endId)
             }
+            .scrollTargetLayout()
             .padding(.vertical, LayoutMetrics.stack)
         }
         .scrollPosition($position)
@@ -59,21 +67,40 @@ struct ChatView: View {
         })
         #endif
         .scrollDismissesKeyboard(.interactively)
-        .onScrollGeometryChange(for: Bool.self) { geometry in
-            geometry.contentSize.height - geometry.visibleRect.maxY <= LayoutMetrics.section * 2
-        } action: { _, bottom in
-            atBottom = bottom
+        .onScrollGeometryChange(for: ChatScrollGeometry.self) { geometry in
+            // `containerSize` is the bounds less the insets and the offset is -top at the top, so the end sits at
+            // content - container - top (measured on iOS 26 and 27, with the bars' insets).
+            ChatScrollGeometry(
+                edge: ChatScrollEdge(offset: geometry.contentOffset.y,
+                    maxOffset: geometry.contentSize.height - geometry.containerSize.height - geometry.contentInsets.top,
+                    minOffset: -geometry.contentInsets.top),
+                atBottom: geometry.contentSize.height - geometry.visibleRect.maxY <= LayoutMetrics.section * 2)
+        } action: { _, new in
+            edge = new.edge
+            atBottom = new.atBottom
+            scheduleSettle()
         }
-        .defaultScrollAnchor(.bottom)
-        .defaultScrollAnchor(.bottom, for: .sizeChanges)
-        .onChange(of: items.last?.id) { if atBottom || items.last?.kind == .user { position.scrollTo(edge: .bottom) } }
+        .onScrollPhaseChange { _, new in
+            phase = new
+            if new == .interacting { opening = false }
+            scheduleSettle()
+        }
+        // Only the first layout starts at the bottom; later size changes are left to the follow rule and the settle.
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        // Opening a chat starts at its newest message. The geometry for the first content can land before this
+        // onChange (atBottom already false), and a scroll issued in the same update as the first content can be
+        // dropped, so the settle keeps following until the chat rests at its end or the user drags.
+        .onChange(of: items.last?.id) { old, _ in
+            if old == nil { opening = true }
+            if old == nil || atBottom || items.last?.kind == .user { scrollToEnd() }
+        }
         .task(id: model.state == .ready) { model.open(convId) }
         .task(id: highlighted) {
             guard highlighted != nil else { return }
             try? await Task.sleep(for: .seconds(1.5))
             withAnimation { highlighted = nil }
         }
-        .onChange(of: typing) { if atBottom { position.scrollTo(edge: .bottom) } }
+        .onChange(of: typing) { if atBottom { scrollToEnd() } }
         .onAppear {
             model.markRead(convId, explicit: true)
             model.setOnScreen(convId, true)
@@ -91,7 +118,7 @@ struct ChatView: View {
         .overlay(alignment: .bottom) {
             ZStack {
                 if !atBottom {
-                    JumpToLatestButton { withAnimation { position.scrollTo(edge: .bottom) } }
+                    JumpToLatestButton { withAnimation { scrollToEnd() } }
                         .padding(.bottom, LayoutMetrics.inner)
                         .transition(.opacity)
                 }
@@ -181,7 +208,7 @@ extension ChatView {
 
     private var pendingVoice: some View {
         ForEach(VoiceSends.shared.pending[convId] ?? []) { PendingVoiceBubble(item: $0, convId: convId).readableRow() }
-            .onChange(of: VoiceSends.shared.pending[convId]?.count) { position.scrollTo(edge: .bottom) }
+            .onChange(of: VoiceSends.shared.pending[convId]?.count) { scrollToEnd() }
     }
 
     /// Clears the composer at once; the transcript, after any typed draft, goes out with what was staged.
@@ -227,6 +254,42 @@ extension ChatView {
         withAnimation { position.scrollTo(id: id, anchor: .center) }
         highlighted = id
     }
+
+    static let endId = "chat.end"
+
+    /// To the end row, not the scroll position's bottom edge: that ignores the keyboard's inset and trusts estimated lazy
+    /// row heights, so it came to rest past the real end, over empty space, until a drag clamped it (iOS 26 and 27); a row id is
+    /// resolved against the laid-out content.
+    private func scrollToEnd() {
+        position.scrollTo(id: Self.endId, anchor: .bottom)
+    }
+
+    /// At rest, back onto the end when the view is past it, over empty space (the composer or keyboard shrank, a lazy
+    /// row measured shorter), or short of it while following. Never mid-gesture, so a bounce at the bottom is not fought.
+    private func settle() {
+        guard phase == .idle, let edge else { return }
+        if edge.needsSettle(following: atBottom || opening) {
+            scrollToEnd()
+        } else if opening {
+            opening = false
+        }
+    }
+
+    /// Once the geometry has held still for a moment: the keyboard and the composer move the insets in animations the
+    /// scroll phase does not report, and correcting every frame of one would fight it.
+    private func scheduleSettle() {
+        settling?.cancel()
+        settling = Task {
+            try? await Task.sleep(for: .milliseconds(150))
+            if !Task.isCancelled { settle() }
+        }
+    }
+}
+
+/// What the chat reads from its scroll view: where it rests against the end, and whether it is near enough to follow.
+private struct ChatScrollGeometry: Equatable {
+    var edge: ChatScrollEdge
+    var atBottom: Bool
 }
 
 struct Quote {
@@ -329,12 +392,16 @@ struct ItemRow: View {
     private var agent: some View {
         VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
             quoteHeader
-            if !item.text.isEmpty {
+            let parts = Presentation.parts(text: item.text, card: item.presentation)
+            if parts.contains(.text) {
                 MarkdownBlocks(item.text)
                     .padding(LayoutMetrics.stack)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
                     .contextMenu { reply; react; copy; selectText }
+            }
+            if parts.contains(.card), let card = item.presentation {
+                PresentationView(card: card).contextMenu { reply; react; copy; selectText }
             }
             if let files = item.attachments, !files.isEmpty {
                 AttachmentList(model: model, attachments: files, alignment: .leading)
@@ -349,6 +416,7 @@ struct ItemRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onHover { hovering = $0 }
+        .onAppear { if let card = item.presentation { Diagnostics.count(card, id: item.id) } }
     }
 
     private var error: some View {
@@ -673,8 +741,16 @@ private struct Composer: View {
         .task(id: request) {
             guard let request else { return }
             onRequestHandled()
-            guard request.talk else { return requestedFocus = request.convId }
+            guard request.talk else {
+                // The unfocused split pane must not steal the keyboard.
+                if focus != .unfocused { requestedFocus = request.convId }
+                return
+            }
             if voiceAvailable, VoiceSetup.shared.ready { await voice.start() } else { settingUpVoice = true }
+        }
+        .onChange(of: voice.phase) { _, phase in
+            // requestedFocus is one-shot: the text view is rebuilt when the voice bar leaves, and would otherwise refocus.
+            if phase != .idle { requestedFocus = nil }
         }
         .alert(String(localized: "Microphone access is off"), isPresented: $voice.micDenied) {
             Button(String(localized: "Open Settings")) { openMicrophoneSettings() }

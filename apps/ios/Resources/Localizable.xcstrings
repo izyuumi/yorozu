@@ -5504,6 +5504,58 @@
         }
       }
     },
+    "Couldn’t connect with this device’s pairing." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このデバイスのペアリングでは接続できませんでした。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法使用此设备的配对进行连接。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法使用此裝置的配對進行連線。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 기기의 페어링으로 연결할 수 없습니다."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo conectar con el enlace de este dispositivo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connexion impossible avec le jumelage de cet appareil."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit der Kopplung dieses Geräts konnte keine Verbindung hergestellt werden."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível conectar com o emparelhamento deste dispositivo."
+          }
+        }
+      }
+    },
     "Couldn’t save the pairing: %@" : {
       "localizations" : {
         "ja" : {
@@ -19805,54 +19857,54 @@
         }
       }
     },
-    "Widgets & Live Activities" : {
+    "Widgets" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ウィジェットとライブアクティビティ"
+            "value" : "ウィジェット"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "小组件与实时活动"
+            "value" : "小组件"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "小工具與即時動態"
+            "value" : "小工具"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "위젯 및 실시간 현황"
+            "value" : "위젯"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Widgets y actividades en vivo"
+            "value" : "Widgets"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Widgets et activités en direct"
+            "value" : "Widgets"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Widgets und Live-Aktivitäten"
+            "value" : "Widgets"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Widgets e Atividades ao Vivo"
+            "value" : "Widgets"
           }
         }
       }
@@ -23611,54 +23663,54 @@
         }
       }
     },
-    "Show Live Activity" : {
+    "Live Activities" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ライブアクティビティを表示"
+            "value" : "ライブアクティビティ"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "显示实时活动"
+            "value" : "实时活动"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "顯示即時動態"
+            "value" : "即時動態"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "실시간 현황 표시"
+            "value" : "실시간 현황"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mostrar actividad en vivo"
+            "value" : "Actividades en vivo"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Afficher l’activité en direct"
+            "value" : "Activités en direct"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Live-Aktivität anzeigen"
+            "value" : "Live-Aktivitäten"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mostrar Atividade ao Vivo"
+            "value" : "Atividades ao Vivo"
           }
         }
       }
@@ -23923,54 +23975,106 @@
         }
       }
     },
-    "Widgets show conversation titles and unread counts, hidden on the Lock Screen until you unlock. Previews add the first line of the latest reply. One Live Activity follows agent turns, voice recording and transcription, and approvals: what is running, what needs you and when each finished, with conversation titles only while previews are on and never message text." : {
+    "Widgets show conversation titles and unread counts, hidden on the Lock Screen until you unlock. Previews add the first line of the latest reply." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ウィジェットには会話のタイトルと未読数が表示されます。ロック画面ではロックを解除するまで隠れます。プレビューをオンにすると最新の返信の1行目も表示されます。ライブアクティビティはひとつにまとまり、エージェントの作業、音声の録音と文字起こし、承認の状況を表示します。表示されるのは実行中の項目、対応が必要な項目、それぞれの終了時刻です。会話のタイトルはプレビューがオンのときだけ表示され、メッセージの本文は表示されません。"
+            "value" : "ウィジェットには会話のタイトルと未読数が表示されます。ロック画面ではロックを解除するまで隠れます。プレビューをオンにすると最新の返信の1行目も表示されます。"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "小组件显示对话标题和未读数，在锁定屏幕上解锁前会隐藏。开启预览后还会显示最新回复的第一行。一个实时活动汇总代理的工作、语音录制与转写以及审批：显示正在进行的事项、需要你处理的事项以及各项的完成时间，仅在开启预览时显示对话标题，从不显示消息内容。"
+            "value" : "小组件显示对话标题和未读数，在锁定屏幕上解锁前会隐藏。开启预览后还会显示最新回复的第一行。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "小工具會顯示對話標題和未讀數量，在鎖定畫面上解鎖前會隱藏。開啟預覽後還會顯示最新回覆的第一行。一個即時動態彙整代理的工作、語音錄製與轉寫以及核准：顯示正在進行的項目、需要你處理的項目以及各項的完成時間，僅在開啟預覽時顯示對話標題，絕不顯示訊息內容。"
+            "value" : "小工具會顯示對話標題和未讀數量，在鎖定畫面上解鎖前會隱藏。開啟預覽後還會顯示最新回覆的第一行。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "위젯에는 대화 제목과 읽지 않은 수가 표시되며, 잠금 화면에서는 잠금을 해제할 때까지 숨겨집니다. 미리보기를 켜면 최신 답장의 첫 줄도 표시됩니다. 하나의 실시간 현황이 에이전트 작업, 음성 녹음과 받아쓰기, 승인을 함께 보여 줍니다. 진행 중인 항목, 확인이 필요한 항목, 각 항목의 완료 시각이 표시되며, 대화 제목은 미리보기가 켜져 있을 때만 표시되고 메시지 내용은 표시되지 않습니다."
+            "value" : "위젯에는 대화 제목과 읽지 않은 수가 표시되며, 잠금 화면에서는 잠금을 해제할 때까지 숨겨집니다. 미리보기를 켜면 최신 답장의 첫 줄도 표시됩니다."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Los widgets muestran los títulos de las conversaciones y los mensajes sin leer, ocultos en la pantalla bloqueada hasta que desbloquees. La vista previa añade la primera línea de la última respuesta. Una sola actividad en vivo sigue el trabajo del agente, la grabación y transcripción de voz y las aprobaciones: lo que está en curso, lo que necesita tu atención y cuándo terminó cada cosa, con los títulos de las conversaciones solo si la vista previa está activada y nunca el texto de los mensajes."
+            "value" : "Los widgets muestran los títulos de las conversaciones y los mensajes sin leer, ocultos en la pantalla bloqueada hasta que desbloquees. La vista previa añade la primera línea de la última respuesta."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Les widgets affichent les titres des conversations et le nombre de messages non lus, masqués sur l’écran verrouillé jusqu’au déverrouillage. L’aperçu ajoute la première ligne de la dernière réponse. Une seule activité en direct suit le travail de l’agent, l’enregistrement et la transcription vocale, et les approbations : ce qui est en cours, ce qui attend votre action et quand chaque tâche s’est terminée, avec les titres des conversations seulement si l’aperçu est activé, et jamais le texte des messages."
+            "value" : "Les widgets affichent les titres des conversations et le nombre de messages non lus, masqués sur l’écran verrouillé jusqu’au déverrouillage. L’aperçu ajoute la première ligne de la dernière réponse."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Widgets zeigen Titel und ungelesene Antworten deiner Unterhaltungen, auf dem Sperrbildschirm verborgen, bis du entsperrst. Die Vorschau ergänzt die erste Zeile der neuesten Antwort. Eine einzige Live-Aktivität begleitet die Arbeit des Agenten, Sprachaufnahme und Transkription sowie Freigaben: was gerade läuft, was dich braucht und wann jeweils etwas fertig wurde, mit Titeln der Unterhaltungen nur bei eingeschalteter Vorschau und nie mit Nachrichtentext."
+            "value" : "Widgets zeigen Titel und ungelesene Antworten deiner Unterhaltungen, auf dem Sperrbildschirm verborgen, bis du entsperrst. Die Vorschau ergänzt die erste Zeile der neuesten Antwort."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Os widgets mostram os títulos das conversas e as contagens de não lidas, ocultos na Tela Bloqueada até você desbloquear. As prévias adicionam a primeira linha da resposta mais recente. Uma única Atividade ao Vivo acompanha o trabalho do agente, a gravação e transcrição de voz e as aprovações: o que está em andamento, o que precisa de você e quando cada item terminou, com títulos das conversas só quando as prévias estão ativadas e nunca o texto das mensagens."
+            "value" : "Os widgets mostram os títulos das conversas e as contagens de não lidas, ocultos na Tela Bloqueada até você desbloquear. As prévias adicionam a primeira linha da resposta mais recente."
+          }
+        }
+      }
+    },
+    "Off by default. Shows running replies, recordings and approvals on the Lock Screen and in the Dynamic Island." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "デフォルトではオフです。実行中の返信、録音、承認をロック画面と Dynamic Island に表示します。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认关闭。在锁定屏幕和灵动岛上显示正在进行的回复、录音和审批。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "預設為關閉。在鎖定畫面和動態島上顯示進行中的回覆、錄音和核准。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기본적으로 꺼져 있습니다. 진행 중인 답장, 녹음, 승인을 잠금 화면과 Dynamic Island에 표시합니다."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Desactivado por omisión. Muestra las respuestas en curso, las grabaciones y las aprobaciones en la pantalla bloqueada y en la Dynamic Island."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Désactivé par défaut. Affiche les réponses en cours, les enregistrements et les approbations sur l’écran verrouillé et dans la Dynamic Island."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Standardmäßig aus. Zeigt laufende Antworten, Aufnahmen und Freigaben auf dem Sperrbildschirm und in der Dynamic Island."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Desativado por padrão. Mostra respostas em andamento, gravações e aprovações na Tela Bloqueada e na Dynamic Island."
           }
         }
       }
@@ -26553,6 +26657,370 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Abrir Privacidade › Rede Local"
+          }
+        }
+      }
+    },
+    "Info" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "情報"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "信息"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "資訊"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "정보"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Información"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Information"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Info"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Informação"
+          }
+        }
+      }
+    },
+    "Success" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "成功"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "成功"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "成功"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "성공"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Correcto"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Réussite"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erfolg"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sucesso"
+          }
+        }
+      }
+    },
+    "Warning" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "警告"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "警告"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "警告"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "경고"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Advertencia"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Avertissement"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Warnung"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aviso"
+          }
+        }
+      }
+    },
+    "Danger" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "危険"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "危险"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "危險"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "위험"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Peligro"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Danger"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gefahr"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Perigo"
+          }
+        }
+      }
+    },
+    "Category" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "カテゴリ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "类别"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "類別"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "카테고리"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Categoría"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catégorie"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kategorie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Categoria"
+          }
+        }
+      }
+    },
+    "Value" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "値"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "值"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "值"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "값"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Valor"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Valeur"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wert"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Valor"
+          }
+        }
+      }
+    },
+    "Series" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "系列"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "系列"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "數列"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계열"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Serie"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Série"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Datenreihe"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Série"
           }
         }
       }
