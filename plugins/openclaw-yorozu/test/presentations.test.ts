@@ -113,6 +113,8 @@ test("the channel declares cards to OpenClaw, to the agent and to the apps", () 
   assert.ok(MESSAGE_TOOL_HINTS.includes("- Prefer a card when the user asks to see a card, chart, table or demo; send it in the same turn without asking."));
   assert.ok(hints.includes("Put the key facts in the text too; older Yorozu apps show only the text."));
   assert.ok(hints.includes("This conversation is in the Yorozu app, not Signal or another messenger."));
+  assert.ok(MESSAGE_TOOL_HINTS.includes("- A Yorozu table or chart must use the message tool's `presentation`, never a markdown pipe table. Workspace or Signal rules that say never send tables apply to Signal, not to Yorozu cards."));
+  assert.equal(CARD_GUIDANCE, ["## Yorozu app", ...MESSAGE_TOOL_HINTS].join("\n"));
   assert.doesNotMatch(hints, /iPhone|iPad|Mac/);
   assert.match(hints, /`presentation`.*`title`.*`text`, `context`, `divider`, `table` or `chart`/);
   assert.match(hints, /plain text is always sent alongside/);
