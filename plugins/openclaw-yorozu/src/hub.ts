@@ -7,6 +7,7 @@ import {
   encodeEvent,
   negotiate,
   parseEvent,
+  PRESENTATION,
   PROTOCOL_VERSION,
   REACTIONS,
   REPLIES,
@@ -72,6 +73,19 @@ export function downgrade(event: Event, peer: PeerInfo): Event {
   if (!peer.capabilities.includes(REACTIONS) && event.kind === "history" && "items" in event.data) {
     const items = event.data.items.map((item) => ("reactions" in item ? { ...item, reactions: undefined } : item));
     event = { kind: "history", data: { ...event.data, items } };
+  }
+  if (!peer.capabilities.includes(PRESENTATION)) {
+    if (event.kind === "reply" && event.data.presentation) {
+      const { presentation: _, ...reply } = event.data;
+      event = { kind: "reply", data: reply };
+    } else if (event.kind === "history" && "items" in event.data && event.data.items.some((item) => "presentation" in item)) {
+      const items = event.data.items.map((item) => {
+        if (!("presentation" in item)) return item;
+        const { presentation: _, ...rest } = item;
+        return rest;
+      });
+      event = { kind: "history", data: { ...event.data, items } };
+    }
   }
   if (peer.capabilities.includes(ATTACHMENTS) || event.kind !== "reply" || !event.data.attachments) return event;
   const { attachments, ...reply } = event.data;

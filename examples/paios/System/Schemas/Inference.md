@@ -5,16 +5,16 @@ id: inference-01J...
 type: inference
 schema_version: 1
 status: active
-title: Possible preference for local-first tools
+title: Possible preference for morning meetings
 subject_id: user
-claim: "The user prefers local-first tools when operational burden is reasonable."
+claim: "The user prefers morning meetings on weekdays."
 confidence: 0.78
 epistemic_status: inferred
 evidence_for: []
 evidence_against: []
-created: 2026-07-31T12:00:00+00:00
-last_verified: 2026-07-31
-review_after: 2026-10-31
+created: 2026-01-01T12:00:00+00:00
+last_verified: 2026-01-01
+review_after: 2026-04-01
 ```
 
 ## Body sections

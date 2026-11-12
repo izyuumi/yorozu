@@ -13,11 +13,11 @@ scope: general
 strength: strong
 confidence: 0.95
 epistemic_status: explicit
-valid_from: 2026-07-31
-review_after: 2027-01-31
+valid_from: 2026-01-01
+review_after: 2026-07-01
 source_refs: []
-created: 2026-07-31T12:00:00+00:00
-updated: 2026-07-31T12:00:00+00:00
+created: 2026-01-01T12:00:00+00:00
+updated: 2026-01-01T12:00:00+00:00
 ```
 
 ## Body sections

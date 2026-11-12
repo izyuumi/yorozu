@@ -16,8 +16,8 @@ start_date:
 target_date:
 next_review:
 source_refs: []
-created: 2026-07-31T12:00:00+00:00
-updated: 2026-07-31T12:00:00+00:00
+created: 2026-01-01T12:00:00+00:00
+updated: 2026-01-01T12:00:00+00:00
 ```
 
 ## Body sections

@@ -12,11 +12,11 @@ subject_id: entity-...
 model_domain: communication
 confidence: 0.67
 epistemic_status: inferred
-last_verified: 2026-07-31
-review_after: 2026-10-31
+last_verified: 2026-01-01
+review_after: 2026-04-01
 source_refs: []
-created: 2026-07-31T12:00:00+00:00
-updated: 2026-07-31T12:00:00+00:00
+created: 2026-01-01T12:00:00+00:00
+updated: 2026-01-01T12:00:00+00:00
 ```
 
 ## Body sections

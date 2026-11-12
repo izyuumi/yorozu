@@ -16,6 +16,8 @@ enum PreviewScene: String {
     /// The lockscreen take again with Tidy up Downloads already needing you: a locked simulator suspends the app,
     /// so the preview dissolves from one take to the other instead of the app changing the row while locked.
     case needsYou = "needs-you"
+    /// Not a take: opens a conversation whose reply carries a card (a table and a bar chart), for screenshots.
+    case genui
 
     /// The Lock Screen takes, which start a Live Activity in demo mode.
     var locked: Bool { self == .lockscreen || self == .needsYou }
@@ -57,6 +59,32 @@ enum PreviewScene: String {
     static var tidy: [(HistoryItem.Kind, String)] {
         ja ? [(.user, "ダウンロードフォルダを整理して"), (.agent, "ダウンロードに重複したフォルダが 3 つありました。ゴミ箱に移しますか？")]
             : [(.user, "Tidy up my Downloads folder"), (.agent, "I found 3 duplicate folders in Downloads. Move them to the Trash?")]
+    }
+
+    static let cardID = "d0000000-0000-4000-8000-000000000007"
+    /// The genui scene's conversation; nil in every other scene.
+    static var cardTitle: String? { current == .genui ? "Trip costs" : nil }
+    /// Its history, decoded from the wire's JSON as a page from the plugin is.
+    static func card(at ts: Int64) -> [HistoryItem]? {
+        guard current == .genui else { return nil }
+        let json = """
+        {"convId":"\(cardID)","more":false,"rev":2,"items":[
+        {"kind":"user","id":"d0000000-0000-4000-8000-0000000000a1","seq":1,"ts":\(ts),"text":"What did the trip cost?"},
+        {"kind":"agent","id":"d0000000-0000-4000-8000-0000000000a2","seq":2,"ts":\(ts + 30_000),
+         "text":"The trip cost 1,140 in total. Traveler A paid the most, mostly for transport.",
+         "presentation":{"title":"Trip costs","tone":"info","blocks":[
+          {"type":"text","text":"The trip cost **1,140** in total.","alt":"The trip cost 1,140 in total."},
+          {"type":"table","caption":"Per traveler","headers":["Traveler","Transport","Lodging","Total"],
+           "rows":[["Traveler A",180,240,420],["Traveler B",140,240,380],["Traveler C",100,240,340]],"rowHeaderColumnIndex":0,
+           "alt":"Per traveler\\nTraveler, Transport, Lodging, Total\\nTraveler A, 180, 240, 420\\nTraveler B, 140, 240, 380\\nTraveler C, 100, 240, 340"},
+          {"type":"chart","chartType":"bar","title":"Transport and lodging","categories":["Traveler A","Traveler B","Traveler C"],
+           "series":[{"name":"Transport","values":[180,140,100]},{"name":"Lodging","values":[240,240,240]}],
+           "xLabel":"Traveler","yLabel":"Cost",
+           "alt":"Transport and lodging\\nTransport: 180, 140, 100\\nLodging: 240, 240, 240"},
+          {"type":"divider","alt":""},
+          {"type":"context","text":"Fictional data.","alt":"Fictional data."}]}}]}
+        """
+        return (try? JSONDecoder().decode(History.self, from: Data(json.utf8)))?.items
     }
 
     private static var ask: String { ja ? "昨夜のバックアップは終わった？" : "Did last night’s backup finish?" }
@@ -134,6 +162,8 @@ enum PreviewScene: String {
                 #else
                 break
                 #endif
+            case .genui:
+                model.requestedConversation = Self.cardID
             case .list:
                 break
             }

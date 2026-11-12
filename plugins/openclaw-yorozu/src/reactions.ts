@@ -2,6 +2,7 @@ import { jsonResult, readReactionParams, resolveReactionMessageId } from "opencl
 import type { ChannelMessageActionAdapter } from "openclaw/plugin-sdk/channel-contract";
 import { parseThreadSessionSuffix } from "openclaw/plugin-sdk/routing";
 import { enqueueRoutedSystemEvent } from "openclaw/plugin-sdk/system-event-runtime";
+import { MESSAGE_TOOL } from "./cards.js";
 import { isId, type Reaction, type Reactions } from "./envelope.js";
 import { broadcast } from "./relay.js";
 import { yorozuRuntime } from "./runtime.js";
@@ -51,7 +52,7 @@ export function userReaction(reaction: Reaction, route: { agentId: string; sessi
 }
 
 export const reactionActions: ChannelMessageActionAdapter = {
-  describeMessageTool: () => ({ actions: ["react"] }),
+  describeMessageTool: () => MESSAGE_TOOL,
   supportsAction: ({ action }) => action === "react",
   handleAction: async ({ action, params, sessionKey, toolContext }) => {
     if (action !== "react") throw new Error(`Action ${action} is not supported for yorozu.`);

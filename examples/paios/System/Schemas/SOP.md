@@ -12,10 +12,10 @@ confidence: 0.76
 success_count: 0
 failure_count: 0
 last_used:
-review_after: 2026-10-31
+review_after: 2026-04-01
 source_refs: []
-created: 2026-07-31T12:00:00+00:00
-updated: 2026-07-31T12:00:00+00:00
+created: 2026-01-01T12:00:00+00:00
+updated: 2026-01-01T12:00:00+00:00
 ```
 
 ## Body sections

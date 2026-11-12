@@ -22,7 +22,7 @@ Build the initial PAIOS model by assimilating locally available agent conversati
 1. Locate your agents' local conversation logs or databases.
 2. Identify format, schema, time zone, IDs, role mapping, timestamps, thread structure, attachments, and deletion markers.
 3. Record only non-secret source metadata in `Runtime/Source Registry.md`.
-4. Keep importer configuration (exact paths and mappings) in a local file outside the vault or ignored by sync, never in a shared copy.
+4. Keep importer configuration (exact paths and mappings) in a local file outside the PAIOS folder or ignored by sync, never in a shared copy.
 5. Do not place credentials in the configuration.
 
 ## Phase B — Dry run
@@ -31,7 +31,7 @@ Run:
 
 ```bash
 # This example ships no importer. Use your own, with a dry-run mode, for example:
-your-importer --config "$HOME/.config/paios/import.toml" --output "$PAIOS_VAULT/PAIOS" --dry-run
+your-importer --config "$HOME/.config/paios/import.toml" --output "$PAIOS_ROOT/PAIOS" --dry-run
 ```
 
 Review:

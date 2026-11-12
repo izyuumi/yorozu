@@ -2,7 +2,7 @@
 
 Durable, evidence-backed model of what is believed to be true.
 
-Start with [[Runtime/Now|Now]] for live decisions and [[Execution/Queue|Execution Queue]] for active work.
+Start with [Now](../Runtime/Now.md) for live decisions and [Execution Queue](../Execution/Queue.md) for active work.
 
 - `Current State/`: compact present-state materialized views.
 - `Entities/`: durable identities, including the user when modeled as an entity.
@@ -16,4 +16,4 @@ Start with [[Runtime/Now|Now]] for live decisions and [[Execution/Queue|Executio
 
 Workspace drafts and raw imported conversations do not belong here.
 
-Wiki entry point: [[PAIOS/index]]. Additional compiled records: `Sources/` for attributed source summaries, `Concepts/` for reusable ideas, `Syntheses/` for evidence-linked answers. Procedure: [[System/Workflows/LLM Wiki]].
+Wiki entry point: [PAIOS/index](../index.md). Additional compiled records: `Sources/` for attributed source summaries, `Concepts/` for reusable ideas, `Syntheses/` for evidence-linked answers. Procedure: [System/Workflows/LLM Wiki](<../System/Workflows/LLM Wiki.md>).
