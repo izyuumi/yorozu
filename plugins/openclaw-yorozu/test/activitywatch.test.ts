@@ -2090,8 +2090,12 @@ test("LA-2i M2-seeded [behaviour] tokenGone retains content and resumes above du
 
 // LA-2k: the relay slot as apps/relay/src/worker.ts keeps it. Every device has a p: row here.
 // activityPush reads the slot on arrival (dropped if empty) and is queued; at the start of the
-// queued send it goes to the token read on arrival only if the slot still holds it. The queued
-// start runs before the host's next message is applied (Yorozu's ruling on worker.ts's activityTail).
+// queued send it goes to the token read on arrival only if the slot still holds it.
+// Model: an idle relay queue with zero-latency APNs; each queued send starts before the next
+// host message is applied. On the real relay (one activityTail chain per room), a send waits
+// for the previous send's APNs round trip. With two or more replaced devices, or a push already
+// in flight at reconnect, a later END can see the newer token and be dropped (never misdelivered).
+// That residual needs a relay change and is not modelled here.
 // After delivery an END clears the slot only if it still holds the sent token.
 type Delivery = { device: string; event: string; timestamp?: number; token?: string };
 function slotRelay() {
@@ -2353,7 +2357,8 @@ test("LA-2k 2-f [behaviour] unsent END of a newer activity is sent with its own 
   assert.equal(f.relay.slots.get(DEVICE), undefined);
 });
 
-test("LA-2k 2-g [control] newer activity during the END save", async () => {
+// Pins the frozen2j early return after the END save; keeping that END in unsentEnd is a follow-up.
+test("LA-2k 2-g [known gap] newer activity during the END save drops the END", async () => {
   const f = await seeded();
   holdEnd(f);
   f.watch.turn(CONV, { kind: "done" });

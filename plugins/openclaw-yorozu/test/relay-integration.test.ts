@@ -146,7 +146,11 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     const delivered: HostMessage[] = [];
     const deliveries: { event: unknown; timestamp: number; token: string }[] = [];
     const dropped: typeof deliveries = [];
-    // Queued send starts, run in order before the next host message is applied (worker.ts activityTail).
+    // Model: an idle relay queue with zero-latency APNs; each queued send starts before the next
+    // host message is applied. On the real relay (one activityTail chain per room), a send waits
+    // for the previous send's APNs round trip. With two or more replaced devices, or a push already
+    // in flight at reconnect, a later END can see the newer token and be dropped (never misdelivered).
+    // That residual needs a relay change and is not modelled here.
     const sendQueue: (() => void)[] = [];
     const startSends = () => { for (let start = sendQueue.shift(); start; start = sendQueue.shift()) start(); };
     const connections: Connection[] = [];
