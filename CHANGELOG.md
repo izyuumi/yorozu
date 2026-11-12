@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.15.0
+
+### Features
+
+- **ios:** make the Live Activity opt-in (#708)
+- **ios:** render read-only GenUI cards (#714)
+- **plugin:** send read-only GenUI cards to the Yorozu apps (#713)
+- **ios:** focus the composer when starting a new conversation (#706)
+- **ios:** archive-first trailing swipe and archived-only delete (#702)
+
+### Fixes
+
+- **plugin:** keep Yorozu card guidance after prompt-hook replacement (#718)
+- **plugin:** give every agent harness the Yorozu card hints (#715)
+- **plugin:** resolve the owner target for message-tool sends (#712)
+- **ios:** keep a long chat on its newest message after Send and on open (#703)
+- **ios:** surface and retry a failed paired=true save (#699)
+- **plugin:** do not revoke a device when the allowlist cannot be read (#698)
+- **ios:** drop pending share folders when the inbox is cleared (#697)
+- **ios:** keep a stored pairing when connect cannot build a transport (#690)
+- **ios:** settle a history request only for a matching message error (#695)
+- **plugin:** treat non-integer everyMs cron intervals as Custom (#694)
+- **ios:** clear the loading-older spinner when a history request errors (#687)
+- **plugin:** name an out-of-range cron schedule by its expression (#685)
+- **mcp:** answer 400 or 500 instead of crashing on a bad HTTP target (#684)
+
 ## 0.14.0
 
 ### Features
