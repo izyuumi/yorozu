@@ -23,6 +23,7 @@ export const MESSAGE_TOOL_HINTS = [
 // OpenClaw's Codex app-server harness never shows agentPrompt.messageToolHints, so every Yorozu turn carries them via conversation.ts supplemental.groupSystemPrompt.
 // A before_prompt_build hook that returns `systemPrompt` replaces the developer instructions that carry groupSystemPrompt,
 // so index.ts also appends this via appendSystemContext, which OpenClaw concatenates after any replacement.
+// groupSystemPrompt stays because the plugin cannot tell whether that hook was registered (it needs allowConversationAccess on an untrusted install).
 // Embedded and claude-cli runs see the hints more than once; keep every copy so every harness receives them.
 export const CARD_GUIDANCE = ["## Yorozu app", ...MESSAGE_TOOL_HINTS].join("\n");
 

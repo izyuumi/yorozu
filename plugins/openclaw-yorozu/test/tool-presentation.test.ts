@@ -92,7 +92,7 @@ test("registered hook scopes repairs to message tools targeting Yorozu, retainin
   assert.notEqual(send(implicit, { agentId: "bound", sessionKey: `agent:bound:linked:owner:thread:${convId}` }), implicit);
 });
 
-test("prompt hook appends card guidance only to Yorozu sessions, so a replaced system prompt keeps it", () => {
+test("prompt hook returns card guidance as appendSystemContext for Yorozu sessions only", () => {
   const event = { prompt: "Show a table" };
   assert.deepEqual(promptHook(event, ctx), { appendSystemContext: CARD_GUIDANCE });
   assert.deepEqual(promptHook(event, { sessionKey: ctx.sessionKey }), { appendSystemContext: CARD_GUIDANCE });
@@ -104,7 +104,7 @@ test("prompt hook appends card guidance only to Yorozu sessions, so a replaced s
   for (const hint of MESSAGE_TOOL_HINTS) assert.ok(CARD_GUIDANCE.includes(hint));
   assert.match(CARD_GUIDANCE, /`presentation`, never a markdown pipe table/);
   assert.match(CARD_GUIDANCE, /never send tables apply to Signal, not to Yorozu cards/);
-  // OpenClaw: developerInstructions = prependSystemContext + systemPrompt (first hook's wins) + every appendSystemContext.
+  // Records the OpenClaw 2026.9.8 merge order this hook assumes (developerInstructions = prependSystemContext + (first systemPrompt, or the built instructions) + every appendSystemContext). It does not run OpenClaw's merger; isolated-host runs are the evidence for that.
   const replaced = ["# PAIOS Runtime Bridge\nSignal formatting: never send tables.", promptHook(event, ctx)?.appendSystemContext].join("\n\n");
   assert.ok(replaced.includes("## Yorozu app"));
   assert.ok(replaced.endsWith(CARD_GUIDANCE));
