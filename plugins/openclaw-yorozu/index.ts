@@ -53,9 +53,6 @@ export default defineChannelPluginEntry({
       const presentation = prepareToolPresentation(params.presentation);
       return presentation !== params.presentation ? { params: { ...params, presentation } } : undefined;
     });
-    // Register after the tool hook: if OpenClaw refuses this gated prompt hook, table repair still registers.
-    // Another plugin's prompt hook may replace the developer instructions that carry groupSystemPrompt; appendSystemContext survives that.
-    api.on("before_prompt_build", (_event, ctx) => (ownSession(ctx) ? { appendSystemContext: CARD_GUIDANCE } : undefined));
     const admin = { scope: "operator.admin" } as const;
     api.registerGatewayMethod("yorozu.pair.begin", method(beginPairing), admin);
     api.registerGatewayMethod(
@@ -76,5 +73,8 @@ export default defineChannelPluginEntry({
       }),
       admin,
     );
+    // Register last: if OpenClaw throws when it refuses this gated prompt hook, table repair and pairing methods still register.
+    // Another plugin's prompt hook may replace the developer instructions that carry groupSystemPrompt; appendSystemContext survives that.
+    api.on("before_prompt_build", (_event, ctx) => (ownSession(ctx) ? { appendSystemContext: CARD_GUIDANCE } : undefined));
   },
 });
