@@ -4,10 +4,10 @@ The Windows client for Yorozu: a Tauri 2 app with a Rust core (`core`) that owns
 
 ## Install
 
-Every pull request and every merge to `main` that touches this directory or `.github/workflows/windows-installer.yml` builds an unsigned installer.
+Every pull request and every merge to `main` that touches this directory, `.github/workflows/windows-installer.yml` or `scripts/version.sh` builds an unsigned installer.
 
 1. On GitHub, open the pull request's checks or the repository's Actions tab, and pick the newest "Windows installer" run (of the pull request, or of `main`).
-2. Under Artifacts, download `yorozu-windows-<commit>` and unzip it. It holds `Yorozu_0.1.0_x64-setup.exe`. Artifacts are kept for 90 days; "Run workflow" on `main` builds a fresh one at any time. On a pull request build the app's footer shows the first 7 characters of the merge commit GitHub builds, not the head commit in the artifact name.
+2. Under Artifacts, download `yorozu-windows-<commit>` and unzip it. It holds `Yorozu_<version>_x64-setup.exe` (see [Version](#version)). Artifacts are kept for 90 days; "Run workflow" on `main` builds a fresh one at any time. On a pull request build the app's footer shows the first 7 characters of the merge commit GitHub builds, not the head commit in the artifact name.
 3. Run the setup. The installer isn't signed, so Windows SmartScreen stops it: choose "More info", then "Run anyway".
 
 The app needs Windows 10 version 1803 or later and the WebView2 runtime. Windows 11 has the runtime built in; on Windows 10 the setup downloads it if it's missing. The app installs for the current user only, into `%LOCALAPPDATA%\Yorozu`, without asking for administrator rights.
@@ -37,6 +37,12 @@ cd .. && cargo test -p yorozu-windows
 ```
 
 The UI has to be built first: the shell embeds `app/dist` at compile time.
+
+## Version
+
+The app's version is the same as the Mac and iOS apps'. It lives in four places: `app/package.json`, `app/src-tauri/tauri.conf.json`, `Cargo.toml` and `Cargo.lock`; `ci/version.sh` reads, writes and checks them. The installer job stamps the output of `scripts/version.sh` into all four at build time, exactly as the Mac and iOS scripts pass it to xcodebuild, so an installer built from a commit carries the version a Mac or iOS build of that commit gets. Between releases that is the next version, for example 0.15.1 after v0.15.0.
+
+The checked-in files hold the latest stable version. On a pull request the installer job fails when they differ from the latest stable tag; the fix is `bash apps/windows/ci/version.sh set <version>`. Nothing under `scripts/` changes, so this starts no Mac or iOS release.
 
 ## CI isolation
 

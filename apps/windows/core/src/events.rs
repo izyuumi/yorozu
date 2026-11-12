@@ -163,7 +163,7 @@ mod tests {
         let value = serde_json::to_value(&peer).unwrap();
         assert_eq!(
             value,
-            json!({"kind":"peer_info","data":{"protocolMin":3,"protocolMax":3,"app":"0.1.0","name":"語".repeat(64),"capabilities":["unversioned-wire"]}})
+            json!({"kind":"peer_info","data":{"protocolMin":3,"protocolMax":3,"app":crate::VERSION,"name":"語".repeat(64),"capabilities":["unversioned-wire"]}})
         );
         assert_eq!(
             Envelope::decode(&serde_json::to_vec(&value).unwrap()),
