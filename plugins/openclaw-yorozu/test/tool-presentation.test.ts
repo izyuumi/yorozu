@@ -5,15 +5,24 @@ import "./genui-hooks.ts";
 import { host } from "./genui-host.js";
 import { prepareToolPresentation, MAX_BLOCKS, MAX_PRESENTATION_BYTES } from "../src/presentation.ts";
 const { setThreadBase } = await import("../src/sessions.ts");
+const { CARD_GUIDANCE, MESSAGE_TOOL_HINTS } = await import("../src/cards.ts");
 
 const { default: entry } = await import("../index.ts");
 type Params = Record<string, unknown>;
 type Hook = (event: { toolName: string; params: Params }, ctx: { agentId?: string; sessionKey?: string }) => { params: Params } | undefined;
-let hook: Hook;
+type PromptHook = (event: unknown, ctx: { agentId?: string; sessionKey?: string }) => { appendSystemContext: string } | undefined;
+const hooks = new Map<string, unknown>();
+const registrations: string[] = [];
 (entry as unknown as { registerFull(api: unknown): void }).registerFull({
-  on(name: string, handler: Hook) { assert.equal(name, "before_tool_call"); hook = handler; },
-  registerGatewayMethod() {},
+  on(name: string, handler: unknown) { assert.ok(!hooks.has(name)); hooks.set(name, handler); registrations.push(name); },
+  registerGatewayMethod(name: string) { registrations.push(name); },
 });
+assert.deepEqual([...hooks.keys()].sort(), ["before_prompt_build", "before_tool_call"]);
+assert.deepEqual(registrations, [
+  "before_tool_call", "yorozu.pair.begin", "yorozu.devices.list", "yorozu.devices.remove", "before_prompt_build",
+]);
+const hook = hooks.get("before_tool_call") as Hook;
+const promptHook = hooks.get("before_prompt_build") as PromptHook;
 const convId = "11111111-1111-4111-8111-111111111111";
 const ctx = { agentId: "main", sessionKey: `agent:main:yorozu:direct:owner:thread:${convId}` };
 const table = () => ({ type: "table", title: "Balances", headers: ["Who", "Paid"], rows: [["A", 120], ["B", 0]], rowHeaderColumnIndex: 0 });
@@ -85,6 +94,24 @@ test("registered hook scopes repairs to message tools targeting Yorozu, retainin
   assert.equal(JSON.parse(encoded.presentation as string).blocks[0].caption, "Balances");
   setThreadBase("bound", "agent:bound:linked:owner");
   assert.notEqual(send(implicit, { agentId: "bound", sessionKey: `agent:bound:linked:owner:thread:${convId}` }), implicit);
+});
+
+test("prompt hook returns card guidance as appendSystemContext for Yorozu sessions only", () => {
+  const event = { prompt: "Show a table" };
+  assert.deepEqual(promptHook(event, ctx), { appendSystemContext: CARD_GUIDANCE });
+  assert.deepEqual(promptHook(event, { sessionKey: ctx.sessionKey }), { appendSystemContext: CARD_GUIDANCE });
+  for (const context of [
+    {}, { agentId: "main" }, { ...ctx, sessionKey: "agent:main:signal:direct:owner" },
+    { ...ctx, sessionKey: ctx.sessionKey + ":other" }, { ...ctx, sessionKey: "agent:main:telegram:direct:owner:thread:" + convId },
+  ]) assert.equal(promptHook(event, context), undefined);
+  assert.ok(CARD_GUIDANCE.startsWith("## Yorozu app"));
+  for (const hint of MESSAGE_TOOL_HINTS) assert.ok(CARD_GUIDANCE.includes(hint));
+  assert.match(CARD_GUIDANCE, /`presentation`, never a markdown pipe table/);
+  assert.match(CARD_GUIDANCE, /never send tables apply to Signal, not to Yorozu cards/);
+  // Records the OpenClaw 2026.9.8 merge order this hook assumes (developerInstructions = prependSystemContext + (first systemPrompt, or the built instructions) + every appendSystemContext). It does not run OpenClaw's merger; isolated-host runs are the evidence for that.
+  const replaced = ["# PAIOS Runtime Bridge\nSignal formatting: never send tables.", promptHook(event, ctx)?.appendSystemContext].join("\n\n");
+  assert.ok(replaced.includes("## Yorozu app"));
+  assert.ok(replaced.endsWith(CARD_GUIDANCE));
 });
 
 test("message-tool table survives hook, pinned core normalization and wire delivery", async () => {

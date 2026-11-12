@@ -17,10 +17,14 @@ export const MESSAGE_TOOL_HINTS = [
   "- Prefer a card when the user asks to see a card, chart, table or demo; send it in the same turn without asking.",
   "- Put the key facts in the text too; older Yorozu apps show only the text.",
   "- A `table` needs `caption`, `headers` and `rows` (each row as long as `headers`).",
+  "- A Yorozu table or chart must use the message tool's `presentation`, never a markdown pipe table. Workspace or Signal rules that say never send tables apply to Signal, not to Yorozu cards.",
 ];
 
 // OpenClaw's Codex app-server harness never shows agentPrompt.messageToolHints, so every Yorozu turn carries them via conversation.ts supplemental.groupSystemPrompt.
-// Embedded and claude-cli runs see the hints twice; keep both copies so every harness receives them.
+// A before_prompt_build hook that returns `systemPrompt` replaces the developer instructions that carry groupSystemPrompt,
+// so index.ts also appends this via appendSystemContext, which OpenClaw concatenates after any replacement.
+// groupSystemPrompt stays because the plugin cannot tell whether that hook was registered (it needs allowConversationAccess on an untrusted install).
+// Embedded and claude-cli runs see the hints more than once; keep every copy so every harness receives them.
 export const CARD_GUIDANCE = ["## Yorozu app", ...MESSAGE_TOOL_HINTS].join("\n");
 
 const shows = (card: Presentation): boolean => !!card.title || card.blocks.some((block) => block.type !== "divider");
