@@ -113,7 +113,7 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
       else current.run.exit.resolve();
     }
   }
-  async function fixture(t: TestContext, flags: { liveActivity?: boolean; activityTimestamp?: boolean }, state?: "corrupt" | "locked", setupFailure = false, wipedRoom = false) {
+  async function fixture(t: TestContext, flags: { liveActivity?: boolean; activityTimestamp?: boolean }, state?: "corrupt" | "locked", setupFailure = false, slotModel = false) {
     await rm(file, { force: true });
     await rm(`${file}.lock`, { force: true });
     if (state) {
@@ -141,7 +141,10 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     // Opt-in worker storage semantics; existing fixtures retain their original behaviour.
     const pairedRows = new Set<string>();
     const activityTokens = new Map<string, string>();
+    // Pushes the relay sends to APNs, decided at send time; deliveries name the slot token they went to.
     const delivered: HostMessage[] = [];
+    const deliveries: { event: unknown; timestamp: number; token: string }[] = [];
+    const dropped: typeof deliveries = [];
     const connections: Connection[] = [];
     const failures: Error[] = [];
     const receipts: { timestamp: number; persisted: boolean }[] = [];
@@ -174,16 +177,26 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
           if (message.type === "register") {
             socket.send(JSON.stringify({ type: "registered", ...flags }));
             socket.send(JSON.stringify({ type: "phones", count: 1 }));
-          } else if (message.type === "devices" && wipedRoom) {
+          } else if (message.type === "devices" && slotModel) {
             for (const device of message.devices as string[]) pairedRows.add(device);
-          } else if (message.type === "activityToken" && wipedRoom && message.device) {
+          } else if (message.type === "activityToken" && slotModel && message.device) {
             if (message.token === undefined) activityTokens.delete(message.device);
             else if (pairedRows.has(message.device)) activityTokens.set(message.device, message.token);
           } else if (message.type === "ping") socket.send(JSON.stringify({ type: "pong" }));
           else if (message.type === "frame") {
             connection.frames.push(...(message.frames?.map((frame) => frame.payload) ?? (message.payload ? [message.payload] : [])));
           } else if (message.type === "activityPush" && typeof message.timestamp === "number") {
-            if (wipedRoom && message.device && activityTokens.has(message.device)) delivered.push(message);
+            const device = message.device;
+            const token = slotModel && device ? activityTokens.get(device) : undefined;
+            // worker.ts reads the slot on arrival, queues the send, and drops it if the slot changed meanwhile.
+            if (device && token !== undefined) setImmediate(() => {
+              const row = { event: message.event, timestamp: message.timestamp!, token };
+              if (activityTokens.get(device) !== token) { dropped.push(row); return; }
+              delivered.push(message);
+              deliveries.push(row);
+              // A delivered END clears the slot (worker.ts, 2xx on end).
+              if (message.event === "end") activityTokens.delete(device);
+            });
             // Capture at arrival, before any later save could make the assertion pass.
             const data = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : [];
             const rows = Array.isArray(data) ? data : data.records;
@@ -268,7 +281,9 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
       activityTurn(CONV, { kind: "step", steps: 2 });
       return until(() => pushes(c)[0], "bound turn activityPush");
     }
-    return { pairedRows, activityTokens, delivered, ownerRun: run, ownerDispatch: dispatch, connection, phone, pushes, sendReport, turn, stop, start, connect, registered, receipts, failures, deviceKey };
+    // Another build's write to the relay slot.
+    const setSlot = (device: string, token: string) => { activityTokens.set(device, token); };
+    return { pairedRows, activityTokens, delivered, deliveries, dropped, setSlot, ownerRun: run, ownerDispatch: dispatch, connection, phone, pushes, sendReport, turn, stop, start, connect, registered, receipts, failures, deviceKey };
   }
 
   for (const order of ["A", "B"] as const) {
@@ -346,16 +361,72 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     assert.equal(f.delivered.filter((m) => restarted.messages.includes(m)).length, 1, "next Mode H push must be delivered by wiped relay");
   });
 
-  await t.test("LA-2i L4 [design-todo] restored old token cannot overwrite rollback token", {
-    todo: "relay protocol has no generation compare; needs design",
-  }, async (t) => {
+  const T1 = report(true).pushToken!;
+  const activityWire = (c: Connection) => c.messages.filter((m) => m.type === "activityToken" || m.type === "activityPush")
+    .map(({ type, token, event, timestamp }) => type === "activityToken" ? { type, token } : { type, event, timestamp });
+  async function laterStep(steps: number) {
+    const originalNow = Date.now;
+    const nextTime = originalNow() + 15_000;
+    Date.now = () => nextTime;
+    try { activityTurn(CONV, { kind: "step", steps }); await delay(200); } finally { Date.now = originalNow; }
+  }
+
+  await t.test("LA-2k 1-a [behaviour] seeded push is preceded by its own token", async (t) => {
+    const f = await fixture(t, { liveActivity: true, activityTimestamp: true }, undefined, false, true);
+    await f.sendReport(true);
+    await f.turn();
+    await delay(50);
+    assert.deepEqual(activityWire(f.connection), [
+      { type: "activityToken", token: T1 }, // report time
+      { type: "activityToken", token: T1 },
+      { type: "activityPush", event: "update", timestamp: 1_800_000_002 },
+    ]);
+    assert.deepEqual(f.deliveries, [{ event: "update", timestamp: 1_800_000_002, token: T1 }]);
+    assert.equal(f.activityTokens.get(f.deviceKey), T1);
+  });
+
+  await t.test("LA-2k 1-b [behaviour] push after another writer changed the slot goes to its own token", async (t) => {
+    const f = await fixture(t, { liveActivity: true, activityTimestamp: true }, undefined, false, true);
+    await f.sendReport(true);
+    await f.turn();
+    const tx = "99".repeat(32);
+    f.setSlot(f.deviceKey, tx);
+    await laterStep(3);
+    assert.deepEqual(activityWire(f.connection).slice(-2), [
+      { type: "activityToken", token: T1 },
+      { type: "activityPush", event: "update", timestamp: 1_800_000_003 },
+    ]);
+    assert.deepEqual(f.deliveries.at(-1), { event: "update", timestamp: 1_800_000_003, token: T1 });
+    assert.ok(f.deliveries.every((d) => d.token !== tx), "nothing is delivered to the other writer's token");
+    assert.equal(f.activityTokens.get(f.deviceKey), T1);
+  });
+
+  // With 3-b, replaces the old LA-2i L4 test: the replay may overwrite a rollback token (known limit L4-4), but no push reaches it.
+  await t.test("LA-2k 3-a [known limit] roll-forward over a changed slot pushes only to the record's token", async (t) => {
     const f = await fixture(t, { liveActivity: true, activityTimestamp: true }, undefined, false, true);
     await f.sendReport(true);
     await f.stop();
-    const newToken = "ef".repeat(32);
-    f.activityTokens.set(f.deviceKey, newToken);
-    await f.start();
-    assert.equal(f.activityTokens.get(f.deviceKey), newToken, "restored T_old must not overwrite relay T_new");
+    const tMain = "ef".repeat(32);
+    f.setSlot(f.deviceKey, tMain);
+    const restarted = await f.start();
+    assert.deepEqual(restarted.messages.slice(1, 3).map(({ type, token }) => ({ type, token })),
+      [{ type: "devices", token: undefined }, { type: "activityToken", token: T1 }], "replay of the disk token follows the announce");
+    activityTurn(CONV, { kind: "step", steps: 2 });
+    const push = await until(() => f.pushes(restarted)[0], "restored push");
+    await delay(50);
+    const wire = activityWire(restarted);
+    assert.deepEqual(wire[wire.findIndex((m) => m.type === "activityPush") - 1], { type: "activityToken", token: T1 });
+    assert.deepEqual(f.deliveries, [{ event: "update", timestamp: push.timestamp!, token: T1 }]);
+    assert.equal(f.activityTokens.get(f.deviceKey), T1);
+    const tNew = "12".repeat(32);
+    const phone = await f.connect(restarted);
+    await phone.event({ kind: "live_activity", data: { ...report(true), activityId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      requestedAtMs: REQUESTED_AT_MS + 60_000, pushToken: tNew } });
+    await until(() => restarted.messages.find((m) => m.type === "activityToken" && m.token === tNew), "A_new token");
+    activityTurn(CONV, { kind: "step", steps: 3 });
+    await until(() => f.deliveries[1], "A_new push delivered");
+    assert.equal(f.deliveries[1]!.token, tNew);
+    assert.ok(f.deliveries.every((d) => d.token !== tMain), "no push reaches the rollback token");
   });
 
   for (const flags of [{}, { liveActivity: true }, { liveActivity: true, activityTimestamp: true }, { activityTimestamp: true }]) {
@@ -469,11 +540,13 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     await t.test(`(i) ${state} state refuses seeded pushes and never advertises host writer`, async (t) => {
       const f = await fixture(t, { liveActivity: true, activityTimestamp: true }, state);
       assert.equal(f.phone.peer.capabilities.includes("liveActivityHostWriter"), false);
-      await f.sendReport(true);
+      // LA-2k J1: a Mode H report before load is dropped, token included.
+      await f.phone.event({ kind: "live_activity", data: report(true) });
       activityTurn(CONV, { kind: "step", steps: 2 });
       activityTurn(CONV, { kind: "done" });
       await delay(150);
       assert.equal(f.pushes().length, 0);
+      assert.equal(f.connection.messages.filter((m) => m.type === "activityToken").length, 0);
       if (state === "corrupt") assert.equal(readFileSync(file, "utf8"), "{broken");
       assert.equal(f.failures.length, 0);
     });

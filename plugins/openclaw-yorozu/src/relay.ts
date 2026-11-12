@@ -166,6 +166,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     now: () => Date.now(),
     setTimer: (callback, delay) => setTimeout(callback, delay).unref(),
     clearTimer: (timer) => clearTimeout(timer),
+    pairedDevices: async () => (await listDevices()).map((d) => d.signingPub),
   });
 
   await activities.start();

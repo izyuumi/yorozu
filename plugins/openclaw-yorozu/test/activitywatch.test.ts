@@ -2087,3 +2087,407 @@ test("LA-2i M2-seeded [behaviour] tokenGone retains content and resumes above du
   assert.equal(f.store.saves.at(-1)![0]!.activityId, before.activityId);
   assert.equal(f.store.saves.at(-1)![0]!.requestedAtMs, before.requestedAtMs);
 });
+
+// LA-2k: the relay slot as apps/relay/src/worker.ts keeps it. Every device has a p: row here.
+// activityPush reads the slot on arrival, is queued, and is sent only if the slot still holds
+// that token at send time; a delivered END clears the slot.
+type Delivery = { device: string; event: string; timestamp?: number; token?: string };
+function slotRelay() {
+  const slots = new Map<string, string>();
+  const wire: { type: string; device: string; token?: string; event?: string; timestamp?: number }[] = [];
+  const delivered: Delivery[] = [];
+  const dropped: Delivery[] = [];
+  return {
+    slots, wire, delivered, dropped,
+    receive(raw: string) {
+      const message = JSON.parse(raw);
+      wire.push(message);
+      if (message.type === "activityToken") {
+        if (message.token === undefined) slots.delete(message.device); else slots.set(message.device, message.token);
+      } else if (message.type === "activityPush") {
+        const token = slots.get(message.device);
+        const row: Delivery = { device: message.device, event: message.event, timestamp: message.timestamp, token };
+        if (token === undefined) { dropped.push(row); return; }
+        setImmediate(() => {
+          if (slots.get(message.device) !== token) { dropped.push(row); return; }
+          delivered.push(row);
+          if (message.event === "end") slots.delete(message.device);
+        });
+      }
+    },
+  };
+}
+const drain = async () => { for (let i = 0; i < 5; i++) await settle(); };
+const short = (wire: ReturnType<typeof slotRelay>["wire"]) => wire.map((m) => m.type === "activityToken"
+  ? ["token", m.device, m.token] : ["push", m.device, m.event, m.timestamp]);
+const TA = "ab".repeat(32);
+const TB = "cd".repeat(32);
+const TC = "ef".repeat(32);
+const D2 = "deviceSynthetic2";
+const both = { liveActivity: true, activityTimestamp: true };
+// A newer activity on the same device: seed 1_800_000_011.
+const aNew = (pushToken = TB, bound = { jobs: seededReport().jobs, turns: seededReport().turns }): ActivityReport =>
+  ({ ...seededReport(), ...bound, activityId: OTHER, requestedAtMs: 1_800_000_010_500, pushToken });
+const onOther = { jobs: [hNew], turns: { [hNew.token]: OTHER } };
+const tombstoneOf = (activityId: string, requestedAtMs: number, kLast: number) => ({ device: DEVICE, activityId, requestedAtMs, kLast, terminal: true });
+
+function slotFixture(store = memoryStore(), relay = slotRelay(), pairedDevices?: () => Promise<string[]>) {
+  const warnings: string[] = [];
+  const clock = { now: T0 };
+  let connected = false;
+  const watch = fixtureWatch({ store, warn: (message) => warnings.push(message), now: () => clock.now,
+    send: (raw) => { if (connected) relay.receive(raw); },
+    setTimer: () => 0, clearTimer: () => {}, ...(pairedDevices ? { pairedDevices } : {}) });
+  return { watch, store, relay, warnings, clock,
+    up(flags: { liveActivity?: boolean; activityTimestamp?: boolean } = both) { connected = true; return watch.relayRegistered(flags); },
+    down() { connected = false; watch.relayDown(); },
+  };
+}
+async function seeded(relay = slotRelay()) {
+  const f = slotFixture(memoryStore(), relay);
+  await f.watch.start();
+  await f.up();
+  f.watch.report(DEVICE, seededReport());
+  await drain();
+  return f;
+}
+// Holds the next save that writes DEVICE's tombstone (the END reservation), not the turn's record update.
+function holdEnd(f: { store: ReturnType<typeof memoryStore> }) {
+  const save = f.store.save;
+  f.store.save = async function (rows) {
+    if (rows.some((row) => row.device === DEVICE && row.terminal)) { this.save = save; this.hold = true; }
+    return save.call(this, rows);
+  };
+}
+// An END whose tombstone save is held while the relay goes down: saved, not sent.
+async function unsentEnd(f: Awaited<ReturnType<typeof seeded>>) {
+  holdEnd(f);
+  f.watch.turn(CONV, { kind: "done" });
+  await drain();
+  f.down();
+  f.store.release();
+  await drain();
+  const saved = await f.store.load();
+  assert.ok(saved.ok);
+  assert.deepEqual(saved.records.find((row) => row.device === DEVICE), tombstoneOf(CONV, 1_800_000_000_500, 1_800_000_002));
+  assert.deepEqual(f.relay.wire.filter((m) => m.event === "end"), [], "no END while the relay is down");
+}
+
+test("LA-2k 1-c [behaviour] reservation after a failed report save sends the reported token first", async () => {
+  const f = await seeded();
+  const mark = f.relay.wire.length;
+  f.store.fail = true;
+  f.watch.report(DEVICE, aNew());
+  await drain();
+  assert.equal(f.watch.hostWriterReady, false);
+  f.watch.turn(CONV, { kind: "step", steps: 2 });
+  await drain();
+  assert.deepEqual(short(f.relay.wire.slice(mark)), [["token", DEVICE, TB]], "a failed reservation save sends nothing");
+  f.store.fail = false;
+  f.watch.turn(CONV, { kind: "step", steps: 3 });
+  await drain();
+  assert.deepEqual(short(f.relay.wire.slice(mark)), [["token", DEVICE, TB], ["token", DEVICE, TB], ["push", DEVICE, "update", 1_800_000_013]]);
+  assert.deepEqual(f.relay.delivered.at(-1), { device: DEVICE, event: "update", timestamp: 1_800_000_013, token: TB });
+  const saved = await f.store.load();
+  assert.ok(saved.ok);
+  assert.deepEqual(saved.records.map(({ activityId, token, kLast }) => ({ activityId, token, kLast })), [{ activityId: OTHER, token: TB, kLast: 1_800_000_013 }]);
+});
+
+test("LA-2k 1-d [behaviour] END with a never-saved token goes to that token; restart replays nothing", async () => {
+  const f = await seeded();
+  const mark = f.relay.wire.length;
+  f.store.fail = true;
+  f.watch.report(DEVICE, aNew());
+  await drain();
+  f.store.fail = false;
+  f.watch.turn(CONV, { kind: "done" });
+  await drain();
+  assert.deepEqual(short(f.relay.wire.slice(mark)), [["token", DEVICE, TB], ["token", DEVICE, TB], ["push", DEVICE, "end", 1_800_000_012]]);
+  assert.deepEqual(f.relay.delivered.at(-1), { device: DEVICE, event: "end", timestamp: 1_800_000_012, token: TB });
+  assert.deepEqual(await f.store.load(), { ok: true, records: [tombstoneOf(OTHER, 1_800_000_010_500, 1_800_000_012)] });
+  f.down();
+  await f.watch.stop();
+  const g = slotFixture(f.store, f.relay);
+  await g.watch.start();
+  const restart = f.relay.wire.length;
+  await g.up();
+  g.watch.turn(CONV, { kind: "step", steps: 2 });
+  await drain();
+  assert.deepEqual(f.relay.wire.slice(restart), []);
+});
+
+test("LA-2k 1-e [control] END after rotation during its save goes to the rotated token", async () => {
+  const f = await seeded();
+  holdEnd(f);
+  f.watch.turn(CONV, { kind: "done" });
+  await drain();
+  f.watch.report(DEVICE, { ...seededReport(), pushToken: TC });
+  f.store.release();
+  await drain();
+  assert.deepEqual(short(f.relay.wire.slice(-2)), [["token", DEVICE, TC], ["push", DEVICE, "end", 1_800_000_002]]);
+  assert.deepEqual(f.relay.delivered, [{ device: DEVICE, event: "end", timestamp: 1_800_000_002, token: TC }]);
+});
+
+test("LA-2k 2-a [behaviour] unsent END is sent once at the next registration, before the replay", async () => {
+  const f = await seeded();
+  f.watch.report(D2, { ...seededReport(), ...onOther, pushToken: TB });
+  await drain();
+  await unsentEnd(f);
+  const mark = f.relay.wire.length;
+  await f.up();
+  await drain();
+  assert.deepEqual(short(f.relay.wire.slice(mark)), [["token", DEVICE, TA], ["push", DEVICE, "end", 1_800_000_002], ["token", D2, TB]]);
+  assert.deepEqual(f.relay.delivered, [{ device: DEVICE, event: "end", timestamp: 1_800_000_002, token: TA }]);
+  const again = f.relay.wire.length;
+  f.down();
+  await f.up();
+  await drain();
+  assert.deepEqual(short(f.relay.wire.slice(again)), [["token", D2, TB]], "a second registration sends no END");
+});
+
+test("LA-2k 2-b [control] a newer activity saved before the reconnect drops the unsent END", async () => {
+  const f = await seeded();
+  await unsentEnd(f);
+  f.watch.report(DEVICE, aNew(TC, onOther));
+  await drain();
+  const mark = f.relay.wire.length;
+  await f.up();
+  await drain();
+  assert.deepEqual(short(f.relay.wire.slice(mark)), [["token", DEVICE, TC]], "no END for A_old");
+  assert.equal(f.relay.slots.get(DEVICE), TC);
+  f.watch.turn(OTHER, { kind: "step", steps: 2 });
+  await drain();
+  assert.deepEqual(f.relay.delivered, [{ device: DEVICE, event: "update", timestamp: 1_800_000_012, token: TC }]);
+});
+
+test("LA-2k 2-c [control] revoke before the reconnect drops the unsent END", async () => {
+  const f = await seeded();
+  await unsentEnd(f);
+  f.watch.forget(DEVICE, true);
+  const mark = f.relay.wire.length;
+  await f.up();
+  f.down();
+  await f.up();
+  await drain();
+  assert.deepEqual(f.relay.wire.slice(mark), []);
+  assert.deepEqual(f.relay.delivered, []);
+});
+
+test("LA-2k 2-d [behaviour] unsent END waits while a relay flag is off", async () => {
+  const f = await seeded();
+  await unsentEnd(f);
+  const mark = f.relay.wire.length;
+  await f.up({ liveActivity: true });
+  await drain();
+  assert.deepEqual(f.relay.wire.slice(mark), []);
+  f.down();
+  await f.up();
+  await drain();
+  assert.deepEqual(short(f.relay.wire.slice(mark)), [["token", DEVICE, TA], ["push", DEVICE, "end", 1_800_000_002]]);
+  assert.deepEqual(f.relay.delivered, [{ device: DEVICE, event: "end", timestamp: 1_800_000_002, token: TA }]);
+});
+
+test("LA-2k 2-e [control] stop drops unsent ENDs", async () => {
+  const f = await seeded();
+  await unsentEnd(f);
+  await f.watch.stop();
+  await f.watch.start();
+  const mark = f.relay.wire.length;
+  await f.up();
+  await drain();
+  assert.deepEqual(f.relay.wire.slice(mark), []);
+});
+
+test("LA-2k 2-f [behaviour] a later END for the device replaces the earlier one", async () => {
+  const f = await seeded();
+  await unsentEnd(f);
+  f.watch.report(DEVICE, aNew(TC, onOther));
+  await drain();
+  await f.up();
+  await drain();
+  holdEnd(f);
+  f.watch.turn(OTHER, { kind: "done" });
+  await drain();
+  f.down();
+  f.store.release();
+  await drain();
+  const mark = f.relay.wire.length;
+  await f.up();
+  await drain();
+  assert.deepEqual(short(f.relay.wire.slice(mark)), [["token", DEVICE, TC], ["push", DEVICE, "end", 1_800_000_012]]);
+  assert.deepEqual(f.relay.delivered, [{ device: DEVICE, event: "end", timestamp: 1_800_000_012, token: TC }]);
+});
+
+test("LA-2k 3-b [behaviour] crash between report send and save: restart binds pushes to the disk token", async () => {
+  const f = await seeded();
+  f.store.fail = true;
+  f.watch.report(DEVICE, { ...seededReport(), pushToken: TB });
+  await drain();
+  assert.equal(f.relay.slots.get(DEVICE), TB, "the relay leads the file");
+  f.down();
+  f.store.fail = false;
+  await f.watch.stop();
+  const g = slotFixture(f.store, f.relay);
+  await g.watch.start();
+  const mark = f.relay.wire.length;
+  await g.up();
+  assert.deepEqual(short(f.relay.wire.slice(mark)), [["token", DEVICE, TA]]);
+  g.watch.turn(CONV, { kind: "step", steps: 2 });
+  await drain();
+  assert.deepEqual(short(f.relay.wire.slice(mark)), [["token", DEVICE, TA], ["token", DEVICE, TA], ["push", DEVICE, "update", 1_800_000_002]]);
+  assert.deepEqual(f.relay.delivered.at(-1), { device: DEVICE, event: "update", timestamp: 1_800_000_002, token: TA });
+});
+
+// J1: the disk holds A_old (TA) for DEVICE; the watch is registered and before load in one of two states.
+const DROPPED = "yorozu: Live Activity report dropped before state load";
+async function beforeLoad(state: "in flight" | "lock failed", pairedDevices?: () => Promise<string[]>) {
+  const seed = await seeded();
+  seed.down();
+  await seed.watch.stop();
+  const { store, relay } = seed;
+  let acquires = 0;
+  let open!: () => void;
+  const gate = new Promise<void>((resolve) => { open = resolve; });
+  store.acquire = async () => {
+    if (++acquires === 1 && state === "in flight") await gate;
+    // A failed attempt at start and at the first registration's retry.
+    return state === "in flight" || acquires > 2;
+  };
+  const f = slotFixture(store, relay, pairedDevices);
+  const mark = relay.wire.length;
+  const starting = f.watch.start();
+  const registering = state === "in flight" ? f.up() : starting.then(() => f.up());
+  if (state === "lock failed") await registering;
+  await drain();
+  assert.equal(f.watch.hostWriterReady, false);
+  return { ...f, mark,
+    async load() {
+      if (state === "in flight") { open(); await Promise.all([starting, registering]); } else await f.up();
+      await drain();
+    },
+    async stopBeforeLoad() { const stopping = f.watch.stop(); open(); await Promise.all([stopping, starting, registering]); },
+  };
+}
+const liveA = { ok: true, records: [{ device: DEVICE, activityId: CONV, requestedAtMs: 1_800_000_000_500, kLast: 1_800_000_001, terminal: false,
+  token: TA, bindings: seededReport().turns, rows: cleanJobs(seededReport().jobs), sent: cleanJobs(seededReport().jobs) }] };
+const tombA = { ok: true, records: [tombstoneOf(CONV, 1_800_000_000_500, 1_800_000_001)] };
+const legacyReport = () => ({ ...report(), pushToken: TC });
+
+for (const state of ["in flight", "lock failed"] as const) {
+  test(`LA-2k 4-a (${state}) [behaviour] Mode H report before load is dropped; re-report after load is delivered`, async () => {
+    const f = await beforeLoad(state);
+    assert.deepEqual(await f.store.load(), liveA);
+    f.watch.report(DEVICE, aNew());
+    f.watch.report(DEVICE, { ...aNew(), pushToken: undefined });
+    await drain();
+    assert.deepEqual(f.relay.wire.slice(f.mark), [], "no token, no push");
+    assert.deepEqual(f.warnings.filter((w) => w === DROPPED), [DROPPED], "one warning per before-load period");
+    const saves = f.store.saves.length;
+    await f.load();
+    assert.equal(f.store.saves.length, saves);
+    assert.deepEqual(await f.store.load(), liveA);
+    assert.deepEqual(short(f.relay.wire.slice(f.mark)), [["token", DEVICE, TA]]);
+    f.watch.report(DEVICE, aNew());
+    f.watch.turn(CONV, { kind: "step", steps: 2 });
+    await drain();
+    assert.deepEqual(f.relay.delivered.at(-1), { device: DEVICE, event: "update", timestamp: 1_800_000_012, token: TB });
+  });
+
+  test(`LA-2k 4-b (${state}) [behaviour] revoke before load tombstones the loaded record`, async () => {
+    const f = await beforeLoad(state);
+    f.watch.forget(DEVICE, true);
+    assert.deepEqual(f.relay.wire.slice(f.mark), [{ type: "activityToken", device: DEVICE }], "relay revoke stays immediate");
+    await f.load();
+    assert.deepEqual(await f.store.load(), tombA);
+    f.watch.turn(CONV, { kind: "step", steps: 2 });
+    await drain();
+    assert.deepEqual(f.relay.wire.slice(f.mark), [{ type: "activityToken", device: DEVICE }], "no replay, no seeded push");
+  });
+
+  for (const order of ["legacy", "Mode H then legacy", "legacy then Mode H"] as const) {
+    const id = { legacy: "4-c", "Mode H then legacy": "4-d", "legacy then Mode H": "4-e" }[order];
+    test(`LA-2k ${id} (${state}) [behaviour] ${order} report before load keeps the legacy watch and tombstones Mode H`, async () => {
+      const f = await beforeLoad(state);
+      if (order === "Mode H then legacy") f.watch.report(DEVICE, aNew());
+      f.watch.report(DEVICE, legacyReport());
+      if (order === "legacy then Mode H") f.watch.report(DEVICE, aNew());
+      assert.deepEqual(short(f.relay.wire.slice(f.mark)), [["token", DEVICE, TC]], "legacy token is immediate");
+      await f.load();
+      assert.deepEqual(await f.store.load(), tombA);
+      f.watch.turn(CONV, { kind: "step", steps: 2 });
+      await drain();
+      assert.deepEqual(short(f.relay.wire.slice(f.mark)), [["token", DEVICE, TC], ["push", DEVICE, "update", undefined]], "legacy push, no replay");
+      assert.deepEqual(f.relay.delivered, [{ device: DEVICE, event: "update", timestamp: undefined, token: TC }]);
+    });
+  }
+
+  test(`LA-2k 4-f (${state}) [behaviour] revoke across a restart: the device list tombstones the record`, async () => {
+    const paired = async () => ["deviceOther"];
+    const f = await beforeLoad(state, paired);
+    f.watch.forget(DEVICE, true);
+    await f.stopBeforeLoad();
+    assert.deepEqual(await f.store.load(), liveA, "the mark died with the process");
+    const g = slotFixture(f.store, f.relay, paired);
+    await g.watch.start();
+    const mark = f.relay.wire.length;
+    await g.up();
+    g.watch.turn(CONV, { kind: "step", steps: 2 });
+    await drain();
+    assert.equal(g.watch.hostWriterReady, true);
+    assert.deepEqual(await f.store.load(), tombA);
+    assert.deepEqual(f.relay.wire.slice(mark), [], "no watch, no replay");
+  });
+
+  test(`LA-2k 4-g (${state}) [behaviour] unreadable device list keeps Mode H off until the next registration`, async () => {
+    let readable = false;
+    const f = await beforeLoad(state, async () => {
+      if (!readable) throw Object.assign(new Error("synthetic list failure"), { code: "EIO" });
+      return [DEVICE];
+    });
+    await f.load();
+    assert.equal(f.watch.hostWriterReady, false);
+    assert.ok(f.warnings.includes("yorozu: Live Activity paired-device list unreadable; host writer stays off until the next relay registration"));
+    f.watch.report(DEVICE, aNew());
+    f.watch.report(D2, { ...report(), turns: { [TOKEN]: OTHER }, pushToken: TC });
+    f.watch.turn(OTHER, { kind: "step", steps: 2 });
+    f.watch.turn(CONV, { kind: "step", steps: 2 });
+    await drain();
+    assert.deepEqual(short(f.relay.wire.slice(f.mark)), [["token", D2, TC], ["push", D2, "update", undefined]], "legacy works, Mode H off");
+    readable = true;
+    const mark = f.relay.wire.length;
+    await f.up();
+    await drain();
+    assert.equal(f.watch.hostWriterReady, true);
+    assert.deepEqual(short(f.relay.wire.slice(mark)), [["token", DEVICE, TA], ["token", DEVICE, TA], ["push", DEVICE, "update", 1_800_000_002]], "load completes; replay, then the held change");
+  });
+
+  test(`LA-2k 4-g file (${state}) [behaviour] failed file load drops Mode H reports; legacy works`, async () => {
+    const f = await beforeLoad(state);
+    f.store.unavailable = true;
+    await f.load();
+    f.watch.report(DEVICE, aNew());
+    f.watch.report(D2, { ...report(), turns: { [TOKEN]: OTHER }, pushToken: TC });
+    f.watch.turn(OTHER, { kind: "step", steps: 2 });
+    await drain();
+    assert.equal(f.watch.hostWriterReady, false);
+    assert.deepEqual(short(f.relay.wire.slice(f.mark)), [["token", D2, TC], ["push", D2, "update", undefined]]);
+  });
+}
+
+test("LA-2k D5 [behaviour] failed restore save degrades; a fresh Mode H report is admitted", async () => {
+  const f = await beforeLoad("in flight");
+  f.watch.forget(DEVICE, true);
+  f.store.fail = true;
+  await f.load();
+  f.store.fail = false;
+  assert.equal(f.watch.hostWriterReady, false);
+  assert.match(f.warnings.join("\n"), /reconcile restored owners.*ENOSPC/);
+  f.watch.report(D2, { ...seededReport(), ...onOther, pushToken: TB });
+  f.watch.turn(OTHER, { kind: "step", steps: 2 });
+  await drain();
+  assert.deepEqual(f.relay.delivered, [{ device: D2, event: "update", timestamp: 1_800_000_002, token: TB }]);
+  assert.equal(f.watch.hostWriterReady, true);
+  const saved = await f.store.load();
+  assert.ok(saved.ok);
+  assert.deepEqual(saved.records.find((row) => row.device === DEVICE), tombA.records[0], "later saves rewrite the whole map");
+});

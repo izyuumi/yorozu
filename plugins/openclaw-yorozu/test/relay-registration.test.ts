@@ -274,7 +274,9 @@ test("LA-2i L5 [behaviour] legacy report and step push during held seeded restor
           const seededConv = "22222222-2222-4222-8222-222222222222";
           const job = "AAAAAAAAAAAAAAAA";
           const jobs = [{ token: job, kind: "turn" as const, state: "running" as const, steps: 1, startedAt: now }];
-          owner.stores.set("devices", new Map([[deviceKey, { signingPub: deviceKey, staticPub: b64u(device.static.publicKey), pairedAt: now }]]));
+          // The seeded record's device is paired too: load tombstones records of unlisted devices.
+          owner.stores.set("devices", new Map([[deviceKey, { signingPub: deviceKey, staticPub: b64u(device.static.publicKey), pairedAt: now }],
+            [seededKey, { signingPub: seededKey, staticPub: b64u(x25519Keypair().publicKey), pairedAt: now }]]));
           owner.lookups.set("L5-devices-read", async () => {
             if (connected && window === "W1 devices read") { readHeld = true; await readGate; }
           });

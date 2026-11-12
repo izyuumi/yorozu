@@ -4,9 +4,14 @@ import { applyTurn, cleanJobs, ENDED_LIMIT, holdFor, plan, tidy, type ActivityRe
 type Lifetime = { kind: "legacy" } | { kind: "seeded" | "ended"; record: ActivityRecord };
 type Watch<Timer> = { lifetime: Lifetime; jobs: WireJob[]; sent: WireJob[]; turns: Record<string, string>; ended: string[]; replied?: string[]; capacityWarned?: boolean; pushedAt?: number; timer?: Timer };
 type StoreHealth = { kind: "ready" } | { kind: "degraded" | "unavailable"; reason: string };
+type Push = NonNullable<ReturnType<typeof plan>>;
 const LOCKED = "another host holds the Live Activity state";
+const tombstone = (record: ActivityRecord): ActivityRecord =>
+  ({ device: record.device, activityId: record.activityId, requestedAtMs: record.requestedAtMs, kLast: record.kLast, terminal: true });
 type Options<Timer> = {
   store: ActivityStorage;
+  // The same paired-device list the relay allowlist announces; unlisted records are tombstoned at load.
+  pairedDevices?: () => Promise<string[]>;
   liveTurn?: (convId: string) => Readonly<{ steps: number; startedAt: number }> | undefined;
   warn: (message: string) => void;
   send: (raw: string) => void;
@@ -32,6 +37,11 @@ export class ActivityWatch<Timer> {
   private restore?: Promise<void>;
   private stopped = false;
   private activityTimestamp = false;
+  // A saved END whose send check failed; sent once at the next registration while its tombstone stands.
+  private unsentEnd = new Map<string, { record: ActivityRecord; token: string; push: Push; k: number }>();
+  // Forgets before load; applied to the loaded records instead of the empty pre-load map.
+  private forgottenBeforeLoad = new Set<string>();
+  private dropWarned = false;
   liveActivity = false;
 
   constructor(options: Options<Timer>) { this.options = options; }
@@ -58,6 +68,19 @@ export class ActivityWatch<Timer> {
         this.options.warn(loaded.reason);
         return;
       }
+      let paired: Set<string> | undefined;
+      if (this.options.pairedDevices) {
+        try { paired = new Set(await this.options.pairedDevices()); } catch {
+          if (!this.stopped) this.options.warn("yorozu: Live Activity paired-device list unreadable; host writer stays off until the next relay registration");
+          await this.options.store.release();
+          if (this.stopped) return;
+          this.health = { kind: "unavailable", reason: "Live Activity paired-device list unreadable" };
+          // The next relayRegistered() retries the whole restore.
+          this.lockBlocked = true;
+          return;
+        }
+        if (this.stopped) { await this.options.store.release(); return; }
+      }
       this.records = new Map(loaded.records.map((record) => [record.device, { ...record }]));
       for (const [device, watch] of this.activities) {
         if (watch.lifetime.kind !== "legacy") {
@@ -67,7 +90,12 @@ export class ActivityWatch<Timer> {
       }
       let reconciled = false;
       for (const record of this.records.values()) {
-        if (record.terminal) continue;
+        if (record.terminal || (!this.forgottenBeforeLoad.has(record.device) && (!paired || paired.has(record.device)))) continue;
+        this.records.set(record.device, tombstone(record));
+        reconciled = true;
+      }
+      for (const record of this.records.values()) {
+        if (record.terminal || this.activities.get(record.device)?.lifetime.kind === "legacy") continue;
         const watch: Watch<Timer> = {
           lifetime: { kind: "seeded", record }, jobs: cleanJobs(record.rows!),
           sent: cleanJobs(record.sent!), turns: { ...record.bindings }, ended: [...(record.ended ?? [])],
@@ -87,8 +115,11 @@ export class ActivityWatch<Timer> {
         this.activities.set(record.device, watch);
       }
       this.health = { kind: "ready" };
+      this.dropWarned = false;
+      this.forgottenBeforeLoad.clear();
       if (reconciled) {
-        await this.write(() => this.options.store.save([...this.records.values()]), "(reconcile restored owners); nothing sent");
+        // A failure degrades through write(); the load itself stands.
+        await this.write(() => this.options.store.save([...this.records.values()]), "(reconcile restored owners); nothing sent").catch(() => {});
       }
     } catch (error) {
       this.health = { kind: "unavailable", reason: `Live Activity state could not be loaded (${(error as NodeJS.ErrnoException)?.code ?? "UNKNOWN"})` };
@@ -103,6 +134,7 @@ export class ActivityWatch<Timer> {
     await this.restore;
     await Promise.all(this.queues.values());
     await this.writes;
+    this.unsentEnd.clear();
     await this.options.store.release();
     this.health = { kind: "unavailable", reason: "Live Activity watch stopped" };
   }
@@ -131,6 +163,12 @@ export class ActivityWatch<Timer> {
     if (this.restore) await this.restore;
     else if (this.health.kind === "unavailable" && this.lockBlocked) await this.start();
     if (this.stopped || generation !== this.generation) return;
+    if (this.liveActivity && this.activityTimestamp) {
+      for (const [device, { record, token, push, k }] of this.unsentEnd) {
+        this.unsentEnd.delete(device);
+        if (this.records.get(device) === record) this.sendPush(device, token, { ...push, timestamp: k });
+      }
+    }
     for (const [device, watch] of this.activities) {
       if (this.stopped || generation !== this.generation) return;
       if (watch.lifetime.kind === "seeded" && !watch.lifetime.record.terminal && watch.lifetime.record.token) {
@@ -246,9 +284,12 @@ export class ActivityWatch<Timer> {
     this.options.clearTimer(watch?.timer);
     const record = this.records.get(deviceKey);
     this.activities.delete(deviceKey);
+    this.unsentEnd.delete(deviceKey);
+    // Before load the record map is not the file's; the load applies the mark.
+    if (this.health.kind === "unavailable") this.forgottenBeforeLoad.add(deviceKey);
     // Revocation retains the redacted ordering tombstone.
-    if (record && !record.terminal) {
-      this.records.set(deviceKey, { device: record.device, activityId: record.activityId, requestedAtMs: record.requestedAtMs, kLast: record.kLast, terminal: true });
+    else if (record && !record.terminal) {
+      this.records.set(deviceKey, tombstone(record));
       this.persist();
     }
     if (tellRelay) this.options.send(JSON.stringify({ type: "activityToken", device: deviceKey }));
@@ -310,7 +351,7 @@ export class ActivityWatch<Timer> {
     const next = plan(watch.sent, jobs, now);
     if (!next || this.hold(deviceKey, watch, next.priority, now)) return;
     let saved = false;
-    let endToken = false;
+    let endToken: string | undefined;
     let k = 0;
     const failures = this.failures;
     await this.write(async () => {
@@ -318,12 +359,13 @@ export class ActivityWatch<Timer> {
       k = record.kLast + 1;
       if (!Number.isSafeInteger(k)) return;
       const reserved: ActivityRecord = next.event === "end"
-        ? { device: record.device, activityId: record.activityId, requestedAtMs: record.requestedAtMs, kLast: k, terminal: true }
+        ? tombstone({ ...record, kLast: k })
         : { ...record, kLast: k, sent: jobs };
       // Burn before awaiting: a throw may happen after the file's rename.
       record.kLast = k;
       await this.options.store.save([...this.records.values()].map((row) => ({ ...(row === record ? reserved : row) })));
-      endToken = !!record.token;
+      // END goes to the activity's latest token, even one rotated during the save.
+      endToken = record.token;
       record.terminal = reserved.terminal;
       if (record.terminal) {
         delete record.token;
@@ -349,14 +391,35 @@ export class ActivityWatch<Timer> {
       current.ended = [];
       current.replied = [];
     }
-    if ((record.terminal ? !endToken : current !== watch || record.token !== token) || !this.hostWriterReady) return;
-    this.options.send(JSON.stringify({ type: "activityPush", device: deviceKey, ...next, timestamp: k }));
-    if (!record.terminal) watch.sent = jobs;
+    if (record.terminal) {
+      if (!endToken) return;
+      if (!this.hostWriterReady) {
+        if (!this.stopped) this.unsentEnd.set(deviceKey, { record, token: endToken, push: next, k });
+        return;
+      }
+      this.sendPush(deviceKey, endToken, { ...next, timestamp: k });
+    } else {
+      if (current !== watch || record.token !== token || !this.hostWriterReady) return;
+      this.sendPush(deviceKey, token, { ...next, timestamp: k });
+      watch.sent = jobs;
+    }
     watch.pushedAt = now;
+  }
+
+  // The token right before the push binds it to this record, whatever the relay slot held (I1).
+  private sendPush(deviceKey: string, token: string, push: Push & { timestamp: number }): void {
+    this.options.send(JSON.stringify({ type: "activityToken", device: deviceKey, token }));
+    this.options.send(JSON.stringify({ type: "activityPush", device: deviceKey, ...push }));
   }
 
   report(deviceKey: string, report: ActivityReport): void {
     if (this.stopped) return;
+    // A Mode H report before load would be discarded by the swap; the app re-reports.
+    if (this.health.kind === "unavailable" && report.activityId !== undefined && report.requestedAtMs !== undefined) {
+      if (!this.dropWarned) this.options.warn("yorozu: Live Activity report dropped before state load");
+      this.dropWarned = true;
+      return;
+    }
     const stored = this.records.get(deviceKey);
     if (!this.liveActivity && !stored) return;
     const old = this.activities.get(deviceKey);
@@ -385,6 +448,8 @@ export class ActivityWatch<Timer> {
       if (report.pushToken) record.kLast = Math.max(record.kLast, seed);
       if (report.pushToken) record.token = report.pushToken;
       else delete record.token;
+      // An unsent END belongs to the tombstone this record replaces.
+      if (record !== stored) this.unsentEnd.delete(deviceKey);
       this.records.set(deviceKey, record);
       this.activities.set(deviceKey, watch);
       this.persist();
