@@ -1,0 +1,2 @@
+# Bash scripts keep LF on a default Git for Windows checkout (core.autocrlf true), so `bash ci/version.sh` runs.
+*.sh text eol=lf

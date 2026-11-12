@@ -13,7 +13,21 @@ function Invoke-Native([scriptblock]$Command) {
     }
 }
 
-# Starts the app with --smoke and requires exit code 0 and "ready 0.1.0" in the file.
+# The version the built app must carry. In CI the stamp step exports YOROZU_VERSION (scripts/version.sh
+# output), independent of the files it wrote; a local run takes it from tauri.conf.json. Either way
+# tauri.conf.json and package.json must hold it (ci/version.sh keeps the four version files in step).
+# The installer name, the product version and the smoke checks all use it.
+$tauriVersion = (Get-Content -Raw 'app\src-tauri\tauri.conf.json' | ConvertFrom-Json).version
+$packageVersion = (Get-Content -Raw 'app\package.json' | ConvertFrom-Json).version
+$version = if ($env:YOROZU_VERSION) { $env:YOROZU_VERSION } else { $tauriVersion }
+foreach ($place in @(@('app\src-tauri\tauri.conf.json', $tauriVersion), @('app\package.json', $packageVersion))) {
+    if ($place[1] -ne $version) {
+        throw "$($place[0]) has version '$($place[1])', not $version; run: bash apps/windows/ci/version.sh set $version"
+    }
+}
+Write-Host "version $version"
+
+# Starts the app with --smoke and requires exit code 0 and "ready <version>" in the file.
 function Test-Smoke([string]$Exe, [string]$File) {
     Remove-Item $File -ErrorAction SilentlyContinue
     $p = Start-Process $Exe -ArgumentList '--smoke', "`"$File`"" -Wait -PassThru
@@ -21,13 +35,13 @@ function Test-Smoke([string]$Exe, [string]$File) {
         throw "$Exe --smoke exited with code $($p.ExitCode)"
     }
     $text = (Get-Content -Raw $File).Trim()
-    if ($text -ne 'ready 0.1.0') {
-        throw "$Exe --smoke wrote '$text', not 'ready 0.1.0'"
+    if ($text -ne "ready $version") {
+        throw "$Exe --smoke wrote '$text', not 'ready $version'"
     }
 }
 
 $temp = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
-$setup = 'target\release\bundle\nsis\Yorozu_0.1.0_x64-setup.exe'
+$setup = "target\release\bundle\nsis\Yorozu_${version}_x64-setup.exe"
 
 Write-Host '== 1. UI'
 Push-Location app
@@ -62,10 +76,16 @@ if (-not (Test-Path $setup -PathType Leaf)) {
     throw "$setup was not built"
 }
 
-Write-Host '== 6. smoke run of the built app'
+Write-Host '== 6. the built app carries the version'
+$product = (Get-Item 'target\release\yorozu.exe').VersionInfo.ProductVersion
+if ($product -ne $version -and $product -ne "$version.0") {
+    throw "target\release\yorozu.exe has product version '$product', not '$version'"
+}
+
+Write-Host '== 7. smoke run of the built app'
 Test-Smoke 'target\release\yorozu.exe' (Join-Path $temp 'smoke.txt')
 
-Write-Host '== 7. install, then smoke run of the installed app'
+Write-Host '== 8. install, then smoke run of the installed app'
 $p = Start-Process $setup -ArgumentList '/S' -Wait -PassThru
 if ($p.ExitCode -ne 0) {
     throw "the installer exited with code $($p.ExitCode)"

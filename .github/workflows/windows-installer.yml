@@ -1,13 +1,14 @@
 name: Windows installer
 
 # Builds, tests and installs the Windows app, then uploads the unsigned NSIS installer.
+# The installer carries the shared version from scripts/version.sh, as the Mac and iOS builds do.
 # apps/windows/README.md says how to download it.
 on:
   pull_request:
-    paths: ['apps/windows/**', '.github/workflows/windows-installer.yml']
+    paths: ['apps/windows/**', '.github/workflows/windows-installer.yml', 'scripts/version.sh']
   push:
     branches: [main]
-    paths: ['apps/windows/**', '.github/workflows/windows-installer.yml']
+    paths: ['apps/windows/**', '.github/workflows/windows-installer.yml', 'scripts/version.sh']
   workflow_dispatch:
 
 permissions:
@@ -23,7 +24,11 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
+      # The bash version scripts and scripts/version.sh must keep LF on the Windows runner.
+      - run: git config --global core.autocrlf false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # version.sh needs the tags
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           package_json_file: apps/windows/app/package.json
@@ -42,11 +47,32 @@ jobs:
             apps/windows/target
           key: windows-installer-${{ runner.os }}-${{ hashFiles('apps/windows/Cargo.lock', 'apps/windows/rust-toolchain.toml') }}
           restore-keys: windows-installer-${{ runner.os }}-
+      # A warning only: the build stamps the shared version anyway, so stale checked-in files never fail the job.
+      - name: Checked-in Windows version vs the latest stable release
+        shell: bash
+        run: |
+          warn() { m=${1//'%'/%25}; m=${m//$'\r'/%0D}; echo "::warning title=Windows version::${m//$'\n'/%0A}"; }
+          if ! stable=$(bash apps/windows/ci/version.sh stable 2>&1); then
+            warn "$stable"
+          elif ! out=$(bash apps/windows/ci/version.sh check "$stable" 2>&1); then
+            warn "$out"
+          fi
+          exit 0
+      - name: Stamp the shared version
+        id: version
+        shell: bash
+        run: |
+          v=$(bash apps/windows/ci/version.sh shared)
+          bash apps/windows/ci/version.sh set "$v"
+          bash apps/windows/ci/version.sh check "$v"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "YOROZU_VERSION=$v" >> "$GITHUB_ENV" # app.ps1 expects the built app to carry it
+          echo "shared version: $v"
       - shell: pwsh
         run: ./apps/windows/ci/app.ps1
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: yorozu-windows-${{ github.event.pull_request.head.sha || github.sha }}
-          path: apps/windows/target/release/bundle/nsis/Yorozu_0.1.0_x64-setup.exe
+          path: apps/windows/target/release/bundle/nsis/Yorozu_${{ steps.version.outputs.version }}_x64-setup.exe
           if-no-files-found: error
           retention-days: 90

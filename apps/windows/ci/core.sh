@@ -44,3 +44,9 @@ node --test --test-timeout=60000 conformance/host/*.test.ts
 
 echo "== commit-type tests"
 bash ci/commit-type.test.sh
+
+echo "== version tests"
+bash ci/version.test.sh
+
+echo "== version files agree"
+bash ci/version.sh get

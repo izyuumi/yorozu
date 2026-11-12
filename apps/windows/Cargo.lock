@@ -5280,7 +5280,7 @@ dependencies = [
 
 [[package]]
 name = "yorozu-core"
-version = "0.1.0"
+version = "0.15.0"
 dependencies = [
  "base64 0.23.1",
  "chacha20poly1305",
@@ -5302,7 +5302,7 @@ dependencies = [
 
 [[package]]
 name = "yorozu-probe"
-version = "0.1.0"
+version = "0.15.0"
 dependencies = [
  "serde_json",
  "tokio",
@@ -5311,7 +5311,7 @@ dependencies = [
 
 [[package]]
 name = "yorozu-windows"
-version = "0.1.0"
+version = "0.15.0"
 dependencies = [
  "serde_json",
  "tauri",
