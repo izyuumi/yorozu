@@ -2287,18 +2287,38 @@ test("LA-2k 2-d [behaviour] unsent END waits while a relay flag is off", async (
   assert.deepEqual(f.relay.delivered, [{ device: DEVICE, event: "end", timestamp: 1_800_000_002, token: TA }]);
 });
 
-test("LA-2k 2-e [control] stop drops unsent ENDs", async () => {
-  const f = await seeded();
-  await unsentEnd(f);
-  await f.watch.stop();
-  await f.watch.start();
-  const mark = f.relay.wire.length;
-  await f.up();
-  await drain();
-  assert.deepEqual(f.relay.wire.slice(mark), []);
+test("LA-2k 2-e [behaviour] stop drops unsent ENDs, also across a lock-blocked restart", async (t) => {
+  for (const saving of [false, true]) {
+    for (const locked of [false, true]) {
+      await t.test(`${saving ? "held" : "saved"} END; ${locked ? "lock-blocked" : "successful"} restart`, async () => {
+        const f = await seeded();
+        if (saving) {
+          holdEnd(f);
+          f.watch.turn(CONV, { kind: "done" });
+          await drain();
+          const saved = await f.store.load();
+          assert.ok(saved.ok);
+          assert.equal(saved.records.find((row) => row.device === DEVICE)?.terminal, false, "END tombstone save has not completed");
+          const stopping = f.watch.stop();
+          f.store.release();
+          await stopping;
+        } else {
+          await unsentEnd(f);
+          await f.watch.stop();
+        }
+        if (locked) f.store.acquire = async () => false;
+        await f.watch.start();
+        const mark = f.relay.wire.length;
+        await f.up(both);
+        await drain();
+        assert.equal(f.watch.hostWriterReady, !locked);
+        assert.deepEqual(f.relay.wire.slice(mark), [], "no END or activityToken after stop");
+      });
+    }
+  }
 });
 
-test("LA-2k 2-f [behaviour] a later END for the device replaces the earlier one", async () => {
+test("LA-2k 2-f [behaviour] unsent END of a newer activity is sent with its own token", async () => {
   const f = await seeded();
   await unsentEnd(f);
   f.watch.report(DEVICE, aNew(TC, onOther));
@@ -2444,6 +2464,8 @@ for (const state of ["in flight", "lock failed"] as const) {
       if (!readable) throw Object.assign(new Error("synthetic list failure"), { code: "EIO" });
       return [DEVICE];
     });
+    f.watch.forget(DEVICE, true);
+    const revoked = f.relay.wire.length;
     await f.load();
     assert.equal(f.watch.hostWriterReady, false);
     assert.ok(f.warnings.includes("yorozu: Live Activity paired-device list unreadable; host writer stays off until the next relay registration"));
@@ -2452,13 +2474,14 @@ for (const state of ["in flight", "lock failed"] as const) {
     f.watch.turn(OTHER, { kind: "step", steps: 2 });
     f.watch.turn(CONV, { kind: "step", steps: 2 });
     await drain();
-    assert.deepEqual(short(f.relay.wire.slice(f.mark)), [["token", D2, TC], ["push", D2, "update", undefined]], "legacy works, Mode H off");
+    assert.deepEqual(short(f.relay.wire.slice(revoked)), [["token", D2, TC], ["push", D2, "update", undefined]], "legacy works, Mode H off");
     readable = true;
     const mark = f.relay.wire.length;
     await f.up();
     await drain();
     assert.equal(f.watch.hostWriterReady, true);
-    assert.deepEqual(short(f.relay.wire.slice(mark)), [["token", DEVICE, TA], ["token", DEVICE, TA], ["push", DEVICE, "update", 1_800_000_002]], "load completes; replay, then the held change");
+    assert.deepEqual(await f.store.load(), tombA, "revoke mark survives the failed device-list read");
+    assert.deepEqual(f.relay.wire.slice(mark), [], "revoked device has no replay or held push");
   });
 
   test(`LA-2k 4-g file (${state}) [behaviour] failed file load drops Mode H reports; legacy works`, async () => {
