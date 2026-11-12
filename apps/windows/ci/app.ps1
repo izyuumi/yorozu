@@ -13,11 +13,17 @@ function Invoke-Native([scriptblock]$Command) {
     }
 }
 
-# The app's version (ci/version.sh keeps the four version files in step).
-$version = (Get-Content -Raw 'app\src-tauri\tauri.conf.json' | ConvertFrom-Json).version
+# The version the built app must carry. In CI the stamp step exports YOROZU_VERSION (scripts/version.sh
+# output), independent of the files it wrote; a local run takes it from tauri.conf.json. Either way
+# tauri.conf.json and package.json must hold it (ci/version.sh keeps the four version files in step).
+# The installer name, the product version and the smoke checks all use it.
+$tauriVersion = (Get-Content -Raw 'app\src-tauri\tauri.conf.json' | ConvertFrom-Json).version
 $packageVersion = (Get-Content -Raw 'app\package.json' | ConvertFrom-Json).version
-if ($packageVersion -ne $version) {
-    throw "app\package.json has version $packageVersion, tauri.conf.json $version; run: bash apps/windows/ci/version.sh set <version>"
+$version = if ($env:YOROZU_VERSION) { $env:YOROZU_VERSION } else { $tauriVersion }
+foreach ($place in @(@('app\src-tauri\tauri.conf.json', $tauriVersion), @('app\package.json', $packageVersion))) {
+    if ($place[1] -ne $version) {
+        throw "$($place[0]) has version '$($place[1])', not $version; run: bash apps/windows/ci/version.sh set $version"
+    }
 }
 Write-Host "version $version"
 

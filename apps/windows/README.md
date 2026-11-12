@@ -40,13 +40,15 @@ The UI has to be built first: the shell embeds `app/dist` at compile time.
 
 ## Version
 
-The app's version is the same as the Mac and iOS apps'. It lives in four places: `app/package.json`, `app/src-tauri/tauri.conf.json`, `Cargo.toml` and `Cargo.lock`; `ci/version.sh` reads, writes and checks them. The installer job stamps the output of `scripts/version.sh` into all four at build time, exactly as the Mac and iOS scripts pass it to xcodebuild, so an installer built from a commit carries the version a Mac or iOS build of that commit gets. Between releases that is the next version, for example 0.15.1 after v0.15.0.
+The app's version is the same as the Mac and iOS apps'. It lives in four places: `app/package.json`, `app/src-tauri/tauri.conf.json`, `Cargo.toml` and `Cargo.lock`; `ci/version.sh` reads, writes and checks them. The installer job stamps the output of `scripts/version.sh` into all four at build time, as the Mac and iOS scripts pass it to xcodebuild, so an installer built from a commit carries the version a Mac beta of the same commit would get. Between releases that is the next version, for example 0.15.1 after v0.15.0.
 
-The checked-in files hold the latest stable version. On a pull request the installer job fails when they differ from the latest stable tag; the fix is `bash apps/windows/ci/version.sh set <version>`. Nothing under `scripts/` changes, so this starts no Mac or iOS release.
+There is no stable Windows release artifact: once a beta is promoted, `main`'s builds already carry the next version.
+
+The checked-in files hold the latest stable version, for local builds. The installer job warns, without failing, when they are behind the latest stable tag. After a release, a `chore(windows): …` pull request runs `bash apps/windows/ci/version.sh set <version>`. Nothing under `scripts/` changes, so this starts no Mac or iOS release.
 
 ## CI isolation
 
-Nothing under `apps/windows/` triggers a release or a deploy. Release Mac covers `apps/**`, so it excludes this directory with `'!apps/windows/**'`; no other push workflow matches it. Nothing for Windows goes under `scripts/`, because a push there starts Release Mac.
+Nothing under `apps/windows/` triggers a release or a deploy. Release Mac covers `apps/**`, so it excludes this directory with `'!apps/windows/**'`; no other push workflow matches it. Nothing for Windows goes under `scripts/`, because a push there starts Release Mac. Windows reads `scripts/version.sh` but never edits it, and a change to that file rebuilds the installer.
 
 ## Commit and PR titles
 

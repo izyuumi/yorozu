@@ -47,10 +47,17 @@ jobs:
             apps/windows/target
           key: windows-installer-${{ runner.os }}-${{ hashFiles('apps/windows/Cargo.lock', 'apps/windows/rust-toolchain.toml') }}
           restore-keys: windows-installer-${{ runner.os }}-
-      - name: Windows version matches the latest stable release
-        if: github.event_name == 'pull_request'
+      # A warning only: the build stamps the shared version anyway, so stale checked-in files never fail the job.
+      - name: Checked-in Windows version vs the latest stable release
         shell: bash
-        run: bash apps/windows/ci/version.sh check "$(bash apps/windows/ci/version.sh stable)"
+        run: |
+          warn() { m=${1//'%'/%25}; m=${m//$'\r'/%0D}; echo "::warning title=Windows version::${m//$'\n'/%0A}"; }
+          if ! stable=$(bash apps/windows/ci/version.sh stable 2>&1); then
+            warn "$stable"
+          elif ! out=$(bash apps/windows/ci/version.sh check "$stable" 2>&1); then
+            warn "$out"
+          fi
+          exit 0
       - name: Stamp the shared version
         id: version
         shell: bash
@@ -59,6 +66,7 @@ jobs:
           bash apps/windows/ci/version.sh set "$v"
           bash apps/windows/ci/version.sh check "$v"
           echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "YOROZU_VERSION=$v" >> "$GITHUB_ENV" # app.ps1 expects the built app to carry it
           echo "shared version: $v"
       - shell: pwsh
         run: ./apps/windows/ci/app.ps1

@@ -50,13 +50,16 @@ read_place() {
   awk -v v= -v n="${3-}" "$2" "$root/$1"
 }
 
-# write_place <file> <awk program> <version> [package]: via a temp file, so it works with any sed/awk.
-# cat into the original keeps its mode.
+# write_place <file> <awk program> <version> [package]: awk writes a temp file (awk has no portable
+# in-place edit), and cat copies it into the original, which keeps the original's mode.
 write_place() {
   local tmp
   tmp=$(mktemp)
-  awk -v v="$3" -v n="${4-}" "$2" "$root/$1" >"$tmp"
-  cat "$tmp" >"$root/$1"
+  if ! awk -v v="$3" -v n="${4-}" "$2" "$root/$1" >"$tmp" || ! cat "$tmp" >"$root/$1"; then
+    rm -f "$tmp"
+    echo "version.sh: could not write $1" >&2
+    exit 1
+  fi
   rm -f "$tmp"
 }
 
@@ -88,7 +91,12 @@ case $cmd in
     [ $# -eq 1 ] || usage
     places=$(all_places)
     values=$(cut -f2 <<<"$places" | sort -u)
-    if [ -z "$values" ] || [[ $values == *$'\n'* ]]; then
+    if [ -z "$values" ]; then
+      echo "version.sh: no version found:" >&2
+      show "$places"
+      exit 1
+    fi
+    if [[ $values == *$'\n'* ]]; then
       echo "version.sh: the version files disagree:" >&2
       show "$places"
       exit 1
@@ -98,6 +106,13 @@ case $cmd in
   set)
     [ $# -eq 2 ] || usage
     valid "$2"
+    # Every place needs a version line to rewrite; otherwise stop before writing anything.
+    missing=$(awk -F'\t' '$2 == ""' <<<"$(all_places)")
+    if [ -n "$missing" ]; then
+      echo "version.sh: no version line in:" >&2
+      show "$missing"
+      exit 1
+    fi
     write_place app/package.json "$json_awk" "$2"
     write_place app/src-tauri/tauri.conf.json "$json_awk" "$2"
     write_place Cargo.toml "$toml_awk" "$2"
@@ -120,10 +135,11 @@ case $cmd in
     ;;
   stable)
     [ $# -eq 1 ] || usage
-    if ! tag=$(git -C "$root" describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' HEAD 2>/dev/null); then
-      echo "version.sh: no stable release tag (v<x.y.z>) reachable from HEAD; a shallow clone has none" >&2
+    if ! tag=$(git -C "$root" describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' HEAD 2>&1); then
+      echo "version.sh: no stable release tag (v<x.y.z>) reachable from HEAD: $tag" >&2
       exit 1
     fi
+    tag=$(tail -n 1 <<<"$tag")
     echo "${tag#v}"
     ;;
   shared)
