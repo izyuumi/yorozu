@@ -37,8 +37,9 @@ export class ActivityWatch<Timer> {
   private restore?: Promise<void>;
   private stopped = false;
   private activityTimestamp = false;
-  // A saved END whose send check failed; sent once at the next registration while its tombstone stands.
-  private unsentEnd = new Map<string, { record: ActivityRecord; token: string; push: Push; k: number }>();
+  // A saved END whose send check failed; sent once at the next registration, even after a newer
+  // activity replaced its tombstone. Kept until forget(), stop() or a later END for the device.
+  private unsentEnd = new Map<string, { token: string; push: Push; k: number }>();
   // Forgets before load; applied to the loaded records instead of the empty pre-load map.
   private forgottenBeforeLoad = new Set<string>();
   private dropWarned = false;
@@ -164,9 +165,9 @@ export class ActivityWatch<Timer> {
     else if (this.health.kind === "unavailable" && this.lockBlocked) await this.start();
     if (this.stopped || generation !== this.generation) return;
     if (this.liveActivity && this.activityTimestamp) {
-      for (const [device, { record, token, push, k }] of this.unsentEnd) {
+      for (const [device, { token, push, k }] of this.unsentEnd) {
         this.unsentEnd.delete(device);
-        if (this.records.get(device) === record) this.sendPush(device, token, { ...push, timestamp: k });
+        this.sendPush(device, token, { ...push, timestamp: k });
       }
     }
     for (const [device, watch] of this.activities) {
@@ -394,7 +395,7 @@ export class ActivityWatch<Timer> {
     if (record.terminal) {
       if (!endToken) return;
       if (!this.hostWriterReady) {
-        if (!this.stopped) this.unsentEnd.set(deviceKey, { record, token: endToken, push: next, k });
+        if (!this.stopped) this.unsentEnd.set(deviceKey, { token: endToken, push: next, k });
         return;
       }
       this.sendPush(deviceKey, endToken, { ...next, timestamp: k });
@@ -448,8 +449,6 @@ export class ActivityWatch<Timer> {
       if (report.pushToken) record.kLast = Math.max(record.kLast, seed);
       if (report.pushToken) record.token = report.pushToken;
       else delete record.token;
-      // An unsent END belongs to the tombstone this record replaces.
-      if (record !== stored) this.unsentEnd.delete(deviceKey);
       this.records.set(deviceKey, record);
       this.activities.set(deviceKey, watch);
       this.persist();

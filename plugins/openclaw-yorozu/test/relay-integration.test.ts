@@ -141,10 +141,14 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     // Opt-in worker storage semantics; existing fixtures retain their original behaviour.
     const pairedRows = new Set<string>();
     const activityTokens = new Map<string, string>();
-    // Pushes the relay sends to APNs, decided at send time; deliveries name the slot token they went to.
+    // Pushes the relay sends to APNs: the slot token read on arrival, if the slot still holds it when
+    // the queued send starts; deliveries name the token they went to.
     const delivered: HostMessage[] = [];
     const deliveries: { event: unknown; timestamp: number; token: string }[] = [];
     const dropped: typeof deliveries = [];
+    // Queued send starts, run in order before the next host message is applied (worker.ts activityTail).
+    const sendQueue: (() => void)[] = [];
+    const startSends = () => { for (let start = sendQueue.shift(); start; start = sendQueue.shift()) start(); };
     const connections: Connection[] = [];
     const failures: Error[] = [];
     const receipts: { timestamp: number; persisted: boolean }[] = [];
@@ -172,6 +176,7 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
       socket.on("error", () => { failures.push(new Error("fake relay socket failed")); });
       socket.on("message", (raw) => {
         try {
+          startSends();
           const message = JSON.parse(String(raw)) as HostMessage;
           connection.messages.push(message);
           if (message.type === "register") {
@@ -188,15 +193,19 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
           } else if (message.type === "activityPush" && typeof message.timestamp === "number") {
             const device = message.device;
             const token = slotModel && device ? activityTokens.get(device) : undefined;
-            // worker.ts reads the slot on arrival, queues the send, and drops it if the slot changed meanwhile.
-            if (device && token !== undefined) setImmediate(() => {
-              const row = { event: message.event, timestamp: message.timestamp!, token };
-              if (activityTokens.get(device) !== token) { dropped.push(row); return; }
-              delivered.push(message);
-              deliveries.push(row);
-              // A delivered END clears the slot (worker.ts, 2xx on end).
-              if (message.event === "end") activityTokens.delete(device);
-            });
+            // worker.ts reads the slot on arrival and queues the send, which starts by dropping it if
+            // the slot no longer holds the arrival token.
+            if (device && token !== undefined) {
+              sendQueue.push(() => {
+                const row = { event: message.event, timestamp: message.timestamp!, token };
+                if (activityTokens.get(device) !== token) { dropped.push(row); return; }
+                delivered.push(message);
+                deliveries.push(row);
+                // A delivered END clears the slot only if it still holds the sent token (worker.ts, 2xx on end).
+                setImmediate(() => { if (message.event === "end" && activityTokens.get(device) === token) activityTokens.delete(device); });
+              });
+              setImmediate(startSends);
+            }
             // Capture at arrival, before any later save could make the assertion pass.
             const data = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : [];
             const rows = Array.isArray(data) ? data : data.records;

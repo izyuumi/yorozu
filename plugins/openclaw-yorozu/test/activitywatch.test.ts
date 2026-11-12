@@ -2089,17 +2089,22 @@ test("LA-2i M2-seeded [behaviour] tokenGone retains content and resumes above du
 });
 
 // LA-2k: the relay slot as apps/relay/src/worker.ts keeps it. Every device has a p: row here.
-// activityPush reads the slot on arrival, is queued, and is sent only if the slot still holds
-// that token at send time; a delivered END clears the slot.
+// activityPush reads the slot on arrival (dropped if empty) and is queued; at the start of the
+// queued send it goes to the token read on arrival only if the slot still holds it. The queued
+// start runs before the host's next message is applied (Yorozu's ruling on worker.ts's activityTail).
+// After delivery an END clears the slot only if it still holds the sent token.
 type Delivery = { device: string; event: string; timestamp?: number; token?: string };
 function slotRelay() {
   const slots = new Map<string, string>();
   const wire: { type: string; device: string; token?: string; event?: string; timestamp?: number }[] = [];
   const delivered: Delivery[] = [];
   const dropped: Delivery[] = [];
+  const queue: (() => void)[] = [];
+  const run = () => { for (let start = queue.shift(); start; start = queue.shift()) start(); };
   return {
     slots, wire, delivered, dropped,
     receive(raw: string) {
+      run();
       const message = JSON.parse(raw);
       wire.push(message);
       if (message.type === "activityToken") {
@@ -2108,11 +2113,12 @@ function slotRelay() {
         const token = slots.get(message.device);
         const row: Delivery = { device: message.device, event: message.event, timestamp: message.timestamp, token };
         if (token === undefined) { dropped.push(row); return; }
-        setImmediate(() => {
+        queue.push(() => {
           if (slots.get(message.device) !== token) { dropped.push(row); return; }
           delivered.push(row);
-          if (message.event === "end") slots.delete(message.device);
+          setImmediate(() => { if (message.event === "end" && slots.get(message.device) === token) slots.delete(message.device); });
         });
+        setImmediate(run);
       }
     },
   };
@@ -2245,19 +2251,24 @@ test("LA-2k 2-a [behaviour] unsent END is sent once at the next registration, be
   assert.deepEqual(short(f.relay.wire.slice(again)), [["token", D2, TB]], "a second registration sends no END");
 });
 
-test("LA-2k 2-b [control] a newer activity saved before the reconnect drops the unsent END", async () => {
+test("LA-2k 2-b [behaviour] a newer activity saved before the reconnect keeps the unsent END for the old token", async () => {
   const f = await seeded();
   await unsentEnd(f);
   f.watch.report(DEVICE, aNew(TC, onOther));
   await drain();
+  const saved = await f.store.load();
+  assert.ok(saved.ok);
+  assert.deepEqual(saved.records.map(({ activityId, token }) => ({ activityId, token })), [{ activityId: OTHER, token: TC }], "A_new saved before the reconnect");
   const mark = f.relay.wire.length;
   await f.up();
   await drain();
-  assert.deepEqual(short(f.relay.wire.slice(mark)), [["token", DEVICE, TC]], "no END for A_old");
+  assert.deepEqual(short(f.relay.wire.slice(mark)), [["token", DEVICE, TA], ["push", DEVICE, "end", 1_800_000_002], ["token", DEVICE, TC]]);
+  assert.deepEqual(f.relay.delivered, [{ device: DEVICE, event: "end", timestamp: 1_800_000_002, token: TA }]);
   assert.equal(f.relay.slots.get(DEVICE), TC);
   f.watch.turn(OTHER, { kind: "step", steps: 2 });
   await drain();
-  assert.deepEqual(f.relay.delivered, [{ device: DEVICE, event: "update", timestamp: 1_800_000_012, token: TC }]);
+  assert.deepEqual(f.relay.delivered.at(-1), { device: DEVICE, event: "update", timestamp: 1_800_000_012, token: TC });
+  assert.equal(f.relay.delivered.length, 2);
 });
 
 test("LA-2k 2-c [control] revoke before the reconnect drops the unsent END", async () => {
@@ -2318,6 +2329,8 @@ test("LA-2k 2-e [behaviour] stop drops unsent ENDs, also across a lock-blocked r
   }
 });
 
+// The flush at registration empties the entry before A_new can reserve, so A_new's END takes a fresh
+// entry; a later END for the device replaces any entry still there (memo v5 §4.2).
 test("LA-2k 2-f [behaviour] unsent END of a newer activity is sent with its own token", async () => {
   const f = await seeded();
   await unsentEnd(f);
@@ -2325,6 +2338,7 @@ test("LA-2k 2-f [behaviour] unsent END of a newer activity is sent with its own 
   await drain();
   await f.up();
   await drain();
+  assert.deepEqual(f.relay.delivered, [{ device: DEVICE, event: "end", timestamp: 1_800_000_002, token: TA }], "A_old's END flushed first");
   holdEnd(f);
   f.watch.turn(OTHER, { kind: "done" });
   await drain();
@@ -2335,7 +2349,32 @@ test("LA-2k 2-f [behaviour] unsent END of a newer activity is sent with its own 
   await f.up();
   await drain();
   assert.deepEqual(short(f.relay.wire.slice(mark)), [["token", DEVICE, TC], ["push", DEVICE, "end", 1_800_000_012]]);
-  assert.deepEqual(f.relay.delivered, [{ device: DEVICE, event: "end", timestamp: 1_800_000_012, token: TC }]);
+  assert.deepEqual(f.relay.delivered.slice(1), [{ device: DEVICE, event: "end", timestamp: 1_800_000_012, token: TC }]);
+  assert.equal(f.relay.slots.get(DEVICE), undefined);
+});
+
+test("LA-2k 2-g [control] newer activity during the END save", async () => {
+  const f = await seeded();
+  holdEnd(f);
+  f.watch.turn(CONV, { kind: "done" });
+  await drain();
+  const mark = f.relay.wire.length;
+  f.watch.report(DEVICE, aNew(TC, onOther));
+  f.store.release();
+  await drain();
+  assert.deepEqual(short(f.relay.wire.slice(mark)), [["token", DEVICE, TC]], "A_old's END is neither sent nor kept");
+  assert.deepEqual(f.relay.delivered, []);
+  assert.equal(f.relay.slots.get(DEVICE), TC);
+  const saved = await f.store.load();
+  assert.ok(saved.ok);
+  assert.deepEqual(saved.records.map(({ activityId, token, kLast, terminal }) => ({ activityId, token, kLast, terminal })),
+    [{ activityId: OTHER, token: TC, kLast: 1_800_000_011, terminal: false }]);
+  const again = f.relay.wire.length;
+  f.down();
+  await f.up();
+  await drain();
+  assert.deepEqual(short(f.relay.wire.slice(again)), [["token", DEVICE, TC]], "no unsent END at the next reconnect");
+  assert.deepEqual(f.relay.delivered, []);
 });
 
 test("LA-2k 3-b [behaviour] crash between report send and save: restart binds pushes to the disk token", async () => {
