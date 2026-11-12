@@ -12,11 +12,15 @@ type Params = Record<string, unknown>;
 type Hook = (event: { toolName: string; params: Params }, ctx: { agentId?: string; sessionKey?: string }) => { params: Params } | undefined;
 type PromptHook = (event: unknown, ctx: { agentId?: string; sessionKey?: string }) => { appendSystemContext: string } | undefined;
 const hooks = new Map<string, unknown>();
+const registrations: string[] = [];
 (entry as unknown as { registerFull(api: unknown): void }).registerFull({
-  on(name: string, handler: unknown) { assert.ok(!hooks.has(name)); hooks.set(name, handler); },
-  registerGatewayMethod() {},
+  on(name: string, handler: unknown) { assert.ok(!hooks.has(name)); hooks.set(name, handler); registrations.push(name); },
+  registerGatewayMethod(name: string) { registrations.push(name); },
 });
 assert.deepEqual([...hooks.keys()].sort(), ["before_prompt_build", "before_tool_call"]);
+assert.deepEqual(registrations, [
+  "before_tool_call", "yorozu.pair.begin", "yorozu.devices.list", "yorozu.devices.remove", "before_prompt_build",
+]);
 const hook = hooks.get("before_tool_call") as Hook;
 const promptHook = hooks.get("before_prompt_build") as PromptHook;
 const convId = "11111111-1111-4111-8111-111111111111";
