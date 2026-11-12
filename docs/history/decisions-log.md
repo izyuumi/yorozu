@@ -1234,3 +1234,9 @@ This change covers the first two sentences. On a conversation that is not archiv
 ## 2026-11-11 — Windows client (Tauri exception, cut-down v1)
 
 The owner allowed Tauri and a web view for the Windows client only (2026-11-11 10:48 JST): "Yes, allow Tauri and a webview for the Windows client only; keep Swift everywhere else". Asked "OK with Windows' built-in key encryption and an unsigned test installer?" (11:47 JST): "Yes: DPAPI key storage and an unsigned test installer are fine". Asked "How should we get Windows out?" (12:20 JST): "Cut it down: relay-only chat with paste-link pairing first, add the rest after I test". The client lives in `apps/windows`, which Release Mac excludes; its pull requests use `chore|build|ci|test|docs(windows):` titles so they never raise the app's minor or major version or reach the release notes.
+
+## 2026-11-11 — Live Activity is opt-in
+
+The owner's request (2026-11-11 16:49 JST): "Make live activity an opt-in feature, enable-able from the settings".
+
+The Live Activity on iPhone and iPad is off by default, for new installs and for existing ones after the upgrade: the old `turnLiveActivity` value is dropped at launch, not migrated. Settings › Live Activities turns it on (key `liveActivities`). Turning it off ends a running activity at once and the host is told to forget its push token. The details (off for existing installs too, no migration and no prompt when turning it on) were settled with the owner through Yorozu. The key changes in one release, deliberately not phased, so the old default-on value cannot carry over. No wire, relay or plugin change.

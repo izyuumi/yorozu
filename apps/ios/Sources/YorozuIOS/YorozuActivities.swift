@@ -25,11 +25,11 @@ import os
 /// With any other host the activity has no push token, as before.
 @MainActor
 final class YorozuActivities {
-    static let enabledKey = "turnLiveActivity"
-    static var enabled: Bool { UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true }
+    static var enabled: Bool { LiveActivitySetting.enabled(.standard) }
 
     private(set) static var shared: YorozuActivities?
     static func start(model: AppModel) {
+        LiveActivitySetting.dropLegacy(.standard)
         guard shared == nil else { return }
         let shared = YorozuActivities(model: model)
         Self.shared = shared
@@ -113,6 +113,23 @@ final class YorozuActivities {
         await queue?.value
         while awaitingToken, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(100))
+        }
+    }
+
+    /// The switch was turned off: the activity ends now, its jobs go and the host is told to forget the push token.
+    /// `turns` is cleared here, not in the queue, because `syncTurns` writes it outside the queue: a turn tracked
+    /// after the switch came back on must not be wiped by a `disable` still waiting in the queue.
+    func disable() {
+        turns = [:]
+        enqueue { [weak self] in
+            guard let self else { return }
+            expiry?.cancel()
+            expiry = nil
+            jobs = []
+            await YorozuActivityAttributes.endAll()
+            activity = nil
+            await dropToken()
+            prune([])
         }
     }
 

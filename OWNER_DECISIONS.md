@@ -89,6 +89,7 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 - ⌘Enter sends by default on the Mac: Enter adds a newline. Hardware keyboards on iPhone and iPad keep smart Enter; the on-screen keyboard keeps its Send button. (2026-10-09, clients 2026-10-15)
 - Siri, Shortcuts and Spotlight through App Intents: Ask Yorozu (sends, waits up to 25 s and returns the reply for Siri to read; past that, "the reply will come as a notification"), Open Conversation and New Conversation, with conversations as entities Siri can name; App Shortcuts phrases in English and Japanese. Search Yorozu finds conversations by what was said, with the matching lines; conversations (title and recent messages, up to 4,000 characters) are in an on-device Spotlight index Siri searches, Data Protection `complete`, removed on unpair, with a Settings switch (Siri & Search), on by default. (2026-10-17)
 - A run that fails for a moment (a plugin reload, an overloaded or rate-limited model) before any reply or tool runs again by itself, for about four minutes, instead of showing its error; only a failure that outlasts that is shown. (2026-10-23)
+- Live Activity is opt-in: off by default for new and existing installs, turned on in Settings › Live Activities; turning it off ends it at once and the host forgets its push token. (2026-11-11)
 - The client app is native SwiftUI, with selective AppKit on the Mac, never a web UI or webview wrapper. Use native SwiftUI components wherever they fit. (2026-10-07, clients 2026-10-15)
 
 ## Platform and release
