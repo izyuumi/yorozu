@@ -97,195 +97,233 @@ type TurnContext = Pick<ChannelGatewayContext, "cfg" | "accountId" | "log"> & {
   presentationSdk: PresentationSdk;
 };
 
+type LiveTurn = { steps: number; startedAt: number };
+const liveTurns = new Map<string, Map<string, LiveTurn>>();
+
+function registerTurn(message: Message): LiveTurn {
+  let runs = liveTurns.get(message.convId);
+  if (!runs) liveTurns.set(message.convId, runs = new Map());
+  let run = runs.get(message.messageId);
+  if (!run) runs.set(message.messageId, run = { steps: 0, startedAt: Date.now() });
+  return run;
+}
+
+function removeTurn(message: Message, owner: LiveTurn): void {
+  const runs = liveTurns.get(message.convId);
+  if (runs?.get(message.messageId) !== owner) return;
+  runs?.delete(message.messageId);
+  if (!runs?.size) liveTurns.delete(message.convId);
+}
+
+export function liveTurn(convId: string): Readonly<LiveTurn> | undefined {
+  const runs = liveTurns.get(convId);
+  const newest = runs && [...runs.values()].at(-1);
+  return newest ? { ...newest } : undefined;
+}
+
 export async function handleMessage(ctx: TurnContext, message: Message, attempt = 0): Promise<void> {
-  const { cfg, accountId, log } = ctx;
-  const { convId, messageId, text } = message;
-  const send = (...events: Event[]) => void broadcast(events);
-  const route = resolveOwnerRoute(cfg, ctx.agent, accountId);
-  const { sessionKey } = resolveThreadSessionKeys({ baseSessionKey: route.sessionKey, threadId: convId });
-  const files = await uploadedFiles(message.attachments);
-  const held = new Set(files.map((file) => file.id));
-  const missing = (message.attachments ?? []).filter((a) => !held.has(a.id)).map((a) => a.name);
-  if (missing.length) {
-    log?.warn(`yorozu: a message names ${missing.length} attachment(s) this host does not hold`);
-    if (attempt === 0) {
-      send({
-        kind: "error",
-        data: { code: "attachment_missing", message: `not on the host, so the agent did not get them: ${missing.join(", ")}`, convId, messageId },
-      });
-    }
-  }
-  const media = await toInboundMediaFactsWithMetadata(
-    files.map((file) => ({ path: file.path, contentType: file.mime, fileName: file.name, messageId })),
-  );
-  const access: MediaAccess = { localRoots: getAgentScopedMediaLocalRoots(cfg, route.agentId) };
-  await noteFirstMessage(convId, text).catch((error: unknown) => log?.warn(`yorozu: push title failed: ${String(error)}`));
-  const quote = message.replyTo;
-  if (quote) noteReply(messageId, quote);
-  let firstReply: { messageId: string; text: string } | undefined;
-
-  const usedReplies = new Set<string>();
-  let toolRan = false;
-  let started = false;
-  const runStarted = () => {
-    if (started) return;
-    started = true;
-    send({ kind: "run_started", data: { convId, messageId } });
-  };
-  let typing = false;
-  let typingAt = 0;
-  const setTyping = (active: boolean) => {
-    if (!active && !typing) return;
-    if (active && typing && Date.now() - typingAt < TYPING_KEEPALIVE_MS / 2) return;
-    typing = active;
-    typingAt = Date.now();
-    send({ kind: "typing", data: { convId, active } });
-  };
-  const typingCallbacks = createTypingCallbacks({
-    start: async () => {
-      runStarted();
-      setTyping(true);
-    },
-    stop: async () => setTyping(false),
-    onStartError: (error) => log?.warn(`yorozu: typing failed: ${String(error)}`),
-    keepaliveIntervalMs: TYPING_KEEPALIVE_MS,
-    maxDurationMs: TYPING_MAX_MS,
-  });
-  const calls = new Set<string>();
-  const tool = (callId: string | undefined, name: string | undefined, status: ToolStatus) => {
-    const n = name?.trim();
-    if (!callId || !n) return;
-    toolRan = true;
-    send({ kind: "tool", data: { convId, messageId, callId: callId.slice(0, 128), name: n.slice(0, 128), status } });
-    if (calls.has(callId)) return;
-    calls.add(callId);
-    activityTurn(convId, { kind: "step", steps: calls.size });
-  };
-
-  const ctxPayload = buildChannelInboundEventContext({
-    channel: CHANNEL_ID,
-    accountId: route.accountId,
-    messageId,
-    messageIdFull: messageId,
-    timestamp: Date.now(),
-    from: `${CHANNEL_ID}:${PEER}`,
-    sender: { id: PEER },
-    conversation: { kind: "direct", id: PEER, threadId: convId },
-    route: {
-      agentId: route.agentId,
-      dmScope: "per-channel-peer",
-      accountId: route.accountId,
-      routeSessionKey: sessionKey,
-      dispatchSessionKey: sessionKey,
-    },
-    reply: { to: PEER, originatingTo: PEER, messageThreadId: convId },
-    message: { body: text, bodyForAgent: text, rawBody: text, commandBody: text },
-    media,
-    supplemental: {
-      groupSystemPrompt: CARD_GUIDANCE,
-      ...(quote && { quote: { id: quote.messageId, fullId: quote.messageId, body: quote.text, senderAllowed: true } }),
-    },
-    access: { commands: { authorized: true } },
-  });
-
-  // As the app reads a turn's end: a reply is done, a reported failure failed, a retry still running, nothing gone.
+  const owner = registerTurn(message);
   let ended: "failed" | "retrying" | undefined;
-  const turn = { messageId, agentId: route.agentId, sessionKey };
+  let terminalEmitted = false;
   try {
-    await runChannelInboundEvent({
+    const { cfg, accountId, log } = ctx;
+    const { convId, messageId, text } = message;
+    const send = (...events: Event[]) => void broadcast(events);
+    const route = resolveOwnerRoute(cfg, ctx.agent, accountId);
+    const { sessionKey } = resolveThreadSessionKeys({ baseSessionKey: route.sessionKey, threadId: convId });
+    const files = await uploadedFiles(message.attachments);
+    const held = new Set(files.map((file) => file.id));
+    const missing = (message.attachments ?? []).filter((a) => !held.has(a.id)).map((a) => a.name);
+    if (missing.length) {
+      log?.warn(`yorozu: a message names ${missing.length} attachment(s) this host does not hold`);
+      if (attempt === 0) {
+        send({
+          kind: "error",
+          data: { code: "attachment_missing", message: `not on the host, so the agent did not get them: ${missing.join(", ")}`, convId, messageId },
+        });
+      }
+    }
+    const media = await toInboundMediaFactsWithMetadata(
+      files.map((file) => ({ path: file.path, contentType: file.mime, fileName: file.name, messageId })),
+    );
+    const access: MediaAccess = { localRoots: getAgentScopedMediaLocalRoots(cfg, route.agentId) };
+    await noteFirstMessage(convId, text).catch((error: unknown) => log?.warn(`yorozu: push title failed: ${String(error)}`));
+    const quote = message.replyTo;
+    if (quote) noteReply(messageId, quote);
+    let firstReply: { messageId: string; text: string } | undefined;
+
+    const usedReplies = new Set<string>();
+    let toolRan = false;
+    let started = false;
+    const runStarted = () => {
+      if (started) return;
+      started = true;
+      send({ kind: "run_started", data: { convId, messageId } });
+    };
+    let typing = false;
+    let typingAt = 0;
+    const setTyping = (active: boolean) => {
+      if (!active && !typing) return;
+      if (active && typing && Date.now() - typingAt < TYPING_KEEPALIVE_MS / 2) return;
+      typing = active;
+      typingAt = Date.now();
+      send({ kind: "typing", data: { convId, active } });
+    };
+    const typingCallbacks = createTypingCallbacks({
+      start: async () => {
+        runStarted();
+        setTyping(true);
+      },
+      stop: async () => setTyping(false),
+      onStartError: (error) => log?.warn(`yorozu: typing failed: ${String(error)}`),
+      keepaliveIntervalMs: TYPING_KEEPALIVE_MS,
+      maxDurationMs: TYPING_MAX_MS,
+    });
+    const calls = new Set<string>();
+    const tool = (callId: string | undefined, name: string | undefined, status: ToolStatus) => {
+      const n = name?.trim();
+      if (!callId || !n) return;
+      toolRan = true;
+      send({ kind: "tool", data: { convId, messageId, callId: callId.slice(0, 128), name: n.slice(0, 128), status } });
+      if (calls.has(callId)) return;
+      calls.add(callId);
+      owner.steps = calls.size;
+      activityTurn(convId, { kind: "step", steps: calls.size });
+    };
+
+    const ctxPayload = buildChannelInboundEventContext({
       channel: CHANNEL_ID,
       accountId: route.accountId,
-      raw: message,
-      adapter: {
-        ingest: () => ({ id: messageId, timestamp: Date.now(), rawText: text, raw: message }),
-        resolveTurn: () => ({
-          cfg,
-          channel: CHANNEL_ID,
-          accountId: route.accountId,
-          route: { agentId: route.agentId, dmScope: "per-channel-peer", sessionKey },
-          ctxPayload,
-          dispatchReplyFromConfig: yorozuRuntime.getRuntime().channel.reply.dispatchReplyFromConfig,
-          record: { onRecordError: (error) => log?.warn(`yorozu: session record failed: ${String(error)}`) },
-          dispatcherOptions: { typingCallbacks },
-          delivery: {
-            deliver: async (payload, info) => {
-              const urls = mediaUrls(payload.mediaUrl, ...(payload.mediaUrls ?? []));
-              if (info.kind === "tool") return;
-              // OpenClaw hands a message-tool card here as it came; this is the only place it is checked.
-              const card = payloadCard(payload, ctx.presentationSdk, log);
-              if (!card.text.trim() && !urls.length && !card.presentation) return;
-              runStarted();
-              // A transcript message's ids only for a payload with text or a file of its own. With a card, only a
-              // message saying the payload's text: a card-only payload (a `message` tool send, whose transcript
-              // message holds a tool call and no text) or one whose text no message says must not take the ids of
-              // some other reply's text, and leaves that message to it.
-              const ids = !card.presentation
-                ? payload.text?.trim() || urls.length ? liveReplyIds(route.agentId, sessionKey, messageId, usedReplies) : undefined
-                : payload.text?.trim() ? liveReplyIds(route.agentId, sessionKey, messageId, usedReplies, payload.text) : undefined;
-              const { attachments, failures } = await stageOutbound(urls, ctx.mediaMaxBytes, access, ids?.id(0));
-              const body = [card.text, ...failures].filter((line) => line.trim()).join("\n\n");
-              const replyTo = replyTarget(cfg, ctx.agent, convId, payload.replyToId, message);
-              const replies = replyEvents(cfg, convId, body, route.accountId, ids, attachments, replyTo, card.presentation);
-              const first = replies[0];
-              if (!firstReply && first?.kind === "reply") firstReply = { messageId: first.data.messageId, text: body || "📎" };
-              send(...replies);
-              // After the reply and not awaited: a slow or failing store costs the history card, never the reply.
-              const carrier = replies.at(-1);
-              if (card.presentation && carrier?.kind === "reply") {
-                const { presentation } = card;
-                // With a transcript message's ids, history puts the card on that message. Without, the card is kept
-                // by its turn with the reply that carried it, which history shows again under the same ids.
-                const sessionId = ids?.sessionId ?? liveSessionId(route.agentId, sessionKey);
-                const key = ids ? cardKey(ids.sessionId, ids.eventId) : sessionId && turnCardKey(sessionId, messageId, carrier.data.messageId);
-                if (!key) log?.warn(NOT_KEPT);
-                else {
-                  void storeCard(convId, key, ids ? { presentation } : {
-                    presentation, reply: replyChunks(replies), ...(failures.length && { mirrorText: card.text }),
-                  }).catch(
-                    (error: unknown) => log?.warn(`yorozu: a card was not stored (${errorTag(error)}); history will not show it`),
-                  );
-                }
-              }
-            },
-            onError: (error, info) => log?.warn(`yorozu: ${info.kind} reply failed: ${String(error)}`),
-          },
-          replyOptions: {
-            disableBlockStreaming: true,
-            allowToolLifecycleWhenProgressHidden: true,
-            suppressDefaultToolProgressMessages: true,
-            onAgentRunStart: () => {
-              // The turn sendPayload stores cards under: from its agent run's start, so a message that waits in
-              // OpenClaw's queue behind a running turn does not take that turn's cards. One run per session at a time.
-              runningTurns.set(convId, turn);
-              runStarted();
-              return undefined;
-            },
-            onToolStart: ({ toolCallId, name, phase }) => {
-              if (!phase || phase === "start") tool(toolCallId, name, "running");
-            },
-            onItemEvent: ({ toolCallId, name, phase, status }) => {
-              if (phase === "end") tool(toolCallId, name, !status || status === "completed" ? "done" : "failed");
-            },
-          },
-        }),
+      messageId,
+      messageIdFull: messageId,
+      timestamp: Date.now(),
+      from: `${CHANNEL_ID}:${PEER}`,
+      sender: { id: PEER },
+      conversation: { kind: "direct", id: PEER, threadId: convId },
+      route: {
+        agentId: route.agentId,
+        dmScope: "per-channel-peer",
+        accountId: route.accountId,
+        routeSessionKey: sessionKey,
+        dispatchSessionKey: sessionKey,
       },
+      reply: { to: PEER, originatingTo: PEER, messageThreadId: convId },
+      message: { body: text, bodyForAgent: text, rawBody: text, commandBody: text },
+      media,
+      supplemental: {
+        groupSystemPrompt: CARD_GUIDANCE,
+        ...(quote && { quote: { id: quote.messageId, fullId: quote.messageId, body: quote.text, senderAllowed: true } }),
+      },
+      access: { commands: { authorized: true } },
     });
-  } catch (error) {
-    const retrying = !firstReply && !toolRan && isTemporary(error) && (await park(message, attempt).catch(() => false));
-    log?.warn(`yorozu: run failed${retrying ? ` (retry ${attempt + 1} queued)` : ""}: ${String(error)}`);
-    if (!retrying) send({ kind: "error", data: { code: "run_failed", message: String(error).slice(0, 500), convId, messageId } });
-    ended = retrying ? "retrying" : "failed";
+
+    // As the app reads a turn's end: a reply is done, a reported failure failed, a retry still running, nothing gone.
+    const turn = { messageId, agentId: route.agentId, sessionKey };
+    try {
+      await runChannelInboundEvent({
+        channel: CHANNEL_ID,
+        accountId: route.accountId,
+        raw: message,
+        adapter: {
+          ingest: () => ({ id: messageId, timestamp: Date.now(), rawText: text, raw: message }),
+          resolveTurn: () => ({
+            cfg,
+            channel: CHANNEL_ID,
+            accountId: route.accountId,
+            route: { agentId: route.agentId, dmScope: "per-channel-peer", sessionKey },
+            ctxPayload,
+            dispatchReplyFromConfig: yorozuRuntime.getRuntime().channel.reply.dispatchReplyFromConfig,
+            record: { onRecordError: (error) => log?.warn(`yorozu: session record failed: ${String(error)}`) },
+            dispatcherOptions: { typingCallbacks },
+            delivery: {
+              deliver: async (payload, info) => {
+                const urls = mediaUrls(payload.mediaUrl, ...(payload.mediaUrls ?? []));
+                if (info.kind === "tool") return;
+                // OpenClaw hands a message-tool card here as it came; this is the only place it is checked.
+                const card = payloadCard(payload, ctx.presentationSdk, log);
+                if (!card.text.trim() && !urls.length && !card.presentation) return;
+                runStarted();
+                // A transcript message's ids only for a payload with text or a file of its own. With a card, only a
+                // message saying the payload's text: a card-only payload (a `message` tool send, whose transcript
+                // message holds a tool call and no text) or one whose text no message says must not take the ids of
+                // some other reply's text, and leaves that message to it.
+                const ids = !card.presentation
+                  ? payload.text?.trim() || urls.length ? liveReplyIds(route.agentId, sessionKey, messageId, usedReplies) : undefined
+                  : payload.text?.trim() ? liveReplyIds(route.agentId, sessionKey, messageId, usedReplies, payload.text) : undefined;
+                const { attachments, failures } = await stageOutbound(urls, ctx.mediaMaxBytes, access, ids?.id(0));
+                const body = [card.text, ...failures].filter((line) => line.trim()).join("\n\n");
+                const replyTo = replyTarget(cfg, ctx.agent, convId, payload.replyToId, message);
+                const replies = replyEvents(cfg, convId, body, route.accountId, ids, attachments, replyTo, card.presentation);
+                const first = replies[0];
+                if (!firstReply && first?.kind === "reply") firstReply = { messageId: first.data.messageId, text: body || "📎" };
+                send(...replies);
+                // After the reply and not awaited: a slow or failing store costs the history card, never the reply.
+                const carrier = replies.at(-1);
+                if (card.presentation && carrier?.kind === "reply") {
+                  const { presentation } = card;
+                  // With a transcript message's ids, history puts the card on that message. Without, the card is kept
+                  // by its turn with the reply that carried it, which history shows again under the same ids.
+                  const sessionId = ids?.sessionId ?? liveSessionId(route.agentId, sessionKey);
+                  const key = ids ? cardKey(ids.sessionId, ids.eventId) : sessionId && turnCardKey(sessionId, messageId, carrier.data.messageId);
+                  if (!key) log?.warn(NOT_KEPT);
+                  else {
+                    void storeCard(convId, key, ids ? { presentation } : {
+                      presentation, reply: replyChunks(replies), ...(failures.length && { mirrorText: card.text }),
+                    }).catch(
+                      (error: unknown) => log?.warn(`yorozu: a card was not stored (${errorTag(error)}); history will not show it`),
+                    );
+                  }
+                }
+              },
+              onError: (error, info) => log?.warn(`yorozu: ${info.kind} reply failed: ${String(error)}`),
+            },
+            replyOptions: {
+              disableBlockStreaming: true,
+              allowToolLifecycleWhenProgressHidden: true,
+              suppressDefaultToolProgressMessages: true,
+              onAgentRunStart: () => {
+                // The turn sendPayload stores cards under: from its agent run's start, so a message that waits in
+                // OpenClaw's queue behind a running turn does not take that turn's cards. One run per session at a time.
+                runningTurns.set(convId, turn);
+                runStarted();
+                return undefined;
+              },
+              onToolStart: ({ toolCallId, name, phase }) => {
+                if (!phase || phase === "start") tool(toolCallId, name, "running");
+              },
+              onItemEvent: ({ toolCallId, name, phase, status }) => {
+                if (phase === "end") tool(toolCallId, name, !status || status === "completed" ? "done" : "failed");
+              },
+            },
+          }),
+        },
+      });
+    } catch (error) {
+      const retrying = !firstReply && !toolRan && isTemporary(error) && (await park(message, attempt).catch(() => false));
+      log?.warn(`yorozu: run failed${retrying ? ` (retry ${attempt + 1} queued)` : ""}: ${String(error)}`);
+      if (!retrying) send({ kind: "error", data: { code: "run_failed", message: String(error).slice(0, 500), convId, messageId } });
+      ended = retrying ? "retrying" : "failed";
+    } finally {
+      if (runningTurns.get(convId) === turn) runningTurns.delete(convId);
+      setTyping(false);
+      if (ended !== "retrying") {
+        removeTurn(message, owner);
+        activityTurn(convId, { kind: firstReply ? "done" : (ended ?? "gone") });
+        terminalEmitted = true;
+      }
+      if (firstReply) {
+        await notifyReply(convId, firstReply.messageId, firstReply.text).catch((error: unknown) =>
+          log?.warn(`yorozu: notify failed: ${String(error)}`),
+        );
+      }
+    }
+    void maybeTitle(cfg, route.agentId, convId, log);
   } finally {
-    if (runningTurns.get(convId) === turn) runningTurns.delete(convId);
-    setTyping(false);
-    if (ended !== "retrying") activityTurn(convId, { kind: firstReply ? "done" : (ended ?? "gone") });
-    if (firstReply) {
-      await notifyReply(convId, firstReply.messageId, firstReply.text).catch((error: unknown) =>
-        log?.warn(`yorozu: notify failed: ${String(error)}`),
-      );
+    if (ended !== "retrying") {
+      removeTurn(message, owner);
+      if (!terminalEmitted) activityTurn(message.convId, { kind: "settled" });
     }
   }
-  void maybeTitle(cfg, route.agentId, convId, log);
 }
 
 // "no conversation reference found" is one of OpenClaw's permanent delivery errors

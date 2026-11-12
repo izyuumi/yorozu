@@ -1,5 +1,7 @@
 import os from "node:os";
+import path from "node:path";
 import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
+import { acquireFileLock } from "openclaw/plugin-sdk/file-lock";
 import { captureEffectAuthority } from "openclaw/plugin-sdk/fetch-runtime";
 import { computeBackoff, sleepWithAbort } from "openclaw/plugin-sdk/runtime-env";
 import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
@@ -24,7 +26,9 @@ import {
 } from "./envelope.js";
 import { CLOSE, Hub, type Link, type Request } from "./hub.js";
 import type { HostKeys } from "./keys.js";
-import { applyTurn, cleanJobs, holdFor, plan, type TurnChange, type WireJob } from "./liveactivity.js";
+import { ActivityStore } from "./activitystore.js";
+import { ActivityWatch } from "./activitywatch.js";
+import type { OwnerTurnChange } from "./liveactivity.js";
 import { LocalPairingFile, localPairingPath } from "./localpair.js";
 import { mintCode, pairer, pairingQuery, PendingPairings } from "./pairing.js";
 import { firstLine, previewKey, previewPlaintext, pushTitle, sealPreview, threadRef } from "./push.js";
@@ -47,6 +51,7 @@ export type RelayHostOptions = {
   log?: ChannelGatewayContext["log"];
   onStatus: (status: Status) => void;
   onMessage: (message: Message) => void;
+  liveTurn?: (convId: string) => Readonly<{ steps: number; startedAt: number }> | undefined;
   onReaction: (reaction: Reaction) => void;
   onRequest?: (event: Event) => Promise<Event | undefined>;
   mediaMaxBytes: number;
@@ -81,7 +86,7 @@ let host: {
   forget: (deviceKeys: string[]) => void;
   broadcast: (events: Event[]) => number;
   notify: ((convId: string, messageId: string, text: string) => Promise<void>) | null;
-  activityTurn: (convId: string, change: TurnChange) => void;
+  activityTurn: (convId: string, change: OwnerTurnChange) => void;
 } | null = null;
 
 export function broadcast(events: Event[]): number {
@@ -89,7 +94,7 @@ export function broadcast(events: Event[]): number {
 }
 
 /** A turn moved on: devices whose Live Activity shows it get a counts-only push. */
-export function activityTurn(convId: string, change: TurnChange): void {
+export function activityTurn(convId: string, change: OwnerTurnChange): void {
   host?.activityTurn(convId, change);
 }
 
@@ -144,7 +149,6 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
 
   let relaySend: ((raw: string) => void) | null = null;
   let relayFrames: ((payloads: string[]) => void) | null = null;
-  let relayActivities = false;
   let relayPushProxy = false;
   let direct: DirectListener | null = null;
   let hints: DirectHints | undefined;
@@ -154,45 +158,21 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
   // Every relay session shares this link; it sends through whichever relay socket is registered.
   const relayLink: Link = { path: "relay", send: (payloads) => relayFrames?.(payloads) };
 
-  // Live Activities by device key, kept across sessions: the app is suspended while they matter.
-  type Watch = { jobs: WireJob[]; sent: WireJob[]; turns: Record<string, string>; pushedAt?: number; timer?: NodeJS.Timeout };
-  const activities = new Map<string, Watch>();
-  const forgetActivity = (deviceKey: string, tellRelay: boolean): void => {
-    clearTimeout(activities.get(deviceKey)?.timer);
-    activities.delete(deviceKey);
-    if (tellRelay) relaySend?.(JSON.stringify({ type: "activityToken", device: deviceKey }));
-  };
-  const pushActivity = (deviceKey: string): void => {
-    const watch = activities.get(deviceKey);
-    if (!watch || !relaySend) return;
-    const now = Date.now();
-    const next = plan(watch.sent, watch.jobs, now);
-    if (!next) return;
-    const hold = holdFor(next.priority, watch.pushedAt, now);
-    if (hold > 0) {
-      watch.timer ??= setTimeout(() => {
-        watch.timer = undefined;
-        pushActivity(deviceKey);
-      }, hold).unref();
-      return;
-    }
-    clearTimeout(watch.timer);
-    watch.timer = undefined;
-    relaySend(JSON.stringify({ type: "activityPush", device: deviceKey, ...next }));
-    watch.sent = watch.jobs;
-    watch.pushedAt = now;
-    if (next.event === "end") activities.delete(deviceKey);
-  };
-  const reportActivity = (deviceKey: string, report: Extract<Event, { kind: "live_activity" }>["data"]): void => {
-    if (!relayActivities) return;
-    if (!report.pushToken) return forgetActivity(deviceKey, true);
-    const old = activities.get(deviceKey);
-    clearTimeout(old?.timer);
-    const jobs = cleanJobs(report.jobs);
-    // The app already shows these jobs; the throttle keeps counting from the last push.
-    activities.set(deviceKey, { jobs, sent: jobs, turns: { ...report.turns }, ...(old?.pushedAt !== undefined ? { pushedAt: old.pushedAt } : {}) });
-    relaySend?.(JSON.stringify({ type: "activityToken", device: deviceKey, token: report.pushToken }));
-  };
+  const activities = new ActivityWatch({
+    liveTurn: opts.liveTurn ?? (() => undefined),
+    store: new ActivityStore(path.join(resolveStateDir(), "yorozu", "live-activities.json"), acquireFileLock),
+    warn: (message) => log?.warn(message),
+    send: (raw) => relaySend?.(raw),
+    now: () => Date.now(),
+    setTimer: (callback, delay) => setTimeout(callback, delay).unref(),
+    clearTimer: (timer) => clearTimeout(timer),
+    pairedDevices: async () => (await listDevices()).map((d) => d.signingPub),
+  });
+
+  await activities.start();
+  // The finally clause compares host === me, safe if setup threw before assignment because host is never undefined.
+  let me!: NonNullable<typeof host>;
+  try {
 
   const deviceList = async (deviceKey: string): Promise<Event> => {
     const devices = (await listDevices()).map((d) => ({
@@ -209,7 +189,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     if (!device) return { kind: "device_list", data: { error: "unknown device" } };
     if (patch.removed) {
       await removeDevice(patch.id);
-      me.forget([patch.id]);
+      me!.forget([patch.id]);
       log?.info("yorozu: device removed from Settings");
     } else if (patch.push !== undefined && (device.push !== false) !== patch.push) {
       await putDevice({ ...device, push: patch.push });
@@ -246,7 +226,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         reply([await serveDownload(event.data)]);
         return true;
       case "live_activity":
-        reportActivity(deviceKey, event.data);
+        activities.report(deviceKey, event.data);
         return true;
       case "push_token":
         if (relayPushProxy && relaySend) relaySend(JSON.stringify({ type: "push", device: deviceKey, token: event.data.token }));
@@ -295,7 +275,8 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
       ...peerInfo,
       capabilities: [
         ...peerInfo.capabilities,
-        ...(relayActivities ? [LIVE_ACTIVITY_PUSH] : []),
+        ...(activities.liveActivity ? [LIVE_ACTIVITY_PUSH] : []),
+        // liveActivityHostWriter remains reserved; do not advertise it.
         ...(direct?.listening ? [DIRECT] : []),
         ...(relayPushProxy ? [PUSH_PROXY] : []),
       ],
@@ -308,7 +289,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     pair: pairer({
       pending,
       put: putDevice,
-      forget: (deviceKeys) => me.forget(deviceKeys),
+      forget: (deviceKeys) => me!.forget(deviceKeys),
       allowlist: async () => (await listDevices()).map((d) => d.signingPub),
       relaySend: () => relaySend,
       log,
@@ -326,7 +307,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     dispatch,
   });
 
-  const me: NonNullable<typeof host> = (host = {
+  me = (host = {
     relayUrl: opts.relayUrl,
     keys,
     log,
@@ -337,18 +318,11 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     forget: (deviceKeys) => {
       for (const key of deviceKeys) {
         hub.end(key, { code: CLOSE.unauthorized, reason: "revoked" });
-        forgetActivity(key, false);
+        activities.forget(key, false);
         relaySend?.(JSON.stringify({ type: "revoke", pubkey: key }));
       }
     },
-    activityTurn: (convId, change) => {
-      const now = Date.now();
-      for (const [deviceKey, watch] of activities) {
-        if (!Object.values(watch.turns).includes(convId)) continue;
-        watch.jobs = applyTurn(watch.jobs, watch.turns, convId, change, now);
-        pushActivity(deviceKey);
-      }
-    },
+    activityTurn: (convId, change) => activities.turn(convId, change),
   });
 
   if (opts.directPort !== undefined) {
@@ -477,9 +451,9 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
             );
           case "registered": {
             registered = true;
+            const generation = activities.relayConnecting({ liveActivity: msg.liveActivity, activityTimestamp: msg.activityTimestamp });
             relaySend = send;
             relayFrames = sendFrames;
-            relayActivities = msg.liveActivity === true;
             relayPushProxy = msg.pushProxy === true;
             me.notify = notifyHere;
             me.mint = () =>
@@ -498,7 +472,11 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
             opts.onStatus({ connected: true });
             // The allowlist is the only record of who is paired: this announce rebuilds a room the relay wiped.
             const devices = (await listDevices()).map((d) => d.signingPub);
-            return send(JSON.stringify({ type: "devices", devices }));
+            if (signal.aborted || ws.readyState !== WebSocket.OPEN) return;
+            send(JSON.stringify({ type: "devices", devices }));
+            void activities.relayRegistered(generation)
+              .catch((error: unknown) => log?.warn(`yorozu: Live Activity registration failed: ${String(error)}`));
+            return;
           }
           case "pong":
             pongDue = false;
@@ -525,7 +503,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           case "state":
             return log?.info(`yorozu: relay state: ${String(msg.state).slice(0, 64)}`);
           case "activityGone":
-            if (typeof msg.device === "string") forgetActivity(msg.device, false);
+            if (typeof msg.device === "string") activities.tokenGone(msg.device);
             return;
           case "phones":
             if (msg.count === 0) hub.relayGone();
@@ -559,6 +537,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         signal.removeEventListener("abort", stop);
         if (registered) {
           relaySend = null;
+          activities.relayDown();
           relayFrames = null;
           me.mint = null;
           me.notify = null;
@@ -582,9 +561,14 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     log?.info(`yorozu: reconnecting in ${Math.round(delay / 100) / 10} s`);
     await sleepWithAbort(delay, signal).catch(() => {});
   }
-  await stopWatching?.();
-  await bonjour?.close();
-  await direct?.close();
-  await closeLocal?.();
-  if (host === me) host = null;
+  } finally {
+    // Each teardown runs even if an earlier one fails, especially after setup throws.
+    for (const close of [() => activities.stop(), () => stopWatching?.(), () => bonjour?.close(),
+      () => direct?.close(), () => closeLocal?.()]) {
+      try { await close(); } catch (error) {
+        log?.warn(`yorozu: relay teardown failed (${(error as NodeJS.ErrnoException)?.code ?? "UNKNOWN"})`);
+      }
+    }
+    if (host === me) host = null;
+  }
 }

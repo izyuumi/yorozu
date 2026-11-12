@@ -17,5 +17,5 @@
     "types": ["node"],
     "verbatimModuleSyntax": true
   },
-  "include": ["src/bonjour.ts", "src/cards.ts", "src/direct.ts", "src/envelope.ts", "src/hints.ts", "src/hub.ts", "src/localpair.ts", "src/pairing.ts", "src/presentation.ts", "src/spool.ts", "src/wire.ts"]
+  "include": ["src/activitywatch.ts", "src/bonjour.ts", "src/cards.ts", "src/direct.ts", "src/envelope.ts", "src/hints.ts", "src/hub.ts", "src/localpair.ts", "src/pairing.ts", "src/presentation.ts", "src/spool.ts", "src/wire.ts"]
 }

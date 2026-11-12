@@ -19,6 +19,7 @@ import { channelCard, MESSAGE_TOOL_HINTS, PRESENTATION_CAPABILITIES, renderedPay
 import {
   DEFAULT_CHUNK_LIMIT,
   handleMessage,
+  liveTurn,
   mediaUrls,
   replyTarget,
   resolveOwnerRoute,
@@ -126,6 +127,7 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
       ...(account.directPort !== null && { directPort: account.directPort }),
       directBonjour: account.directBonjour,
       onMessage: (message) => void handleMessage(turn, message),
+      liveTurn,
       onReaction: (reaction) => {
         const { sessionKey } = resolveThreadSessionKeys({ baseSessionKey: route.sessionKey, threadId: reaction.convId });
         userReaction(reaction, { agentId: route.agentId, sessionKey });
