@@ -125,10 +125,11 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
   const owner = registerTurn(message);
   let ended: "failed" | "retrying" | undefined;
   let terminalEmitted = false;
+  const { convId, messageId } = message;
+  const send = (...events: Event[]) => void broadcast(events);
   try {
     const { cfg, accountId, log } = ctx;
-    const { convId, messageId, text } = message;
-    const send = (...events: Event[]) => void broadcast(events);
+    const { text } = message;
     const route = resolveOwnerRoute(cfg, ctx.agent, accountId);
     const { sessionKey } = resolveThreadSessionKeys({ baseSessionKey: route.sessionKey, threadId: convId });
     const files = await uploadedFiles(message.attachments);
@@ -318,10 +319,16 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
       }
     }
     void maybeTitle(cfg, route.agentId, convId, log);
+  } catch (error) {
+    // Before the run (route, attachments, media): nothing else reports it, and onMessage doesn't await this.
+    ctx.log?.warn(`yorozu: run failed before start: ${String(error)}`);
+    if (terminalEmitted) return;
+    ended = "failed";
+    send({ kind: "error", data: { code: "run_failed", message: String(error).slice(0, 500), convId, messageId } });
   } finally {
     if (ended !== "retrying") {
       removeTurn(message, owner);
-      if (!terminalEmitted) activityTurn(message.convId, { kind: "settled" });
+      if (!terminalEmitted) activityTurn(convId, { kind: ended === "failed" ? "failed" : "settled" });
     }
   }
 }
