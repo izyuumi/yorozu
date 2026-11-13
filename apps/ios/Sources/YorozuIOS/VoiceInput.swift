@@ -12,16 +12,41 @@ final class VoiceSession {
         case failed(String)
     }
 
-    private(set) var phase = Phase.idle
+    /// A recording waiting for its transcript, and where the text goes.
+    private struct Take {
+        let samples: [Float]
+        let deliver: (String) -> Void
+    }
+
+    private enum State {
+        case idle
+        case recording(loading: Task<any SpeechEngine, Error>?)
+        case transcribing(attempt: UUID, job: Task<Void, Never>)
+        case failed(String, Take?)
+    }
+
+    private var state = State.idle
     var micDenied = false
-    let recorder = VoiceRecorder()
-    private var clip: [Float] = []
-    private var loading: Task<any SpeechEngine, Error>?
-    private var job: Task<Void, Never>?
-    private var deliver: ((String) -> Void)?
+    let recorder: VoiceRecorder
+
+    init(recorder: VoiceRecorder? = nil) {
+        self.recorder = recorder ?? VoiceRecorder()
+    }
+
+    var phase: Phase {
+        switch state {
+        case .idle: .idle
+        case .recording: .recording
+        case .transcribing: .transcribing
+        case .failed(let message, _): .failed(message)
+        }
+    }
+
+    /// Recording stopped at the recorder's limit; ✓ or send still transcribe what was captured.
+    var capped: Bool { phase == .recording && recorder.capture == .capped }
 
     func start() async {
-        guard phase == .idle else { return }
+        guard case .idle = state else { return }
         var permission = AVAudioApplication.shared.recordPermission
         #if DEBUG
         if PreviewScene.transcript != nil { permission = .granted } // the recorder plays a clip instead of the microphone
@@ -36,62 +61,67 @@ final class VoiceSession {
         }
         do {
             try recorder.start()
-            phase = .recording
             // Load while the owner speaks, so only the transcription itself is left after ✓.
-            loading = VoiceSetup.shared.load()
+            state = .recording(loading: VoiceSetup.shared.load())
         } catch {
             _ = recorder.stop()
-            phase = .failed(error.localizedDescription)
+            state = .failed(error.localizedDescription, nil)
         }
     }
 
     /// Stops recording and transcribes; `deliver` gets the text on success.
     func finish(_ deliver: @escaping (String) -> Void) {
-        guard phase == .recording else { return }
-        clip = recorder.stop()
-        self.deliver = deliver
-        retry()
+        guard case .recording(let loading) = state else { return }
+        transcribe(Take(samples: recorder.stop(), deliver: deliver), loading: loading)
     }
 
     /// Stops recording and hands the clip over, leaving the composer free; nil unless recording.
     func handOff() -> VoiceClip? {
-        guard phase == .recording else { return nil }
+        guard case .recording(let loading) = state else { return nil }
         let handed = VoiceClip(samples: recorder.stop(), loading: loading)
-        loading = nil
-        reset()
+        state = .idle
         return handed.samples.isEmpty ? nil : handed
     }
 
     func retry() {
-        guard let deliver, !clip.isEmpty else { return cancel() }
-        phase = .transcribing
-        let clip = VoiceClip(samples: clip, loading: loading)
-        loading = nil
-        job = Task {
-            switch await clip.transcribe() {
-            case .success(let text):
-                reset()
-                deliver(text)
-            case .failure(let error):
-                guard !Task.isCancelled else { return }
-                phase = .failed(error.localizedDescription)
-            }
-        }
+        guard case .failed(_, let take) = state else { return }
+        guard let take else { return cancel() }
+        transcribe(take, loading: nil)
     }
 
     func cancel() {
-        if phase == .recording { _ = recorder.stop() }
-        loading?.cancel()
-        reset()
+        switch state {
+        case .recording(let loading):
+            _ = recorder.stop()
+            loading?.cancel()
+        case .transcribing(_, let job):
+            job.cancel()
+        case .idle, .failed:
+            break
+        }
+        state = .idle
     }
 
-    private func reset() {
-        job?.cancel()
-        job = nil
-        loading = nil
-        clip = []
-        deliver = nil
-        phase = .idle
+    private func transcribe(_ take: Take, loading: Task<any SpeechEngine, Error>?) {
+        guard !take.samples.isEmpty else {
+            loading?.cancel()
+            state = .idle
+            return
+        }
+        let attempt = UUID()
+        let clip = VoiceClip(samples: take.samples, loading: loading)
+        let job = Task {
+            let result = await clip.transcribe()
+            guard case .transcribing(let current, _) = state, current == attempt else { return }
+            switch result {
+            case .success(let text):
+                state = .idle
+                take.deliver(text)
+            case .failure(let error):
+                state = .failed(error.localizedDescription, take)
+            }
+        }
+        state = .transcribing(attempt: attempt, job: job)
     }
 }
 
@@ -133,47 +163,98 @@ final class VoiceSends {
     static let shared = VoiceSends()
 
     struct Pending: Identifiable {
-        let id = UUID()
+        let id: UUID
         var failure: String?
     }
 
-    private(set) var pending: [String: [Pending]] = [:]
-    @ObservationIgnored private var work: [UUID: (clip: VoiceClip, send: (String) -> Void)] = [:]
-
-    func add(_ clip: VoiceClip, in convId: String, send: @escaping (String) -> Void) {
-        let item = Pending()
-        pending[convId, default: []].append(item)
-        work[item.id] = (clip, send)
-        run(item.id, in: convId)
+    private enum Step {
+        case transcribing(attempt: UUID, job: Task<Void, Never>)
+        case failed(String)
     }
 
-    func retry(_ id: UUID, in convId: String) {
-        set(id, in: convId, failure: nil)
-        run(id, in: convId)
+    /// One voice message: its clip, where the text goes, and the one transcription running or its failure.
+    private struct Item {
+        let id: UUID
+        let samples: [Float]
+        /// The engine load; kept for Retry once it succeeded, dropped after it failed so Retry loads again.
+        var loading: Task<any SpeechEngine, Error>?
+        let send: (String) -> Void
+        var step: Step
     }
 
-    func discard(_ id: UUID, in convId: String) {
-        work[id] = nil
-        pending[convId]?.removeAll { $0.id == id }
-    }
+    private var items: [String: [Item]] = [:]
 
-    private func run(_ id: UUID, in convId: String) {
-        guard let (clip, send) = work[id] else { return }
-        work[id]?.clip.loading = nil
-        Task {
-            switch await clip.transcribe() {
-            case .success(let text):
-                discard(id, in: convId)
-                send(text)
-            case .failure(let error):
-                set(id, in: convId, failure: error.localizedDescription)
+    /// The bubbles to show per conversation.
+    var pending: [String: [Pending]] {
+        items.mapValues { list in
+            list.map { item in
+                guard case .failed(let failure) = item.step else { return Pending(id: item.id) }
+                return Pending(id: item.id, failure: failure)
             }
         }
     }
 
-    private func set(_ id: UUID, in convId: String, failure: String?) {
-        guard let index = pending[convId]?.firstIndex(where: { $0.id == id }) else { return }
-        pending[convId]?[index].failure = failure
+    func add(_ clip: VoiceClip, in convId: String, send: @escaping (String) -> Void) {
+        let id = UUID()
+        let (loading, step) = transcribe(id, samples: clip.samples, loading: clip.loading, in: convId)
+        items[convId, default: []].append(Item(id: id, samples: clip.samples, loading: loading, send: send, step: step))
+    }
+
+    /// Transcribes a failed message again; a no-op while it is still transcribing.
+    func retry(_ id: UUID, in convId: String) {
+        guard let item = find(id, in: convId), case .failed = item.step else { return }
+        let (loading, step) = transcribe(id, samples: item.samples, loading: item.loading, in: convId)
+        update(id, in: convId) {
+            $0.loading = loading
+            $0.step = step
+        }
+    }
+
+    /// Drops the message: its transcription stops and nothing is sent.
+    func discard(_ id: UUID, in convId: String) {
+        guard let item = remove(id, in: convId), case .transcribing(_, let job) = item.step else { return }
+        job.cancel()
+        item.loading?.cancel()
+    }
+
+    /// Starts one transcription attempt for the message; the caller stores the returned load and step on it.
+    private func transcribe(_ id: UUID, samples: [Float], loading: Task<any SpeechEngine, Error>?, in convId: String)
+        -> (Task<any SpeechEngine, Error>, Step) {
+        let loading = loading ?? VoiceSetup.shared.load()
+        let clip = VoiceClip(samples: samples, loading: loading)
+        let attempt = UUID()
+        let job = Task {
+            let result = await clip.transcribe()
+            let loaded = (try? await loading.value) != nil
+            // Only the current attempt of a message still listed may finish it: a discard or a newer attempt wins.
+            guard let item = find(id, in: convId), case .transcribing(let current, _) = item.step, current == attempt else { return }
+            switch result {
+            case .success(let text):
+                remove(id, in: convId)
+                item.send(text)
+            case .failure(let error):
+                update(id, in: convId) {
+                    $0.step = .failed(error.localizedDescription)
+                    $0.loading = loaded ? loading : nil
+                }
+            }
+        }
+        return (loading, .transcribing(attempt: attempt, job: job))
+    }
+
+    @discardableResult private func remove(_ id: UUID, in convId: String) -> Item? {
+        guard let index = items[convId]?.firstIndex(where: { $0.id == id }), let item = items[convId]?.remove(at: index) else { return nil }
+        if items[convId]?.isEmpty == true { items[convId] = nil }
+        return item
+    }
+
+    private func find(_ id: UUID, in convId: String) -> Item? {
+        items[convId]?.first { $0.id == id }
+    }
+
+    private func update(_ id: UUID, in convId: String, _ change: (inout Item) -> Void) {
+        guard let index = items[convId]?.firstIndex(where: { $0.id == id }) else { return }
+        change(&items[convId]![index])
     }
 }
 
@@ -232,14 +313,21 @@ struct VoiceBar: View {
                 switch session.phase {
                 case .recording, .idle:
                     HStack(spacing: LayoutMetrics.inner) {
-                        Waveform(levels: session.recorder.levels)
+                        if session.capped {
+                            Text("Recording limit reached")
+                                .textStyle(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            Waveform(levels: session.recorder.levels)
+                        }
                         Text(Duration.seconds(session.recorder.seconds).formatted(.time(pattern: .minuteSecond)))
                             .textStyle(.body)
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel(Text("Recording"))
+                    .accessibilityLabel(session.capped ? Text("Recording limit reached") : Text("Recording"))
                 case .transcribing:
                     HStack(spacing: LayoutMetrics.inner) {
                         ProgressView().controlSize(.small)

@@ -234,7 +234,7 @@ let project = Project(
             entitlements: .dictionary(["com.apple.security.application-groups": [.string(appGroup)]]),
             settings: signing()
         ),
-        // Snapshot, Live Activity and client lifecycle tests on the Mac without hosting the app.
+        // Snapshot, Live Activity, client lifecycle and voice session tests on the Mac without hosting the app.
         .target(
             name: "YorozuTests",
             destinations: [.mac],
@@ -255,8 +255,11 @@ let project = Project(
                 "Sources/ShareInbox/DeviceModel.swift", "Sources/ShareInbox/ShareInbox.swift",
                 "Sources/WidgetShared/Interface/Palette.swift", "Sources/YorozuIOS/Push.swift", "Sources/YorozuIOS/YorozuIntents.swift",
                 "Sources/YorozuIOS/ChatScrollEdge.swift",
+                "Sources/YorozuIOS/VoiceInput.swift", "Sources/YorozuIOS/VoiceRecorder.swift", "Sources/YorozuIOS/VoiceSetup.swift",
+                "Sources/YorozuIOS/VoiceModel.swift", "Sources/YorozuIOS/Transcriber.swift", "Sources/YorozuIOS/Metrics.swift",
+                "Sources/YorozuIOS/Zoom.swift", "Sources/YorozuIOS/YorozuTheme.swift",
             ],
-            dependencies: [.package(product: "YorozuWire")],
+            dependencies: [.package(product: "YorozuWire"), .package(product: "VoiceText"), .package(product: "SpeechEngines")],
             settings: .settings(base: ["DEVELOPMENT_TEAM": "AN5KM8QGEF", "CODE_SIGN_STYLE": "Automatic"])
         ),
     ],
