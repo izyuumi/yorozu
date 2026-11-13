@@ -85,8 +85,56 @@ export class PendingPairings {
 /** Constant-time equality; unequal lengths never match. */
 const sameBytes = (a: Buffer, b: Buffer) => a.length === b.length && timingSafeEqual(a, b);
 
-/** The hub's `pair`: stores a device whose proof spends a pending secret. After a pairing over the direct path the
- * relay gets the allowlist at once if it is connected, else on its next `registered`. */
+type AnnounceState = { phase: "idle" } | { phase: "sending"; again: boolean };
+type AnnounceOptions = {
+  allowlist: () => Promise<string[]>;
+  relaySend: () => ((raw: string) => void) | null;
+  log?: Log;
+};
+
+/** Serializes roster reads and sends, so an older snapshot cannot land last. */
+export class Announcer {
+  private state: AnnounceState = { phase: "idle" };
+  private settled: Promise<void> = Promise.resolve();
+  private readonly opts: AnnounceOptions;
+
+  constructor(opts: AnnounceOptions) {
+    this.opts = opts;
+  }
+
+  announce(): void {
+    if (this.state.phase === "sending") {
+      this.state.again = true;
+      return;
+    }
+    const state: Extract<AnnounceState, { phase: "sending" }> = { phase: "sending", again: false };
+    this.state = state;
+    this.settled = this.run(state);
+  }
+
+  idle(): Promise<void> {
+    return this.settled;
+  }
+
+  private async run(state: Extract<AnnounceState, { phase: "sending" }>): Promise<void> {
+    do {
+      state.again = false;
+      try {
+        const send = this.opts.relaySend();
+        if (send) {
+          const devices = await this.opts.allowlist();
+          if (send === this.opts.relaySend()) send(JSON.stringify({ type: "devices", devices }));
+        }
+      } catch (error) {
+        this.opts.log?.warn(`yorozu: allowlist announce failed: ${String(error)}`);
+      }
+    } while (state.again);
+    this.state = { phase: "idle" };
+  }
+}
+
+/** The hub's `pair`: stores a device whose proof spends a pending secret. After every pairing, on either path,
+ * queues the relay allowlist without delaying the handshake; disconnected relays get it on their next `registered`. */
 export function pairer(opts: {
   pending: PendingPairings;
   /** Stores the device; the keys of the devices it evicted. */
@@ -95,14 +143,13 @@ export function pairer(opts: {
   allowlist: () => Promise<string[]>;
   relaySend: () => ((raw: string) => void) | null;
   log?: Log;
-}): (proof: string | undefined, staticPub: string, deviceKey: string, now: number, path: Path) => Promise<boolean> {
+}, announcer = new Announcer(opts)): (proof: string | undefined, staticPub: string, deviceKey: string, now: number, path: Path) => Promise<boolean> {
   return async (proof, staticPub, deviceKey, now, path) => {
     if (!opts.pending.spend(proof, staticPub, deviceKey, now)) return false;
     const evicted = await opts.put({ signingPub: deviceKey, staticPub, pairedAt: now });
     opts.forget(evicted);
     opts.log?.info(`yorozu: device paired${path === "direct" ? " over direct" : ""}${evicted.length ? " (the oldest made way)" : ""}`);
-    const send = path === "direct" ? opts.relaySend() : null;
-    if (send) send(JSON.stringify({ type: "devices", devices: await opts.allowlist() }));
+    announcer.announce();
     return true;
   };
 }

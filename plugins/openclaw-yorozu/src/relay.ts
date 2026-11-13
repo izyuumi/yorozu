@@ -30,7 +30,7 @@ import { ActivityStore } from "./activitystore.js";
 import { ActivityWatch } from "./activitywatch.js";
 import type { OwnerTurnChange } from "./liveactivity.js";
 import { LocalPairingFile, localPairingPath } from "./localpair.js";
-import { mintCode, pairer, pairingQuery, PendingPairings } from "./pairing.js";
+import { Announcer, mintCode, pairer, pairingQuery, PendingPairings } from "./pairing.js";
 import { firstLine, previewKey, previewPlaintext, pushTitle, sealPreview, threadRef } from "./push.js";
 import { listCursors, mergeCursor } from "./reads.js";
 import { b64u, decodeFrame, fingerprint, signFrame } from "./wire.js";
@@ -148,6 +148,12 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
   url.searchParams.set("room", keys.room);
 
   let relaySend: ((raw: string) => void) | null = null;
+  const announceOptions = {
+    allowlist: async () => (await listDevices()).map((d) => d.signingPub),
+    relaySend: () => relaySend,
+    log,
+  };
+  const announcer = new Announcer(announceOptions);
   let relayFrames: ((payloads: string[]) => void) | null = null;
   let relayPushProxy = false;
   let direct: DirectListener | null = null;
@@ -290,10 +296,8 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
       pending,
       put: putDevice,
       forget: (deviceKeys) => me!.forget(deviceKeys),
-      allowlist: async () => (await listDevices()).map((d) => d.signingPub),
-      relaySend: () => relaySend,
-      log,
-    }),
+      ...announceOptions,
+    }, announcer),
     refused: (deviceKey) => relaySend?.(JSON.stringify({ type: "revoke", pubkey: deviceKey })),
     onPeer: async ({ deviceKey, event, reply }) => {
       if (event.kind !== "peer_info") return;
@@ -471,9 +475,9 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
             log?.info(`yorozu: registered at relay, room ${keys.room}`);
             opts.onStatus({ connected: true });
             // The allowlist is the only record of who is paired: this announce rebuilds a room the relay wiped.
-            const devices = (await listDevices()).map((d) => d.signingPub);
+            announcer.announce();
+            await announcer.idle();
             if (signal.aborted || ws.readyState !== WebSocket.OPEN) return;
-            send(JSON.stringify({ type: "devices", devices }));
             void activities.relayRegistered(generation)
               .catch((error: unknown) => log?.warn(`yorozu: Live Activity registration failed: ${String(error)}`));
             return;

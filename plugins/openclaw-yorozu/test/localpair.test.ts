@@ -72,6 +72,7 @@ async function host(addresses = ["127.0.0.1", "192.168.1.5"]) {
   const pending = new PendingPairings();
   const allowlist = new Map<string, string>();
   const relay: string[] = [];
+  const relaySend = (raw: string) => { relay.push(raw); };
   const codes: Awaited<ReturnType<typeof mintCode>>[] = [];
   let mints = 0;
   const local = new LocalPairingFile({
@@ -102,7 +103,7 @@ async function host(addresses = ["127.0.0.1", "192.168.1.5"]) {
       },
       forget: () => {},
       allowlist: async () => [...allowlist.keys()],
-      relaySend: () => (raw) => { relay.push(raw); },
+      relaySend: () => relaySend,
     }),
   });
   const servers = new Map<string, FakeServer>();

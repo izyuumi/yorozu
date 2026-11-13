@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import type { DirectHints } from "../src/envelope.ts";
 import type { Link } from "../src/hub.ts";
 registerHooks({ resolve(specifier, context, next) {
@@ -75,12 +76,18 @@ test("a proof of the wrong length or one character off is refused without throwi
 
 const peer = { app: "test", protocolMin: 3, protocolMax: 3, capabilities: [] as string[] };
 
-function host(relayConnected: boolean, readable = true, legacy = false) {
+function host(relayConnected: boolean, readable = true, legacy = false, readAllowlist = async (keys: string[]) => keys) {
   const signing = ed25519Keypair();
   const keys = { static: x25519Keypair(), room: roomId(signing.publicKey) };
   const allowlist = new Map<string, string>();
   const pending = new PendingPairings();
   const relay: string[] = [];
+  let roster: string[] = [];
+  const send = (raw: string) => {
+    relay.push(raw);
+    const message = JSON.parse(raw);
+    if (message.type === "devices") roster = message.devices;
+  };
   const refused: string[] = [];
   const logs: string[] = [];
   const log = { info: (s: string) => logs.push(s), warn: (s: string) => logs.push(s) };
@@ -99,11 +106,23 @@ function host(relayConnected: boolean, readable = true, legacy = false) {
       pending,
       put: async (device) => { allowlist.set(device.signingPub, device.staticPub); return []; },
       forget: () => {},
-      allowlist: async () => [...allowlist.keys()],
-      relaySend: () => relayConnected ? (raw) => relay.push(raw) : null,
+      allowlist: async () => readAllowlist([...allowlist.keys()]),
+      relaySend: () => relayConnected ? send : null,
     }),
   });
-  return { keys, hub, allowlist, pending, relay, refused, logs };
+  return { keys, hub, allowlist, pending, relay, refused, logs,
+    roster: () => roster,
+    asKnownJoin: (key: string) => roster.includes(key) ? "joined" : "unknown device",
+  };
+}
+
+async function relayQuiet(h: ReturnType<typeof host>) {
+  for (let attempts = 0; attempts < 40; attempts++) {
+    const count = h.relay.length;
+    await delay(50);
+    if (h.relay.length === count) return;
+  }
+  assert.fail("relay did not become quiet");
 }
 
 /** A device's init frame, signed, with a hello proof over `secret` when given. */
@@ -129,6 +148,7 @@ test("over direct, a valid proof pairs the device once and the relay gets the al
   assert.equal(await h.hub.handshake(first.payload, first.sig, direct), key);
   assert.equal(decodeFrame(direct.sent[0]![0]!)?.type, "response");
   assert.equal(h.allowlist.get(key), b64u(first.device.static.publicKey));
+  await relayQuiet(h);
   assert.deepEqual(h.relay.map((raw) => JSON.parse(raw)), [{ type: "devices", devices: [key] }]);
   assert.ok(h.logs.includes("yorozu: device paired over direct"));
   const second = init(h, secret);
@@ -153,11 +173,42 @@ test("over direct, an expired secret or no proof is refused; the allowlist waits
   assert.deepEqual(h.relay, [], "no relay: the devices go out on the next registered");
 });
 
-test("over the relay, a pairing doesn't resend the allowlist and a refusal revokes", async () => {
+test("two direct pairings close together leave both on the relay roster: code-only retry avoids unknown device", async () => {
+  const gate = Promise.withResolvers<void>();
+  const reading = Promise.withResolvers<void>();
+  let reads = 0;
+  const h = host(true, true, false, async (keys) => {
+    if (++reads === 1) {
+      reading.resolve();
+      await gate.promise;
+    }
+    return keys;
+  });
+  const a = init(h, h.pending.add(Date.now() + OFFLINE_MS));
+  const b = init(h, h.pending.add(Date.now() + OFFLINE_MS));
+  const first = h.hub.handshake(a.payload, a.sig, link("direct"));
+  await reading.promise;
+  try {
+    assert.ok(await h.hub.handshake(b.payload, b.sig, link("direct")));
+  } finally {
+    gate.resolve();
+  }
+  assert.ok(await first);
+  await relayQuiet(h);
+  const aKey = b64u(a.device.signing.publicKey);
+  const bKey = b64u(b.device.signing.publicKey);
+  assert.notEqual(h.asKnownJoin(bKey), "unknown device");
+  assert.deepEqual(new Set(h.roster()), new Set([aKey, bKey]));
+});
+
+test("over the relay, a pairing announces the allowlist and a refusal revokes", async () => {
   const h = host(true);
   const valid = init(h, h.pending.add(Date.now() + OFFLINE_MS));
   assert.ok(await h.hub.handshake(valid.payload, valid.sig, link("relay")));
-  assert.deepEqual(h.relay, []);
+  await relayQuiet(h);
+  const key = b64u(valid.device.signing.publicKey);
+  assert.deepEqual(h.relay.map((raw) => JSON.parse(raw)), [{ type: "devices", devices: [key] }]);
+  assert.equal(h.asKnownJoin(key), "joined");
   const stranger = init(h);
   assert.equal(await h.hub.handshake(stranger.payload, stranger.sig, link("relay")), null);
   assert.deepEqual(h.refused, [b64u(stranger.device.signing.publicKey)]);
