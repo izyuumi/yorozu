@@ -137,7 +137,7 @@ The QR carries the same query in a fragment: `https://yorozu.yumi.to/pair#<query
 
 ### Pairing over the direct path
 
-A pairing race dials the link's direct candidates next to the relay ([candidates](#direct-path): loopback on a Mac and Tailscale always, LAN only while Local Network is usable or after the scan-time explainer). The init carries the proof on either path. When a direct leg's proof matches a pending secret, the plugin stores the device, spends the secret and logs `yorozu: device paired over direct`. If its relay is connected, it sends the relay its `devices` allowlist at once, as after `registered`; otherwise the next `registered` carries it.
+A pairing race dials the link's direct candidates next to the relay ([candidates](#direct-path): loopback on a Mac and Tailscale always, LAN only while Local Network is usable or after the scan-time explainer). The init carries the proof on either path. When a direct leg's proof matches a pending secret, the plugin stores the device, spends the secret and logs `yorozu: device paired over direct`. After every successful pairing on either path, it queues a serialized `devices` allowlist announce if its relay is connected, as after `registered`; otherwise the next `registered` carries it.
 
 - A relay join with an offline token fails as `unknown token`, and as a known device as `unknown device` while the relay doesn't know it: during pairing that relay leg drops out, and the race fails only once the direct legs have failed too.
 - No relay message burns a token, so a code paired over direct keeps its relay token until it expires. A relay join with it can't pair anyone (the secret is spent): the plugin refuses another device, and the same device is simply known.
