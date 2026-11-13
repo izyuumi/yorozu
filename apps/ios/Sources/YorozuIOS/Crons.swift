@@ -2,15 +2,13 @@ import SwiftUI
 import YorozuWire
 
 struct HomeView: View {
-    enum Section: Hashable { case chats, crons }
+    typealias Section = HomeRoute.Section
 
     let model: AppModel
 
-    @State private var section = Section.chats
-    @State private var selection: String?
+    @State private var route = HomeRoute()
     @State private var pair = ChatPair()
     @State private var blank: String?
-    @State private var columns = LaunchColumns.initial
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var windowWidth: CGFloat = 0
@@ -26,39 +24,43 @@ struct HomeView: View {
             split
             #endif
         }
-        .opensRequestedConversation(model, selection: $selection) {
+        .onChange(of: model.requestedConversation, initial: true) { _, convId in
+            guard let convId else { return }
             #if os(iOS)
-            columns = LaunchColumns.afterRequestedOpen(columns)
+            route.openRequested(convId)
+            #else
+            route.open(convId) // the Mac keeps its columns as they are
             #endif
+            model.requestedConversation = nil
         }
         .inAppNotices(model) { open($0, automation: nil) }
-        .onChange(of: selection == nil && besideList, initial: true) { _, empty in
+        .onChange(of: route.selection == nil && besideList, initial: true) { _, empty in
             guard empty else { return }
             Task { @MainActor in
-                guard selection == nil, besideList, pair.partner == nil else { return }
+                guard route.selection == nil, besideList, pair.partner == nil else { return }
                 let convId = WireEvent.newId()
                 blank = convId
-                selection = convId
+                route.selection = convId
             }
         }
         .onChange(of: model.deleted) { _, convId in
-            if convId != nil, pair.partner == convId { pair.close(pair.focusedSide == .left ? .right : .left, selection: &selection) }
-            if convId != nil, selection == convId { selection = nil }
+            if convId != nil, pair.partner == convId { pair.close(pair.focusedSide == .left ? .right : .left, selection: &route.selection) }
+            if convId != nil, route.selection == convId { route.selection = nil }
         }
         #if os(iOS)
-        .onChange(of: selection) { old, new in
+        .onChange(of: route.selection) { old, new in
             dragging = false
-            pair.selectionChanged(from: old, to: new, compact: sizeClass == .compact, selection: &selection)
+            pair.selectionChanged(from: old, to: new, compact: sizeClass == .compact, selection: &route.selection)
         }
         .onChange(of: sizeClass) { _, size in
-            if size == .compact, let blank, selection == blank, model.conversations[blank]?.items.isEmpty ?? true { selection = nil }
-            pair.selectionChanged(from: nil, to: selection, compact: size == .compact, selection: &selection)
+            if size == .compact, let blank, route.selection == blank, model.conversations[blank]?.items.isEmpty ?? true { route.selection = nil }
+            pair.selectionChanged(from: nil, to: route.selection, compact: size == .compact, selection: &route.selection)
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
         #endif
     }
 
-    private func side(_ convId: String) -> PaneSide? { pair.side(of: convId, selection: selection) }
+    private func side(_ convId: String) -> PaneSide? { pair.side(of: convId, selection: route.selection) }
 
     private var besideList: Bool {
         #if os(iOS)
@@ -70,32 +72,32 @@ struct HomeView: View {
 
     private var split: some View {
         #if os(iOS)
-        NavigationSplitView(columnVisibility: $columns) {
-            ConversationsView(model: model, selection: $selection, section: $section, showsCrons: true,
-                openBeside: { convId in withAnimation(reduceMotion ? nil : .snappy) { pair.openBeside(convId, selection: &selection) } }, side: side,
+        NavigationSplitView(columnVisibility: $route.columns) {
+            ConversationsView(model: model, selection: $route.selection, section: $route.section, showsCrons: true,
+                openBeside: { convId in withAnimation(reduceMotion ? nil : .snappy) { pair.openBeside(convId, selection: &route.selection) } }, side: side,
                 dragStarted: { dragging = true })
-                .toolbar(removing: section == .chats && selection != nil ? .sidebarToggle : nil)
+                .toolbar(removing: route.section == .chats && route.selection != nil ? .sidebarToggle : nil)
         } detail: {
-            if section == .crons {
+            if route.section == .crons {
                 CronsView(model: model, open: open)
-            } else if selection != nil {
-                ChatPairView(model: model, selection: $selection, pair: $pair, columns: $columns, dragging: $dragging,
+            } else if route.selection != nil {
+                ChatPairView(model: model, selection: $route.selection, pair: $pair, columns: $route.columns, dragging: $dragging,
                     windowWidth: windowWidth)
             } else {
                 Color.clear
             }
         }
         #else
-        NavigationSplitView(columnVisibility: $columns) {
-            ConversationsView(model: model, selection: $selection, section: $section, showsCrons: true)
+        NavigationSplitView(columnVisibility: $route.columns) {
+            ConversationsView(model: model, selection: $route.selection, section: $route.section, showsCrons: true)
                 #if os(macOS)
                 .navigationSplitViewColumnWidth(min: LayoutMetrics.sidebarMinWidth, ideal: LayoutMetrics.sidebarIdealWidth,
                     max: LayoutMetrics.sidebarMaxWidth)
                 #endif
         } detail: {
-            if section == .crons {
+            if route.section == .crons {
                 CronsView(model: model, open: open)
-            } else if let selection {
+            } else if let selection = route.selection {
                 ChatView(model: model, convId: selection).id(selection)
             } else {
                 Color.clear
@@ -105,27 +107,27 @@ struct HomeView: View {
     }
 
     private var tabs: some View {
-        TabView(selection: $section) {
+        TabView(selection: $route.section) {
             Tab(String(localized: "Chats"), systemImage: "bubble.left.and.bubble.right", value: Section.chats) {
                 NavigationStack {
-                    ConversationsView(model: model, selection: $selection, section: $section, showsCrons: false, side: side)
-                        .navigationDestination(item: $selection) { convId in
+                    ConversationsView(model: model, selection: $route.selection, section: $route.section, showsCrons: false, side: side)
+                        .navigationDestination(item: $route.selection) { convId in
                             ChatView(model: model, convId: convId)
                                 .id(convId)
                                 #if os(iOS)
-                                .safeAreaInset(edge: .top, spacing: 0) { PairSwitcher(model: model, selection: $selection, pair: $pair) }
+                                .safeAreaInset(edge: .top, spacing: 0) { PairSwitcher(model: model, selection: $route.selection, pair: $pair) }
                                 #endif
                                 .toolbar {
                                     if model.conversations[convId]?.items.isEmpty == false {
                                         ToolbarItem(placement: .pinnedAction) {
-                                            Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") { selection = model.newConversationId() }
+                                            Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") { route.selection = model.newConversationId() }
                                                 .accessibilityIdentifier("chat.new")
                                         }
                                     }
                                 }
                         }
                         #if os(iOS)
-                        .toolbar(selection == nil ? .visible : .hidden, for: .tabBar)
+                        .toolbar(route.selection == nil ? .visible : .hidden, for: .tabBar)
                         #endif
                 }
             }
@@ -137,8 +139,7 @@ struct HomeView: View {
 
     private func open(_ convId: String, automation: CronJob?) {
         if let automation { model.automationDrafts[convId] = automation }
-        selection = convId
-        section = .chats
+        route.open(convId)
     }
 }
 
