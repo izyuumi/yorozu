@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.0
+
+### Features
+
+- **openclaw-yorozu:** durable host-owned Live Activity writer state (capability withheld) (#682)
+
 ## 0.15.0
 
 ### Features
