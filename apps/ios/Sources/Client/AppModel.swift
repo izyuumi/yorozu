@@ -14,8 +14,9 @@ final class AppModel {
     private(set) var state = RelayConnection.State.offline
     private(set) var conversations: [String: Conversation] = [:]
     private(set) var typing: Set<String> = []
+    private var outageMemory = OutageMemory()
     /// The last relay outage (`.offline` or `.hostOffline`), kept while reconnecting until the state is `.ready` again.
-    private(set) var outage: RelayConnection.State?
+    var outage: RelayConnection.State? { outageMemory.outage }
     /// Conversations whose running turn has sent no reply or tool event for `stallTimeout`.
     private(set) var stalled: Set<String> = []
     private(set) var loadingOlder: Set<String> = []
@@ -398,6 +399,7 @@ final class AppModel {
         }
         pairingError = nil
         self.connection = connection
+        outageMemory.appRuns()
         #if os(iOS)
         if let hostKey = Data(base64URLEncoded: pairing.pairing.macPubkey),
            let key = try? PushPreview.key(myPriv: pairing.identity.sessionPrivateKey, theirPub: hostKey) {
@@ -442,7 +444,7 @@ final class AppModel {
         if let connection { Task { await connection.stop() } }
         connection = nil
         state = .offline
-        outage = nil
+        outageMemory.reset()
         route = nil
         routeChangedAt = nil
     }
@@ -456,6 +458,7 @@ final class AppModel {
         takeShares()
         if pairingSaveError != nil { updatePairing { _ in } }
         guard let connection else { return connect() }
+        outageMemory.appRuns()
         Task { await connection.reconnect() }
     }
 
@@ -464,11 +467,13 @@ final class AppModel {
         lifecycle.becomeInactive()
         guard !isDemo else { return }
         guard let connection else { return connect() }
+        outageMemory.appRuns()
         Task { await connection.reconnect() }
     }
 
     private func shareSent() {
         guard active, !isDemo, let connection else { return }
+        outageMemory.appRuns()
         Task { await connection.reconnect() }
     }
 
@@ -500,6 +505,7 @@ final class AppModel {
         Task {
             try? await Task.sleep(for: .milliseconds(500))
             guard lifecycle.stillSuspended(visit: visit) else { return }
+            outageMemory.appStops()
             await connection.stop()
         }
     }
@@ -537,13 +543,17 @@ final class AppModel {
         guard !isDemo, paired, !active else { return }
         let lifecycle = self.lifecycle
         let generation = connectionGeneration
-        if let connection { await connection.reconnect() } else { connect() }
+        if let connection {
+            outageMemory.appRuns()
+            await connection.reconnect()
+        } else { connect() }
         for _ in 0..<40 where state != .ready {
             guard generation == connectionGeneration, !isDemo, self.lifecycle == lifecycle else { return }
             try? await Task.sleep(for: .milliseconds(250))
         }
         try? await Task.sleep(for: .seconds(2))
         guard generation == connectionGeneration, !isDemo, self.lifecycle == lifecycle, !active, let connection else { return }
+        outageMemory.appStops()
         await connection.stop()
     }
 
@@ -597,13 +607,7 @@ final class AppModel {
             Self.connectionLog.info("state \(String(describing: new), privacy: .public)")
             state = new
             if new != .ready { transfers.sessionLost() }
-            switch new {
-            case .hostOffline: outage = new
-            // The app's own stop on suspend also reports `.offline`; only an active app is out of reach.
-            case .offline: if active { outage = new }
-            case .connecting, .handshaking: break
-            default: outage = nil
-            }
+            outageMemory.apply(new)
             switch new {
             case .pairingFailed:
                 if !paired { failPairing(String(localized: "The host refused this pairing code. It may have expired or been used. Run `openclaw yorozu pair` again.")) }
