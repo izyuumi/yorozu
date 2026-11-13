@@ -19,6 +19,7 @@ actor ScriptedTransport: ClientTransport {
     private var waiting: [RelayConnection.Update] = []
     private(set) var sent: [WireEvent] = []
     private(set) var sendResult = false
+    private(set) var stops = 0
 
     func setSendResult(_ result: Bool) { sendResult = result }
 
@@ -36,7 +37,13 @@ actor ScriptedTransport: ClientTransport {
 
     func start() {}
     func reconnect() {}
-    func stop() {}
+
+    /// Counts the stop and reports `.offline`, like `RacingConnection.stop()`.
+    func stop() {
+        stops += 1
+        emit(.state(.offline))
+    }
+
     func registerPush(deviceToken: String) {}
 
     func send(_ event: WireEvent) -> Bool {
