@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.16.1
+
+### Fixes
+
+- **ios:** never deliver a cancelled dictation and show the recording limit (#727)
+- **plugin:** announce the relay allowlist after every pairing (#726)
+- **plugin:** report a failure before the agent run to the app (#728)
+- **ios:** record a relay outage by why the socket went offline, not whether the app is active (#725)
+
 ## 0.16.0
 
 ### Features
