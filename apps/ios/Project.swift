@@ -251,6 +251,7 @@ let project = Project(
                 "Sources/WidgetShared/Model/**", "Sources/WidgetShared/Interface/WidgetLink.swift",
                 "Sources/WidgetShared/Interface/Launcher.swift", "Sources/YorozuIOS/LaunchColumns.swift", "Sources/YorozuIOS/ChatPair.swift",
                 "Sources/YorozuIOS/ComposerCursor.swift",
+                "Sources/YorozuIOS/HomeRoute.swift",
                 "Sources/Client/AppModel.swift", "Sources/Client/ClientTransport.swift", "Sources/Client/DemoData.swift",
                 "Sources/Client/DeviceCodePairing.swift", "Sources/Client/Transfers.swift",
                 "Sources/ShareInbox/DeviceModel.swift", "Sources/ShareInbox/ShareInbox.swift",
