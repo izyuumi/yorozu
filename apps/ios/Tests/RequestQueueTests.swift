@@ -128,6 +128,33 @@ import YorozuWire
         #expect(queue.take() == third)
     }
 
+    @Test(arguments: [true, false])
+    func aHistoryPageWithADifferentCursorDoesNotFinishTheRequest(before: Bool) {
+        let request = WireEvent.historyRequest(HistoryRequest(
+            convId: "conv-a", before: before ? 40 : nil, after: before ? nil : 7
+        ))
+        var queue = RequestQueue()
+        queue.enqueue(request)
+        #expect(queue.take() == request)
+
+        let different = WireEvent.history(History(
+            convId: "conv-a", before: before ? 39 : nil, after: before ? nil : 8,
+            items: [], more: false, rev: 1
+        ))
+        let finishedByDifferent = queue.finish(answering: different)
+        #expect(!finishedByDifferent)
+        #expect(queue.inFlight == request)
+        #expect(queue.take() == nil)
+
+        let matching = WireEvent.history(History(
+            convId: "conv-a", before: before ? 40 : nil, after: before ? nil : 7,
+            items: [], more: false, rev: 1
+        ))
+        let finishedByMatching = queue.finish(answering: matching)
+        #expect(finishedByMatching)
+        #expect(queue.inFlight == nil)
+    }
+
     @Test func aConversationListOnlyFinishesAConversationListRequest() {
         var queue = RequestQueue()
         let list = WireEvent.convList(ConvList(conversations: []))

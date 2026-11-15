@@ -31,6 +31,14 @@ private struct Home {
 }
 
 @Suite struct ChatPairTests {
+    @Test func startingThePickerDoesNotReplaceAnOpenSplit() {
+        var home = Home.split()
+        home.pair.choosing = true
+        #expect(home.pair.partner == "X")
+        #expect(home.pair.isOpen)
+        #expect(!home.pair.choosing)
+    }
+
     @Test func deletingThePickersConversationClosesThePicker() {
         var home = Home("X")
         home.pair.choosing = true

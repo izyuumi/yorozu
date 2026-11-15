@@ -30,7 +30,10 @@ struct RequestQueue: Equatable {
         switch (inFlight, answer) {
         case (.convList, .convList):
             break
-        case (.historyRequest(let request), .history(let page)) where request.convId == page.convId:
+        case (.historyRequest(let request), .history(let page))
+            where request.convId == page.convId
+                && (page.before == nil || page.before == request.before)
+                && (page.after == nil || page.after == request.after):
             break
         default:
             return false
