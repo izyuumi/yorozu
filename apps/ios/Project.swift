@@ -249,7 +249,7 @@ let project = Project(
                 "Sources/Client/SceneLifecycle.swift", "Sources/Client/RequestQueue.swift", "Sources/Client/ConversationActions.swift",
                 "Sources/Client/ComposerFocus.swift", "Sources/Client/OutageMemory.swift",
                 "Sources/WidgetShared/Model/**", "Sources/WidgetShared/Interface/WidgetLink.swift",
-                "Sources/WidgetShared/Interface/Launcher.swift", "Sources/YorozuIOS/LaunchColumns.swift",
+                "Sources/WidgetShared/Interface/Launcher.swift", "Sources/YorozuIOS/LaunchColumns.swift", "Sources/YorozuIOS/ChatPair.swift",
                 "Sources/Client/AppModel.swift", "Sources/Client/ClientTransport.swift", "Sources/Client/DemoData.swift",
                 "Sources/Client/DeviceCodePairing.swift", "Sources/Client/Transfers.swift",
                 "Sources/ShareInbox/DeviceModel.swift", "Sources/ShareInbox/ShareInbox.swift",
