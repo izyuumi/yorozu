@@ -192,10 +192,10 @@ struct PairingView: View {
 
     private var deviceCode: some View {
         Section {
-            if let code = model.deviceCode {
+            if model.showsDeviceCode, let code = model.deviceCode {
                 QRCode(text: code.link)
                     .frame(maxWidth: .infinity)
-            } else {
+            } else if model.pendingPairing == nil {
                 ProgressView().frame(maxWidth: .infinity)
             }
         } header: {

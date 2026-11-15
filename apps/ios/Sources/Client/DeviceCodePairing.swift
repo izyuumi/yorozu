@@ -4,6 +4,25 @@ import YorozuWire
 import AppKit
 #endif
 
+/// Visibility and remint policy for the Mac-add device code, isolated from the mailbox wait so it can be tested without a relay.
+struct DeviceCodeOffer: Equatable {
+    var code: DeviceCode?
+    /// True after a mailbox letter arrived while a host confirm was still pending (or pairing was in progress) and was dropped. That published code is spent.
+    var spent = false
+
+    func isVisible(pendingHostPairing: Bool, connecting: Bool) -> Bool {
+        code != nil && !spent && !pendingHostPairing && !connecting
+    }
+
+    mutating func letterDropped() {
+        spent = true
+    }
+
+    func shouldMint(pendingHostPairing: Bool, connecting: Bool) -> Bool {
+        !pendingHostPairing && !connecting && (code == nil || spent)
+    }
+}
+
 enum DeviceAdding: Equatable {
     case asking(DeviceCode)
     case sent(DeviceCode, fingerprint: String)
@@ -43,21 +62,36 @@ extension AppModel {
         #else
         let name = "Yorozu"
         #endif
+        var key: Data?
+        deviceCodeSpent = false
         while !Task.isCancelled {
             if pendingPairing != nil || connecting {
-                deviceCode = nil
                 try? await Task.sleep(for: .milliseconds(100))
                 continue
             }
-            let (code, key) = DeviceCode.make(name: name)
-            deviceCode = code
-            if let letter = await mailboxLetter(code, for: .seconds(600)),
-               !Task.isCancelled, pendingPairing == nil, !connecting,
-               let link = try? DeviceCode.open(letter, privateKey: key) {
-                pairingError = submit(link)
+            var offer = DeviceCodeOffer(code: deviceCode, spent: deviceCodeSpent)
+            if offer.shouldMint(pendingHostPairing: false, connecting: false) {
+                let minted = DeviceCode.make(name: name)
+                deviceCode = minted.code
+                key = minted.privateKey
+                deviceCodeSpent = false
+            }
+            guard let code = deviceCode, let currentKey = key else { continue }
+            if let letter = await mailboxLetter(code, for: .seconds(600)) {
+                if Task.isCancelled { break }
+                if pendingPairing != nil || connecting {
+                    offer.letterDropped()
+                    deviceCodeSpent = offer.spent
+                } else if let link = try? DeviceCode.open(letter, privateKey: currentKey) {
+                    pairingError = submit(link)
+                }
+            } else if !Task.isCancelled {
+                offer.letterDropped()
+                deviceCodeSpent = offer.spent
             }
         }
         deviceCode = nil
+        deviceCodeSpent = false
     }
 
     #if os(macOS)
