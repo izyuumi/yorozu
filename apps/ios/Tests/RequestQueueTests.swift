@@ -67,7 +67,8 @@ import YorozuWire
         var queue = loadingOlderInFlight()
 
         queue.loadedOlder("conv-a")
-        queue.finish()
+        let finished = queue.finish(answering: .history(History(convId: "conv-a", items: [], more: false, rev: 1)))
+        #expect(finished)
         #expect(queue.loadingOlder.isEmpty)
         #expect(queue.take() == next)
     }
@@ -84,7 +85,8 @@ import YorozuWire
     @Test func aStaleTimeoutLeavesTheNewerRequestInFlight() {
         var queue = loadingOlderInFlight()
         queue.loadedOlder("conv-a")
-        queue.finish()
+        let finished = queue.finish(answering: .history(History(convId: "conv-a", items: [], more: false, rev: 1)))
+        #expect(finished)
         #expect(queue.take() == next)
         queue.loadOlder("conv-b", before: 3)
 
@@ -101,6 +103,53 @@ import YorozuWire
         queue.enqueue(next)
         #expect(queue.take() == nil)
         #expect(queue.pending == [next])
+    }
+
+    @Test func aLateHistoryAnswerDoesNotFinishTheNextRequest() {
+        var queue = loadingOlderInFlight()
+        let third = WireEvent.historyRequest(HistoryRequest(convId: "conv-c"))
+        queue.enqueue(third)
+
+        let failed = queue.fail(older)
+        #expect(failed)
+        #expect(queue.take() == next)
+
+        let late = WireEvent.history(History(convId: "conv-a", items: [], more: false, rev: 1))
+        let finishedByLate = queue.finish(answering: late)
+        #expect(!finishedByLate)
+        #expect(queue.inFlight == next)
+        #expect(queue.take() == nil)
+
+        // The request has an `after` cursor, but older hosts need not echo it.
+        let answer = WireEvent.history(History(convId: "conv-b", items: [], more: false, rev: 1))
+        let finishedByAnswer = queue.finish(answering: answer)
+        #expect(finishedByAnswer)
+        #expect(queue.inFlight == nil)
+        #expect(queue.take() == third)
+    }
+
+    @Test func aConversationListOnlyFinishesAConversationListRequest() {
+        var queue = RequestQueue()
+        let list = WireEvent.convList(ConvList(conversations: []))
+        let finishedIdle = queue.finish(answering: list)
+        #expect(!finishedIdle)
+        queue.restart()
+        #expect(queue.take() == .convList(ConvList()))
+        queue.enqueue(next)
+
+        let finishedByHistory = queue.finish(answering: .history(History(convId: "conv-b", items: [], more: false, rev: 1)))
+        #expect(!finishedByHistory)
+        #expect(queue.inFlight == .convList(ConvList()))
+        let finishedByList = queue.finish(answering: list)
+        #expect(finishedByList)
+        #expect(queue.take() == next)
+
+        let finishedAgain = queue.finish(answering: list)
+        #expect(!finishedAgain)
+        let finishedByRequest = queue.finish(answering: .historyRequest(HistoryRequest(convId: "conv-b")))
+        #expect(!finishedByRequest)
+        #expect(queue.inFlight == next)
+        #expect(queue.take() == nil)
     }
 
     @Test func aRestartKeepsOnlyTheConversationList() {
