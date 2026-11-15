@@ -10,7 +10,7 @@ import AppKit
 @MainActor @Observable
 final class AppModel {
     private(set) var pairing: Pairing?
-    private(set) var isDemo = false
+    var isDemo: Bool { if case .demo = runtime { true } else { false } }
     private(set) var state = RelayConnection.State.offline
     private(set) var conversations: [String: Conversation] = [:]
     private(set) var typing: Set<String> = []
@@ -87,9 +87,10 @@ final class AppModel {
     @ObservationIgnored private var cronWaiters: [CheckedContinuation<Void, Never>] = []
 
     @ObservationIgnored private var connectionGeneration = 0
-    @ObservationIgnored private var liveStateLoaded = false
     @ObservationIgnored private var pairingUnread = false
-    @ObservationIgnored private var liveSnapshot: LiveSnapshot?
+    /// Live, or the memory-only demo; `saved` is nil when the demo started at launch, before any live state loaded.
+    private var runtime = Runtime.live
+    private enum Runtime { case live, demo(saved: LiveSnapshot?) }
     private struct LiveSnapshot {
         var pairing: Pairing?
         var conversations: [String: Conversation]
@@ -136,13 +137,17 @@ final class AppModel {
         demo = demo || PreviewScene.current != nil
         #endif
         if demo {
-            enterDemo()
+            enterDemo(saved: nil)
             #if DEBUG
             PreviewScene.current?.play(model: self)
             #endif
             return
         }
-        liveStateLoaded = true
+        bootLive()
+    }
+
+    /// A normal launch's live start; leaving a demo that began at launch runs it too.
+    private func bootLive() {
         PairingMigration.run(storage: storage, state: migration)
         loadPairing()
         Task.detached(priority: .utility) {
@@ -304,11 +309,14 @@ final class AppModel {
     }
 
     func enterDemo() {
+        enterDemo(saved: LiveSnapshot(pairing: pairing, conversations: conversations, crons: crons, hostInfo: hostInfo))
+    }
+
+    private func enterDemo(saved: LiveSnapshot?) {
         guard !isDemo else { return }
-        liveSnapshot = LiveSnapshot(pairing: pairing, conversations: conversations, crons: crons, hostInfo: hostInfo)
         disconnect()
         resetTransientState()
-        isDemo = true
+        runtime = .demo(saved: saved)
         pairing = nil
         conversations = [:]
         crons = DemoData.crons
@@ -318,22 +326,18 @@ final class AppModel {
     }
 
     func exitDemo() {
-        guard isDemo else { return }
+        guard case .demo(let saved) = runtime else { return }
         disconnect()
         resetTransientState()
-        isDemo = false
-        pairing = liveSnapshot?.pairing
-        conversations = liveSnapshot?.conversations ?? [:]
-        crons = liveSnapshot?.crons
-        hostInfo = liveSnapshot?.hostInfo
-        liveSnapshot = nil
-        if !liveStateLoaded {
-            liveStateLoaded = true
-            loadPairing()
-        }
+        runtime = .live
+        pairing = saved?.pairing
+        conversations = saved?.conversations ?? [:]
+        crons = saved?.crons
+        hostInfo = saved?.hostInfo
+        Self.logger.debug("Leaving memory-only demo mode")
+        guard saved != nil else { return bootLive() }
         updateBadge()
         publishWidgets()
-        Self.logger.debug("Leaving memory-only demo mode")
         connect()
     }
 
