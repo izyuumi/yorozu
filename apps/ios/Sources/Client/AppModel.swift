@@ -283,6 +283,7 @@ final class AppModel {
         disconnect()
         if let room = pairing?.pairing.roomId { forgetDirectPath(room: room) }
         try? Pairing.remove(storage: storage)
+        migration.legacyFallback = false
         #if os(iOS)
         PreviewKeychain.clear()
         #endif

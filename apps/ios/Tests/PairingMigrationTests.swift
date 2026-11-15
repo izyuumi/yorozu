@@ -6,6 +6,7 @@ final class MemoryPairingStorage: PairingStorage {
     var failLoad = false
     var failSave = false
     var failClear = false
+    var failClearAccounts: Set<String> = []
     var savedOverride: Data?
 
     func load(_ account: String) throws -> Data? {
@@ -17,7 +18,7 @@ final class MemoryPairingStorage: PairingStorage {
         items[account] = savedOverride ?? data
     }
     func clear(_ account: String) throws {
-        if failClear { throw CocoaError(.fileWriteUnknown) }
+        if failClear || failClearAccounts.contains(account) { throw CocoaError(.fileWriteUnknown) }
         items[account] = nil
     }
 }
@@ -28,6 +29,64 @@ struct PairingMigrationTests {
         var value = try JSONDecoder().decode(Pairing.self, from: Data(json.utf8))
         value.paired = paired
         return value
+    }
+
+    @Test(arguments: [true, false]) func unpairDoesNotMigrateLeftoverLegacy(valid: Bool) throws {
+        let storage = MemoryPairingStorage()
+        let old = valid ? try JSONEncoder().encode(value()) : Data("undecodable".utf8)
+        storage.items = ["pairing": try JSONEncoder().encode(value()), "pairing-v3": old]
+        storage.failClearAccounts = ["pairing-v3"]
+        try? Pairing.remove(storage: storage)
+        #expect(storage.items["pairing"] == nil)
+        #expect(storage.items["pairing-v3"] == old)
+
+        storage.failClearAccounts = []
+        let nextLaunch = PairingMigration.State()
+        PairingMigration.run(storage: storage, state: nextLaunch)
+        #expect(try Pairing.load(storage: storage, state: nextLaunch) == nil)
+        #expect(storage.items["pairing-v3"] == nil)
+        #expect(!nextLaunch.legacyFallback)
+    }
+
+    @Test func unpairClearsLegacyEvenWhenCurrentClearFails() throws {
+        let storage = MemoryPairingStorage()
+        let data = try JSONEncoder().encode(value())
+        storage.items = ["pairing": data, "pairing-v3": data]
+        storage.failClearAccounts = ["pairing"]
+        #expect(throws: (any Error).self) { try Pairing.remove(storage: storage) }
+        #expect(storage.items["pairing-v3"] == nil)
+        let state = PairingMigration.State()
+        PairingMigration.run(storage: storage, state: state)
+        #expect(try Pairing.load(storage: storage, state: state) == value())
+    }
+
+    @Test(arguments: [true, false]) func unpairedMarkerBlocksLegacyFallback(currentUndecodable: Bool) throws {
+        let storage = MemoryPairingStorage(), state = PairingMigration.State()
+        storage.items["pairing-v3"] = try JSONEncoder().encode(value())
+        storage.failClearAccounts = ["pairing-v3"]
+        try? Pairing.remove(storage: storage)
+        if currentUndecodable { storage.items["pairing"] = Data("undecodable".utf8) }
+        state.legacyFallback = true
+        #expect((try? Pairing.load(storage: storage, state: state)) == nil)
+        PairingMigration.run(storage: storage, state: state)
+        #expect(!state.legacyFallback)
+        #expect((try? Pairing.load(storage: storage, state: state)) == nil)
+    }
+
+    @Test func newPairingClearsUnpairedMarker() throws {
+        let storage = MemoryPairingStorage()
+        storage.items["pairing-unpaired"] = Data([1])
+        let pairing = try value(paired: false)
+        try pairing.save(storage: storage)
+        #expect(storage.items["pairing-unpaired"] == nil)
+        let nextLaunch = PairingMigration.State()
+        PairingMigration.run(storage: storage, state: nextLaunch)
+        #expect(try Pairing.load(storage: storage, state: nextLaunch) == pairing)
+        // A later legitimate legacy-only pairing must be eligible for migration again.
+        storage.items["pairing"] = nil
+        storage.items["pairing-v3"] = try JSONEncoder().encode(pairing)
+        PairingMigration.run(storage: storage, state: nextLaunch)
+        #expect(try Pairing.load(storage: storage, state: nextLaunch) == pairing)
     }
 
     @Test func oldOnlyPairingMigratesAndReadsBack() throws {
