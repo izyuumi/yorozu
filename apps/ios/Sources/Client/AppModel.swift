@@ -236,6 +236,7 @@ final class AppModel {
         }
         pairingError = nil
         pendingPairing = payload
+        deviceCode = nil
         return nil
     }
 

@@ -22,6 +22,18 @@ import YorozuWire
     private func openFirstSession() async throws -> AppModel { try await harness.openFirstSession() }
     private func stored() -> Pairing? { harness.stored() }
 
+    @Test func aPendingHostPairingHidesTheDeviceCode() {
+        let model = makeModel()
+        let key = Data(repeating: 7, count: 32).base64URLEncodedString()
+        model.deviceCode = DeviceCode(relayUrl: "wss://relay.example/ws",
+            box: Data(repeating: 1, count: 16).base64URLEncodedString(), key: key, name: "Mac")
+        let link = "yorozu://pair?v=3&relay=wss://relay.example/ws&key=\(key)&token=tok&room=room&secret=sec"
+
+        #expect(model.submit(link) == nil)
+        #expect(model.pendingPairing != nil)
+        #expect(model.deviceCode == nil)
+    }
+
     @Test(arguments: [true, false]) func aFailedConnectKeepsTheStoredPairing(paired: Bool) throws {
         let pairing = try store(paired: paired)
         let model = makeModel()

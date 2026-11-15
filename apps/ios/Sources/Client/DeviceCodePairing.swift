@@ -44,9 +44,16 @@ extension AppModel {
         let name = "Yorozu"
         #endif
         while !Task.isCancelled {
+            if pendingPairing != nil || connecting {
+                deviceCode = nil
+                try? await Task.sleep(for: .milliseconds(100))
+                continue
+            }
             let (code, key) = DeviceCode.make(name: name)
             deviceCode = code
-            if let letter = await mailboxLetter(code, for: .seconds(600)), let link = try? DeviceCode.open(letter, privateKey: key) {
+            if let letter = await mailboxLetter(code, for: .seconds(600)),
+               !Task.isCancelled, pendingPairing == nil, !connecting,
+               let link = try? DeviceCode.open(letter, privateKey: key) {
                 pairingError = submit(link)
             }
         }
