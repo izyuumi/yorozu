@@ -54,8 +54,8 @@ final class ModelHarness {
         for conversation in conversations { cache.save(conversation) }
     }
 
-    func makeModel() -> AppModel {
-        AppModel(demo: false, storage: storage, migration: migration, cache: cache,
+    func makeModel(demo: Bool = false) -> AppModel {
+        AppModel(demo: demo, storage: storage, migration: migration, cache: cache,
             transport: { [transports] _, _ in try transports.make() }, shares: { [] }, notifications: {})
     }
 
