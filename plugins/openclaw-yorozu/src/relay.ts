@@ -31,6 +31,7 @@ import { ActivityWatch } from "./activitywatch.js";
 import type { OwnerTurnChange } from "./liveactivity.js";
 import { LocalPairingFile, localPairingPath } from "./localpair.js";
 import { Announcer, mintCode, pairer, pairingQuery, PendingPairings } from "./pairing.js";
+import { RelaySession } from "./relay-session.js";
 import { firstLine, previewKey, previewPlaintext, pushTitle, sealPreview, threadRef } from "./push.js";
 import { listCursors, mergeCursor } from "./reads.js";
 import { b64u, decodeFrame, fingerprint, signFrame } from "./wire.js";
@@ -147,28 +148,26 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
   const url = new URL(opts.relayUrl);
   url.searchParams.set("room", keys.room);
 
-  let relaySend: ((raw: string) => void) | null = null;
+  const relaySession = new RelaySession();
   const announceOptions = {
     allowlist: async () => (await listDevices()).map((d) => d.signingPub),
-    relaySend: () => relaySend,
+    relaySend: () => relaySession.send,
     log,
   };
   const announcer = new Announcer(announceOptions);
-  let relayFrames: ((payloads: string[]) => void) | null = null;
-  let relayPushProxy = false;
   let direct: DirectListener | null = null;
   let hints: DirectHints | undefined;
   let stopWatching: (() => Promise<void>) | undefined;
   let bonjour: Awaited<ReturnType<typeof serveBonjour>> | undefined;
   let closeLocal: (() => Promise<void>) | undefined;
   // Every relay session shares this link; it sends through whichever relay socket is registered.
-  const relayLink: Link = { path: "relay", send: (payloads) => relayFrames?.(payloads) };
+  const relayLink: Link = { path: "relay", send: (payloads) => relaySession.frames?.(payloads) };
 
   const activities = new ActivityWatch({
     liveTurn: opts.liveTurn ?? (() => undefined),
     store: new ActivityStore(path.join(resolveStateDir(), "yorozu", "live-activities.json"), acquireFileLock),
     warn: (message) => log?.warn(message),
-    send: (raw) => relaySend?.(raw),
+    send: (raw) => relaySession.send?.(raw),
     now: () => Date.now(),
     setTimer: (callback, delay) => setTimeout(callback, delay).unref(),
     clearTimer: (timer) => clearTimeout(timer),
@@ -208,7 +207,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     const connected = hub.direct();
     const devices = [...(marked ?? [])].filter((key) => key !== reader && !connected.has(key));
     if (!devices.length) return;
-    relaySend?.(JSON.stringify({ type: "notify", class: "sync", threadRef: threadRef(convId), devices }));
+    relaySession.send?.(JSON.stringify({ type: "notify", class: "sync", threadRef: threadRef(convId), devices }));
   };
 
   async function dispatch({ deviceKey, event, reply, refuse }: Request): Promise<boolean> {
@@ -235,8 +234,8 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         activities.report(deviceKey, event.data);
         return true;
       case "push_token":
-        if (relayPushProxy && relaySend) relaySend(JSON.stringify({ type: "push", device: deviceKey, token: event.data.token }));
-        else log?.info(`yorozu: push token dropped (the relay is ${relaySend ? "without pushProxy" : "unreachable"})`);
+        if (relaySession.pushProxy && relaySession.send) relaySession.send(JSON.stringify({ type: "push", device: deviceKey, token: event.data.token }));
+        else log?.info(`yorozu: push token dropped (the relay is ${relaySession.send ? "without pushProxy" : "unreachable"})`);
         return true;
       case "error":
         log?.info(`yorozu: device error ${event.data.code}`);
@@ -284,7 +283,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         ...(activities.liveActivity ? [LIVE_ACTIVITY_PUSH] : []),
         // liveActivityHostWriter remains reserved; do not advertise it.
         ...(direct?.listening ? [DIRECT] : []),
-        ...(relayPushProxy ? [PUSH_PROXY] : []),
+        ...(relaySession.pushProxy ? [PUSH_PROXY] : []),
       ],
     }),
     directHints: () => direct?.listening ? hints : undefined,
@@ -298,7 +297,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
       forget: (deviceKeys) => me!.forget(deviceKeys),
       ...announceOptions,
     }, announcer),
-    refused: (deviceKey) => relaySend?.(JSON.stringify({ type: "revoke", pubkey: deviceKey })),
+    refused: (deviceKey) => relaySession.send?.(JSON.stringify({ type: "revoke", pubkey: deviceKey })),
     onPeer: async ({ deviceKey, event, reply }) => {
       if (event.kind !== "peer_info") return;
       const name = event.data.name?.trim().slice(0, 64);
@@ -323,7 +322,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
       for (const key of deviceKeys) {
         hub.end(key, { code: CLOSE.unauthorized, reason: "revoked" });
         activities.forget(key, false);
-        relaySend?.(JSON.stringify({ type: "revoke", pubkey: key }));
+        relaySession.send?.(JSON.stringify({ type: "revoke", pubkey: key }));
       }
     },
     activityTurn: (convId, change) => activities.turn(convId, change),
@@ -456,9 +455,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           case "registered": {
             registered = true;
             const generation = activities.relayConnecting({ liveActivity: msg.liveActivity, activityTimestamp: msg.activityTimestamp });
-            relaySend = send;
-            relayFrames = sendFrames;
-            relayPushProxy = msg.pushProxy === true;
+            relaySession.registered({ send, frames: sendFrames, pushProxy: msg.pushProxy === true });
             me.notify = notifyHere;
             me.mint = () =>
               new Promise((resolve, reject) => {
@@ -540,9 +537,8 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         clearInterval(heartbeat);
         signal.removeEventListener("abort", stop);
         if (registered) {
-          relaySend = null;
+          relaySession.closed();
           activities.relayDown();
-          relayFrames = null;
           me.mint = null;
           me.notify = null;
           for (const waiter of minting.splice(0)) waiter.reject(new Error("the relay connection closed"));
