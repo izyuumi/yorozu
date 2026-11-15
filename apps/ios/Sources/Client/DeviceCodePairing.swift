@@ -7,7 +7,7 @@ import AppKit
 /// Visibility and remint policy for the Mac-add device code, isolated from the mailbox wait so it can be tested without a relay.
 struct DeviceCodeOffer: Equatable {
     var code: DeviceCode?
-    /// True after a mailbox letter arrived while a host confirm was still pending (or pairing was in progress) and was dropped. That published code is spent.
+    /// True after a mailbox letter arrived or the wait expired, so this published code must not be reused.
     var spent = false
 
     func isVisible(pendingHostPairing: Bool, connecting: Bool) -> Bool {
@@ -18,8 +18,13 @@ struct DeviceCodeOffer: Equatable {
         spent = true
     }
 
-    func shouldMint(pendingHostPairing: Bool, connecting: Bool) -> Bool {
-        !pendingHostPairing && !connecting && (code == nil || spent)
+    /// A mailbox letter arrived (accepted or not). The published code is spent because the relay re-sends that letter to every new websocket.
+    mutating func letterReceived(accepted _: Bool) {
+        spent = true
+    }
+
+    func shouldMint(pendingHostPairing: Bool, connecting: Bool, hasKey: Bool = true) -> Bool {
+        !pendingHostPairing && !connecting && (code == nil || spent || !hasKey)
     }
 }
 
@@ -63,35 +68,46 @@ extension AppModel {
         let name = "Yorozu"
         #endif
         var key: Data?
-        deviceCodeSpent = false
+        var ownedCode: DeviceCode?
         while !Task.isCancelled {
             if pendingPairing != nil || connecting {
                 try? await Task.sleep(for: .milliseconds(100))
                 continue
             }
             var offer = DeviceCodeOffer(code: deviceCode, spent: deviceCodeSpent)
-            if offer.shouldMint(pendingHostPairing: false, connecting: false) {
+            if offer.shouldMint(pendingHostPairing: false, connecting: false, hasKey: key != nil) {
                 let minted = DeviceCode.make(name: name)
                 deviceCode = minted.code
                 key = minted.privateKey
                 deviceCodeSpent = false
+                ownedCode = minted.code
             }
-            guard let code = deviceCode, let currentKey = key else { continue }
+            guard let code = deviceCode, let currentKey = key else {
+                try? await Task.sleep(for: .milliseconds(100))
+                continue
+            }
             if let letter = await mailboxLetter(code, for: .seconds(600)) {
                 if Task.isCancelled { break }
                 if pendingPairing != nil || connecting {
-                    offer.letterDropped()
+                    offer.letterReceived(accepted: false)
                     deviceCodeSpent = offer.spent
                 } else if let link = try? DeviceCode.open(letter, privateKey: currentKey) {
+                    offer.letterReceived(accepted: true)
+                    deviceCodeSpent = offer.spent
                     pairingError = submit(link)
+                } else {
+                    offer.letterReceived(accepted: false)
+                    deviceCodeSpent = offer.spent
                 }
             } else if !Task.isCancelled {
                 offer.letterDropped()
                 deviceCodeSpent = offer.spent
             }
         }
-        deviceCode = nil
-        deviceCodeSpent = false
+        if let ownedCode, deviceCode == ownedCode {
+            deviceCode = nil
+            deviceCodeSpent = false
+        }
     }
 
     #if os(macOS)

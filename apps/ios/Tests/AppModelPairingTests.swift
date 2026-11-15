@@ -80,6 +80,31 @@ import YorozuWire
         #expect(!offer.shouldMint(pendingHostPairing: false, connecting: false))
     }
 
+    @Test func anAcceptedMailboxLetterMintsAFreshCodeOncePendingClears() {
+        let original = macAddCode(box: 1)
+        var offer = DeviceCodeOffer(code: original)
+        offer.letterReceived(accepted: true)
+        #expect(offer.spent)
+        #expect(!offer.isVisible(pendingHostPairing: true, connecting: false))
+        #expect(!offer.shouldMint(pendingHostPairing: true, connecting: false))
+        #expect(offer.shouldMint(pendingHostPairing: false, connecting: false))
+
+        let fresh = macAddCode(box: 2)
+        offer.code = fresh
+        offer.spent = false
+        #expect(offer.code != original)
+        #expect(offer.isVisible(pendingHostPairing: false, connecting: false))
+        #expect(!offer.shouldMint(pendingHostPairing: false, connecting: false))
+    }
+
+    @Test func aDeviceCodeWithoutAKeyIsMintedAgain() {
+        let leftover = macAddCode()
+        let offer = DeviceCodeOffer(code: leftover)
+        #expect(!offer.shouldMint(pendingHostPairing: false, connecting: false, hasKey: true))
+        #expect(offer.shouldMint(pendingHostPairing: false, connecting: false, hasKey: false))
+        #expect(!offer.shouldMint(pendingHostPairing: true, connecting: false, hasKey: false))
+    }
+
     @Test(arguments: [true, false]) func aFailedConnectKeepsTheStoredPairing(paired: Bool) throws {
         let pairing = try store(paired: paired)
         let model = makeModel()
