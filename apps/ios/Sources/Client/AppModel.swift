@@ -838,7 +838,7 @@ final class AppModel {
             setTyping(convId, false)
         case .convList(let list):
             guard let summaries = list.conversations else { return }
-            settle()
+            if queue.finish(answering: event) { settle() }
             let listed = Set(summaries.map(\.convId))
             if summaries.count < 2000 {
                 for gone in conversations.values where !listed.contains(gone.id) && (gone.rev != nil || gone.items.isEmpty)
@@ -865,7 +865,7 @@ final class AppModel {
                 if conversation.rev != summary.rev { enqueue(catchUp(conversation)) }
             }
         case .history(let page):
-            settle()
+            if queue.finish(answering: event) { settle() }
             history(page)
         case .cronList(let list):
             guard list.jobs != nil || list.error != nil else { return }
@@ -905,7 +905,9 @@ final class AppModel {
 
     private func startSync() {
         queue.restart()
-        settle()
+        inFlightTimer?.cancel()
+        inFlightTimer = nil
+        pump()
     }
 
     private func enqueue(_ request: WireEvent, first: Bool = false) {
@@ -914,7 +916,6 @@ final class AppModel {
     }
 
     private func settle() {
-        queue.finish()
         inFlightTimer?.cancel()
         inFlightTimer = nil
         pump()
