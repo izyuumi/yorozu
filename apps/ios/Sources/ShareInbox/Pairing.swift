@@ -35,8 +35,9 @@ struct Pairing: Codable, Equatable {
 
     static func remove(storage: any PairingStorage = KeychainPairingStorage()) throws {
         // Persist unpair intent before a crash can leave only the legacy item.
-        try storage.save(Data([1]), account: unpairedAccount)
         var failure: (any Error)?
+        do { try storage.save(Data([1]), account: unpairedAccount) }
+        catch { failure = error }
         for account in [account, oldAccount] {
             do { try storage.clear(account) }
             catch { if failure == nil { failure = error } }

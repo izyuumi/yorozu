@@ -88,6 +88,16 @@ struct PairingMigrationTests {
         #expect(!nextLaunch.legacyFallback)
     }
 
+    @Test func removeClearsCurrentAndLegacyPairingWhenMarkerSaveFails() throws {
+        let storage = MemoryPairingStorage()
+        let data = try JSONEncoder().encode(value())
+        storage.items = ["pairing": data, "pairing-v3": data]
+        storage.failSave = true
+        #expect(throws: (any Error).self) { try Pairing.remove(storage: storage) }
+        #expect(storage.items["pairing"] == nil)
+        #expect(storage.items["pairing-v3"] == nil)
+    }
+
     @Test func unpairClearsLegacyEvenWhenCurrentClearFails() throws {
         let storage = MemoryPairingStorage()
         let data = try JSONEncoder().encode(value())
