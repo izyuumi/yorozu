@@ -68,11 +68,11 @@ test("conversation owner registry (real SDK inbound lifecycle)", { skip }, async
     const f = await fixture(t);
     f.lookups.set("missing", async () => { throw new Error("synthetic attachment lookup failure"); });
     const run = f.launch({ ...message(2), attachments: [{ id: "missing", name: "missing.txt", mime: "text/plain", size: 1 }] });
-    await assert.rejects(run.done, /synthetic attachment lookup failure/);
+    await assert.doesNotReject(run.done);
     assert.equal(f.conversation.liveTurn(CONV), undefined);
   });
 
-  await t.test("R2 uploadedFiles early rejection settles admitted watch row and persists ended token", async (t) => {
+  await t.test("R2 uploadedFiles early rejection fails admitted watch row", async (t) => {
     const f = await fixture(t);
     const { ActivityWatch } = await import("../src/activitywatch.ts");
     const { observeActivity } = await import(activityBridge);
@@ -105,15 +105,18 @@ test("conversation owner registry (real SDK inbound lifecycle)", { skip }, async
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.ok(records[0]?.rows?.some((row) => row.token === token), "admitted before attachment lookup rejects");
     lookup.resolve();
-    await assert.rejects(run.done, /synthetic attachment lookup failure/);
+    await assert.doesNotReject(run.done);
     assert.equal(f.conversation.liveTurn(CONV), undefined);
     await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.deepEqual(records[0]?.rows, [keeper]);
+    const failed = { token, kind: "turn", state: "failed", steps: 0, startedAt: 1_800_000_000_000, finishedAt: 1_800_000_000_000 };
+    assert.deepEqual(records[0]?.rows, [keeper, failed]);
     assert.deepEqual(records[0]?.ended, [token]);
     assert.deepEqual(records[0]?.bindings, {});
     const pushes = sent.map((raw) => JSON.parse(raw)).filter((msg) => msg.type === "activityPush");
     assert.equal(pushes.length, 1);
-    assert.deepEqual(pushes[0].state.jobs.map((row: { token: string }) => row.token), [keeper.token]);
+    assert.deepEqual(pushes[0].state.jobs.map((row: { token: string; state: string }) => ({ token: row.token, state: row.state })), [
+      { token: keeper.token, state: "running" }, { token, state: "failed" },
+    ]);
   });
 
   // red: API-adapted

@@ -24,9 +24,19 @@ struct RequestQueue: Equatable {
         return inFlight
     }
 
-    /// The in-flight request was answered.
-    mutating func finish() {
+    /// Only an answer for the in-flight request can finish it; older hosts may omit history cursors.
+    @discardableResult
+    mutating func finish(answering answer: WireEvent) -> Bool {
+        switch (inFlight, answer) {
+        case (.convList, .convList):
+            break
+        case (.historyRequest(let request), .history(let page)) where request.convId == page.convId:
+            break
+        default:
+            return false
+        }
         inFlight = nil
+        return true
     }
 
     /// The in-flight request got no answer (host error, timeout or failed send), so its conversation stops loading.

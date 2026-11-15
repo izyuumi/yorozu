@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.16.1
+
+### Fixes
+
+- **ios:** let the composer caret follow again after a dictated insert that no longer fits (#734)
+- **ios:** close the Open Beside picker when its conversation goes away (#733)
+- **ios:** settle a host request only with its own answer (#735)
+- **ios:** load the pairing like a normal launch when leaving a launch demo (#732)
+- **ios:** never deliver a cancelled dictation and show the recording limit (#727)
+- **plugin:** announce the relay allowlist after every pairing (#726)
+- **plugin:** report a failure before the agent run to the app (#728)
+- **ios:** record a relay outage by why the socket went offline, not whether the app is active (#725)
+
 ## 0.16.0
 
 ### Features

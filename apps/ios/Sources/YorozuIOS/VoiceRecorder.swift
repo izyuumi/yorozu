@@ -9,17 +9,29 @@ final class VoiceRecorder {
     nonisolated static let maxSeconds: Double = 300
     static let trail = 120
 
+    /// Whether audio is coming in: `capped` once the limit is reached, when the clip so far is kept for `stop()`.
+    enum Capture { case idle, running, capped }
+
+    private(set) var capture = Capture.idle
     private(set) var levels: [Float] = []
     private(set) var seconds: Double = 0
     @ObservationIgnored private lazy var engine = AVAudioEngine()
-    private let capture = Capture()
+    private let clip = Clip()
+    private let cap: Int
+
+    init(limit: Double = VoiceRecorder.maxSeconds) {
+        cap = Int((limit * Double(Transcriber.sampleRate)).rounded())
+    }
 
     func start() throws {
-        capture.reset()
+        clip.reset()
         levels = []
         seconds = 0
         #if DEBUG
-        if PreviewScene.transcript != nil { return play(PreviewScene.voiceClip()) }
+        if PreviewScene.transcript != nil {
+            capture = .running
+            return play(PreviewScene.voiceClip())
+        }
         #endif
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
@@ -34,8 +46,8 @@ final class VoiceRecorder {
         else { throw VoiceModel.Failure(String(localized: "No microphone is available.")) }
         converter.downmix = true
         input.installTap(onBus: 0, bufferSize: 4_096, format: format,
-            block: Self.tap(converter: converter, target: target, capture: capture) { [weak self] level, seconds in
-                Task { @MainActor in self?.update(level: level, seconds: seconds) }
+            block: Self.tap(converter: converter, target: target, clip: clip, limit: cap) { [weak self] level, total in
+                Task { @MainActor in self?.update(level: level, total: total) }
             })
         engine.prepare()
         do {
@@ -44,15 +56,17 @@ final class VoiceRecorder {
             input.removeTap(onBus: 0)
             throw error
         }
+        capture = .running
     }
 
     /// Stops recording and returns the clip.
     func stop() -> [Float] {
+        capture = .idle
         #if DEBUG
         if let player {
             player.cancel()
             self.player = nil
-            return capture.samples()
+            return clip.samples()
         }
         #endif
         engine.inputNode.removeTap(onBus: 0)
@@ -60,20 +74,21 @@ final class VoiceRecorder {
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         #endif
-        return capture.samples()
+        return clip.samples()
     }
 
-    private func update(level: Float, seconds: Double) {
-        guard engine.isRunning else { return }
-        show(level: level, seconds: seconds)
-        if seconds >= Self.maxSeconds {
+    private func update(level: Float, total: Int) {
+        guard capture == .running else { return }
+        show(level: level, total: total)
+        if total >= cap {
             engine.inputNode.removeTap(onBus: 0)
             engine.stop()
+            capture = .capped
         }
     }
 
-    private func show(level: Float, seconds: Double) {
-        self.seconds = seconds
+    private func show(level: Float, total: Int) {
+        seconds = Double(total) / Double(Transcriber.sampleRate)
         levels.append(level)
         if levels.count > Self.trail { levels.removeFirst(levels.count - Self.trail) }
     }
@@ -87,15 +102,19 @@ final class VoiceRecorder {
     @ObservationIgnored private var player: Task<Void, Never>?
 
     /// The preview's talk take: the clip, then silence, in place of the microphone, at the same pace.
-    private func play(_ clip: [Float]) {
+    private func play(_ source: [Float]) {
         let chunk = Transcriber.sampleRate / 10
         player = Task { [weak self] in
             var offset = 0
             while !Task.isCancelled, let self {
-                let part = (offset..<offset + chunk).map { $0 < clip.count ? clip[$0] : 0 }
+                let part = (offset..<offset + chunk).map { $0 < source.count ? source[$0] : 0 }
                 offset += chunk
-                let total = part.withUnsafeBufferPointer { self.capture.append($0, limit: Int(Self.maxSeconds) * Transcriber.sampleRate) }
-                show(level: part.withUnsafeBufferPointer(Self.level), seconds: Double(total) / Double(Transcriber.sampleRate))
+                let total = part.withUnsafeBufferPointer { self.clip.append($0, limit: self.cap) }
+                show(level: part.withUnsafeBufferPointer(Self.level), total: total)
+                if total >= cap {
+                    capture = .capped
+                    return
+                }
                 try? await Task.sleep(for: .milliseconds(100))
             }
         }
@@ -103,8 +122,8 @@ final class VoiceRecorder {
     #endif
 
     /// Built outside the main actor: the engine calls it on its own audio thread.
-    nonisolated private static func tap(converter: AVAudioConverter, target: AVAudioFormat, capture: Capture,
-                                        report: @escaping @Sendable (Float, Double) -> Void) -> AVAudioNodeTapBlock {
+    nonisolated private static func tap(converter: AVAudioConverter, target: AVAudioFormat, clip: Clip, limit: Int,
+                                        report: @escaping @Sendable (Float, Int) -> Void) -> AVAudioNodeTapBlock {
         { buffer, _ in
             let capacity = AVAudioFrameCount(Double(buffer.frameLength) * target.sampleRate / buffer.format.sampleRate) + 1
             guard let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
@@ -120,12 +139,11 @@ final class VoiceRecorder {
             }
             guard let channel = out.floatChannelData?[0], out.frameLength > 0 else { return }
             let samples = UnsafeBufferPointer(start: channel, count: Int(out.frameLength))
-            let total = capture.append(samples, limit: Int(VoiceRecorder.maxSeconds) * Transcriber.sampleRate)
-            report(level(samples), Double(total) / Double(Transcriber.sampleRate))
+            report(level(samples), clip.append(samples, limit: limit))
         }
     }
 
-    private final class Capture: Sendable {
+    private final class Clip: Sendable {
         private let buffer = Mutex<[Float]>([])
 
         func reset() { buffer.withLock { $0 = [] } }

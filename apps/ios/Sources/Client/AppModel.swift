@@ -10,12 +10,13 @@ import AppKit
 @MainActor @Observable
 final class AppModel {
     private(set) var pairing: Pairing?
-    private(set) var isDemo = false
+    var isDemo: Bool { if case .demo = runtime { true } else { false } }
     private(set) var state = RelayConnection.State.offline
     private(set) var conversations: [String: Conversation] = [:]
     private(set) var typing: Set<String> = []
+    private var outageMemory = OutageMemory()
     /// The last relay outage (`.offline` or `.hostOffline`), kept while reconnecting until the state is `.ready` again.
-    private(set) var outage: RelayConnection.State?
+    var outage: RelayConnection.State? { outageMemory.outage }
     /// Conversations whose running turn has sent no reply or tool event for `stallTimeout`.
     private(set) var stalled: Set<String> = []
     private(set) var loadingOlder: Set<String> = []
@@ -86,9 +87,10 @@ final class AppModel {
     @ObservationIgnored private var cronWaiters: [CheckedContinuation<Void, Never>] = []
 
     @ObservationIgnored private var connectionGeneration = 0
-    @ObservationIgnored private var liveStateLoaded = false
     @ObservationIgnored private var pairingUnread = false
-    @ObservationIgnored private var liveSnapshot: LiveSnapshot?
+    /// Live, or the memory-only demo; `saved` is nil when the demo started at launch, before any live state loaded.
+    private var runtime = Runtime.live
+    private enum Runtime { case live, demo(saved: LiveSnapshot?) }
     private struct LiveSnapshot {
         var pairing: Pairing?
         var conversations: [String: Conversation]
@@ -135,13 +137,17 @@ final class AppModel {
         demo = demo || PreviewScene.current != nil
         #endif
         if demo {
-            enterDemo()
+            enterDemo(saved: nil)
             #if DEBUG
             PreviewScene.current?.play(model: self)
             #endif
             return
         }
-        liveStateLoaded = true
+        bootLive()
+    }
+
+    /// A normal launch's live start; leaving a demo that began at launch runs it too.
+    private func bootLive() {
         PairingMigration.run(storage: storage, state: migration)
         loadPairing()
         Task.detached(priority: .utility) {
@@ -303,11 +309,14 @@ final class AppModel {
     }
 
     func enterDemo() {
+        enterDemo(saved: LiveSnapshot(pairing: pairing, conversations: conversations, crons: crons, hostInfo: hostInfo))
+    }
+
+    private func enterDemo(saved: LiveSnapshot?) {
         guard !isDemo else { return }
-        liveSnapshot = LiveSnapshot(pairing: pairing, conversations: conversations, crons: crons, hostInfo: hostInfo)
         disconnect()
         resetTransientState()
-        isDemo = true
+        runtime = .demo(saved: saved)
         pairing = nil
         conversations = [:]
         crons = DemoData.crons
@@ -317,22 +326,18 @@ final class AppModel {
     }
 
     func exitDemo() {
-        guard isDemo else { return }
+        guard case .demo(let saved) = runtime else { return }
         disconnect()
         resetTransientState()
-        isDemo = false
-        pairing = liveSnapshot?.pairing
-        conversations = liveSnapshot?.conversations ?? [:]
-        crons = liveSnapshot?.crons
-        hostInfo = liveSnapshot?.hostInfo
-        liveSnapshot = nil
-        if !liveStateLoaded {
-            liveStateLoaded = true
-            loadPairing()
-        }
+        runtime = .live
+        pairing = saved?.pairing
+        conversations = saved?.conversations ?? [:]
+        crons = saved?.crons
+        hostInfo = saved?.hostInfo
+        Self.logger.debug("Leaving memory-only demo mode")
+        guard saved != nil else { return bootLive() }
         updateBadge()
         publishWidgets()
-        Self.logger.debug("Leaving memory-only demo mode")
         connect()
     }
 
@@ -398,6 +403,7 @@ final class AppModel {
         }
         pairingError = nil
         self.connection = connection
+        outageMemory.appRuns()
         #if os(iOS)
         if let hostKey = Data(base64URLEncoded: pairing.pairing.macPubkey),
            let key = try? PushPreview.key(myPriv: pairing.identity.sessionPrivateKey, theirPub: hostKey) {
@@ -442,7 +448,7 @@ final class AppModel {
         if let connection { Task { await connection.stop() } }
         connection = nil
         state = .offline
-        outage = nil
+        outageMemory.reset()
         route = nil
         routeChangedAt = nil
     }
@@ -456,6 +462,7 @@ final class AppModel {
         takeShares()
         if pairingSaveError != nil { updatePairing { _ in } }
         guard let connection else { return connect() }
+        outageMemory.appRuns()
         Task { await connection.reconnect() }
     }
 
@@ -464,11 +471,13 @@ final class AppModel {
         lifecycle.becomeInactive()
         guard !isDemo else { return }
         guard let connection else { return connect() }
+        outageMemory.appRuns()
         Task { await connection.reconnect() }
     }
 
     private func shareSent() {
         guard active, !isDemo, let connection else { return }
+        outageMemory.appRuns()
         Task { await connection.reconnect() }
     }
 
@@ -500,6 +509,7 @@ final class AppModel {
         Task {
             try? await Task.sleep(for: .milliseconds(500))
             guard lifecycle.stillSuspended(visit: visit) else { return }
+            outageMemory.appStops()
             await connection.stop()
         }
     }
@@ -537,13 +547,17 @@ final class AppModel {
         guard !isDemo, paired, !active else { return }
         let lifecycle = self.lifecycle
         let generation = connectionGeneration
-        if let connection { await connection.reconnect() } else { connect() }
+        if let connection {
+            outageMemory.appRuns()
+            await connection.reconnect()
+        } else { connect() }
         for _ in 0..<40 where state != .ready {
             guard generation == connectionGeneration, !isDemo, self.lifecycle == lifecycle else { return }
             try? await Task.sleep(for: .milliseconds(250))
         }
         try? await Task.sleep(for: .seconds(2))
         guard generation == connectionGeneration, !isDemo, self.lifecycle == lifecycle, !active, let connection else { return }
+        outageMemory.appStops()
         await connection.stop()
     }
 
@@ -597,13 +611,7 @@ final class AppModel {
             Self.connectionLog.info("state \(String(describing: new), privacy: .public)")
             state = new
             if new != .ready { transfers.sessionLost() }
-            switch new {
-            case .hostOffline: outage = new
-            // The app's own stop on suspend also reports `.offline`; only an active app is out of reach.
-            case .offline: if active { outage = new }
-            case .connecting, .handshaking: break
-            default: outage = nil
-            }
+            outageMemory.apply(new)
             switch new {
             case .pairingFailed:
                 if !paired { failPairing(String(localized: "The host refused this pairing code. It may have expired or been used. Run `openclaw yorozu pair` again.")) }
@@ -834,7 +842,7 @@ final class AppModel {
             setTyping(convId, false)
         case .convList(let list):
             guard let summaries = list.conversations else { return }
-            settle()
+            if queue.finish(answering: event) { settle() }
             let listed = Set(summaries.map(\.convId))
             if summaries.count < 2000 {
                 for gone in conversations.values where !listed.contains(gone.id) && (gone.rev != nil || gone.items.isEmpty)
@@ -861,7 +869,7 @@ final class AppModel {
                 if conversation.rev != summary.rev { enqueue(catchUp(conversation)) }
             }
         case .history(let page):
-            settle()
+            if queue.finish(answering: event) { settle() }
             history(page)
         case .cronList(let list):
             guard list.jobs != nil || list.error != nil else { return }
@@ -901,7 +909,9 @@ final class AppModel {
 
     private func startSync() {
         queue.restart()
-        settle()
+        inFlightTimer?.cancel()
+        inFlightTimer = nil
+        pump()
     }
 
     private func enqueue(_ request: WireEvent, first: Bool = false) {
@@ -910,7 +920,6 @@ final class AppModel {
     }
 
     private func settle() {
-        queue.finish()
         inFlightTimer?.cancel()
         inFlightTimer = nil
         pump()
