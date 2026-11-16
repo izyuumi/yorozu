@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.16.2
+
+### Fixes
+
+- **openclaw-yorozu:** refuse out-of-unit Live Activity timestamps (#746)
+- **ios:** the notification service no longer writes the Live Activity (#745)
+- **ios:** show a requested conversation even from Automations (#730)
+
 ## 0.16.1
 
 ### Fixes
