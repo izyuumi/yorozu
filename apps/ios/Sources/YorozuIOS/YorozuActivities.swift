@@ -164,10 +164,8 @@ final class YorozuActivities {
                 turns[convId] = job
                 apply(.upsert(job))
             } else {
-                // The owner's message time, so a row rebuilt for the same turn shows the same timer.
                 let sent = model.conversations[convId]?.items.last { $0.kind == .user }?.ts
-                let job = YorozuJob(kind: .turn, steps: steps,
-                    startedAt: sent.map { Date(timeIntervalSince1970: Double($0) / 1000) } ?? Date())
+                let job = YorozuJob(kind: .turn, steps: steps, startedAt: YorozuJob.turnStart(sent: sent))
                 turns[convId] = job
                 upsert(job, convId: convId, title: model.conversations[convId]?.title)
             }

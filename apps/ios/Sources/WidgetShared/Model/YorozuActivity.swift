@@ -34,6 +34,11 @@ struct YorozuJob: Codable, Hashable, Sendable, Identifiable {
     static func newToken() -> String {
         String((0..<16).map { _ in alphabet.randomElement()! })
     }
+
+    /// A turn's start: the owner's message time (ms since 1970), so a row rebuilt for the same turn shows the same timer.
+    static func turnStart(sent: Int64?, now: Date = Date()) -> Date {
+        sent.map { Date(timeIntervalSince1970: Double($0) / 1000) } ?? now
+    }
 }
 
 /// The Live Activity's whole content state. A push would replace it outright.
