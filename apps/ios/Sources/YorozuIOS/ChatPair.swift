@@ -15,7 +15,16 @@ struct ChatPair {
     var partnerOnLeft: Bool { if case let .two(_, onLeft) = panes { onLeft } else { false } }
     var choosing: Bool {
         get { panes == .picking }
-        set { if newValue { panes = .picking } else if panes == .picking { panes = .one } }
+        // Only set when no split is open. A true value while a split is open is ignored,
+        // so it cannot replace an existing second pane.
+        set {
+            if newValue {
+                guard partner == nil else { return }
+                panes = .picking
+            } else if panes == .picking {
+                panes = .one
+            }
+        }
     }
 
     var isOpen: Bool { panes != .one }

@@ -66,7 +66,10 @@ struct ComposerTextView: NSViewRepresentable {
             view.needsDisplay = true
         }
         context.coordinator.cursor = cursor
-        if let range = cursor?.take(within: (view.string as NSString).length) { view.setSelectedRange(range) }
+        // Keep the dictated caret pinned until IME composition ends.
+        if !view.hasMarkedText(), let range = cursor?.take(within: (view.string as NSString).length) {
+            view.setSelectedRange(range)
+        }
         if view.placeholder != placeholder {
             view.placeholder = placeholder
             view.needsDisplay = true
