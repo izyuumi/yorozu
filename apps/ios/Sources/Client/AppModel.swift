@@ -245,6 +245,7 @@ final class AppModel {
         guard !isDemo else { return }
         pendingPairing = nil
         disconnect()
+        resetTransientState()
         if let room = pairing?.pairing.roomId { forgetDirectPath(room: room) }
         cache.wipe()
         AttachmentFiles.wipe()
@@ -295,7 +296,7 @@ final class AppModel {
         pairing = nil
         pairingSaveError = nil
         conversations = [:]
-        typing = []
+        clearTurns()
         unplacedReads = [:]
         updateBadge()
         crons = nil
@@ -643,6 +644,8 @@ final class AppModel {
             if pairing?.unversionedWire != unversionedWire { updatePairing { $0.unversionedWire = unversionedWire } }
             hostInfo = host
             sessionsOpened += 1
+            // Turns held through the gap get one timeout to send a keepalive; silence then ends them.
+            for convId in typing { setTyping(convId, true) }
             transfers.resumable = host.capabilities.contains(Attachment.resumeCapability)
             if !paired { updatePairing { $0.paired = true; $0.pairedAt = Date(); $0.pairing.secret = nil } }
             requestNotifications()
@@ -1317,8 +1320,9 @@ final class AppModel {
         let timeout = typingTimeout
         typingTimers[convId] = Task { [weak self] in
             try? await Task.sleep(for: timeout)
-            guard !Task.isCancelled else { return }
-            self?.setTyping(convId, false)
+            // No keepalive can arrive without a session: hold the turn; the next session re-arms this timer.
+            guard !Task.isCancelled, let self, self.state == .ready else { return }
+            self.setTyping(convId, false)
         }
     }
 
