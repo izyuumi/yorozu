@@ -157,10 +157,21 @@ test("step counts above the relay's cap go out as the cap, normal counts unchang
 
 test("validReport accepts safe epoch-millisecond requestedAtMs only", () => {
   const report = { activityId: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", pushToken: "ab".repeat(32), jobs: [turn()], turns };
-  for (const requestedAtMs of [100_000_000_000, 1_800_000_000_500, Number.MAX_SAFE_INTEGER]) {
+  for (const requestedAtMs of [100_000_000_000, 1_800_000_000_500, 1e14 - 1]) {
     assert.equal(validReport({ ...report, requestedAtMs }), true);
   }
   for (const requestedAtMs of [1.5e12 + 0.5, 1_800_000_000, -1, "1800000000500", 2 ** 53, null, 99_999_999_999]) {
+    assert.equal(validReport({ ...report, requestedAtMs }), false, String(requestedAtMs));
+  }
+});
+
+test("validReport rejects requestedAtMs at or above 1e14", () => {
+  const report = { activityId: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", pushToken: "ab".repeat(32), jobs: [turn()], turns };
+  for (const requestedAtMs of [1_800_000_000_000_000, 1e14, Number.MAX_SAFE_INTEGER]) {
+    assert.equal(validReport({ ...report, requestedAtMs }), false, String(requestedAtMs));
+  }
+  assert.equal(validReport({ ...report, requestedAtMs: 1e14 - 1 }), true);
+  for (const requestedAtMs of [99_999_999_999, 1_800_000_000, 1.5e12 + 0.5, "1800000000500", 2 ** 53, null]) {
     assert.equal(validReport({ ...report, requestedAtMs }), false, String(requestedAtMs));
   }
 });

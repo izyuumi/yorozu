@@ -2558,3 +2558,80 @@ test("LA-2k D5 [behaviour] failed restore save degrades; a fresh Mode H report i
   assert.ok(saved.ok);
   assert.deepEqual(saved.records.find((row) => row.device === DEVICE), tombA.records[0], "later saves rewrite the whole map");
 });
+
+const EXHAUSTED = "yorozu: Live Activity timestamp exhausted; no more pushes for this activity";
+const outOfUnit = [1_800_000_000_000_000, 1e14, Number.MAX_SAFE_INTEGER];
+const storedRow = (device: string, convId: string, kLast: number, requestedAtMs = T0) => ({ device, activityId: convId, requestedAtMs, kLast,
+  terminal: false, token: TA, bindings: { [TOKEN]: convId }, rows: [turnRow()], sent: [turnRow()] });
+async function storedFixture(t: import("node:test").TestContext, records: ReturnType<typeof storedRow>[]) {
+  const f = await diskFixture(t);
+  await f.watch.stop();
+  const { writeFile } = await import("node:fs/promises");
+  const bytes = JSON.stringify({ v: 3, records });
+  await writeFile(f.file, bytes);
+  f.sent.length = 0;
+  const watch = f.make(new DiskStore(f.file, diskLock));
+  await watch.start();
+  await watch.relayRegistered(both);
+  await f.idle();
+  return { ...f, watch, bytes };
+}
+
+test("a microsecond seed never reaches the relay", async () => {
+  const envelope = Buffer.from(JSON.stringify({ kind: "live_activity", data: { ...seededReport(), requestedAtMs: 1_800_000_000_000_000 } }));
+  assert.deepEqual(parseEvent(envelope), { kind: "invalid", name: "live_activity" });
+  const f = durableFixture();
+  await f.watch.start();
+  f.watch.relayRegistered(both);
+  f.watch.report(DEVICE, { ...seededReport(), requestedAtMs: 1_800_000_000_000_000 });
+  f.watch.turn(CONV, { kind: "step", steps: 2 });
+  await drain();
+  assert.deepEqual(f.sent, [], "no activityToken and no push");
+  assert.deepEqual(f.store.saves, [], "no record");
+});
+
+test("nothing is coerced", async () => {
+  for (const requestedAtMs of outOfUnit) {
+    const envelope = Buffer.from(JSON.stringify({ kind: "live_activity", data: { ...seededReport(), requestedAtMs } }));
+    assert.deepEqual(parseEvent(envelope), { kind: "invalid", name: "live_activity" }, String(requestedAtMs));
+    const f = durableFixture();
+    await f.watch.start();
+    f.watch.relayRegistered(both);
+    f.watch.report(DEVICE, { ...seededReport(), requestedAtMs });
+    f.watch.turn(CONV, { kind: "done" });
+    await drain();
+    const wire = f.sent.join("\n");
+    for (const derived of [requestedAtMs / 1000, Math.floor(requestedAtMs / 1000), Math.ceil(requestedAtMs / 1000), Math.ceil(requestedAtMs / 1000) + 1]) {
+      assert.ok(!wire.includes(String(derived)), `${requestedAtMs} must not become ${derived}`);
+    }
+    assert.deepEqual(f.store.saves, [], String(requestedAtMs));
+  }
+});
+
+test("a reservation at the bound sends nothing and keeps kLast", async (t) => {
+  const f = await storedFixture(t, [storedRow(DEVICE, CONV, 1e11 - 1, 1e11)]);
+  assert.equal(f.watch.hostWriterReady, true);
+  f.watch.turn(CONV, { kind: "step", steps: 2 });
+  await f.idle();
+  assert.deepEqual(pushes(f), []);
+  assert.equal(await readFile(f.file, "utf8"), f.bytes);
+  assert.deepEqual(f.warnings.filter((w) => w === EXHAUSTED), [EXHAUSTED]);
+  f.watch.turn(CONV, { kind: "done" });
+  await f.idle();
+  assert.deepEqual(pushes(f), []);
+  assert.deepEqual(f.warnings.filter((w) => w === EXHAUSTED), [EXHAUSTED], "one warning per record");
+  const [row] = await f.rows();
+  assert.equal(row.kLast, 1e11 - 1);
+  assert.deepEqual(row.sent, [turnRow()]);
+});
+
+test("a stored out-of-range record freezes only its device", async (t) => {
+  const f = await storedFixture(t, [storedRow(DEVICE, CONV, 1e11), storedRow(D2, OTHER, 1_800_000_001, 1_800_000_000_500)]);
+  assert.equal(f.watch.hostWriterReady, true, "the file is not refused");
+  f.watch.turn(CONV, { kind: "step", steps: 2 });
+  f.watch.turn(OTHER, { kind: "step", steps: 2 });
+  await f.idle();
+  assert.ok(pushes(f).every((m) => m.timestamp < 1e11), "no out-of-range k");
+  assert.deepEqual(pushes(f).map((m) => [m.device, m.timestamp]), [[D2, 1_800_000_002]]);
+  assert.deepEqual((await f.rows()).map((row: { device: string; kLast: number }) => [row.device, row.kLast]), [[DEVICE, 1e11], [D2, 1_800_000_002]]);
+});

@@ -47,6 +47,8 @@ const PUSH_TOKEN = /^(?:[0-9a-f]{2}){1,512}$/i;
 type Fields = Record<string, unknown>;
 const object = (v: unknown): v is Fields => typeof v === "object" && v !== null && !Array.isArray(v);
 const nat = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
+/** A wire timestamp in epoch seconds (`timestamp`, `staleDate`, `dismissalDate`); 1e11 s rules out milliseconds. */
+export const validStamp = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) > 0 && (v as number) < 1e11;
 
 export const validJob = (v: unknown): boolean =>
   object(v) &&
@@ -66,7 +68,7 @@ export const validReport = (d: Fields): boolean =>
   (d.pushToken === undefined || (typeof d.pushToken === "string" && PUSH_TOKEN.test(d.pushToken))) &&
   ((d.activityId === undefined) === (d.requestedAtMs === undefined)) &&
   (d.activityId === undefined || (typeof d.activityId === "string" && d.activityId.length === 36 && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(d.activityId))) &&
-  (d.requestedAtMs === undefined || (nat(d.requestedAtMs) && d.requestedAtMs >= 1e11)) &&
+  (d.requestedAtMs === undefined || (nat(d.requestedAtMs) && d.requestedAtMs >= 1e11 && d.requestedAtMs < 1e14)) &&
   Array.isArray(d.jobs) &&
   d.jobs.length <= LIMIT &&
   d.jobs.every(validJob) &&

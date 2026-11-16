@@ -268,7 +268,13 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
         await until(() => connection.messages.some((m) => m.type === "ack" && m.seq === id) ? true : undefined, "host dispatch acknowledgement");
       }
       await event({ kind: "peer_info", data: peer });
-      return { peer: hello.data as PeerInfo, event };
+      async function received() {
+        const box = decodeFrame(await until(() => connection.frames.shift(), "encrypted host event"));
+        const opened = box?.type === "box" ? session.open(box) : null;
+        assert.ok(opened, "device must decrypt the host event");
+        return parseEvent(opened);
+      }
+      return { peer: hello.data as PeerInfo, event, received };
     }
     if (setupFailure) {
       globalThis.__yorozuDirectFail = true;
@@ -483,6 +489,23 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     const push = await f.turn();
     assert.equal(push.timestamp, 1_800_000_002); // ceil(1_800_000_000_500 / 1000) + 1
     assert.deepEqual(f.receipts, [{ timestamp: 1_800_000_002, persisted: true }]);
+    assert.equal(f.failures.length, 0);
+  });
+
+  await t.test("the relay socket is never the error path", async (t) => {
+    const f = await fixture(t, { liveActivity: true, activityTimestamp: true });
+    let closed = false;
+    f.connection.socket.on("close", () => { closed = true; });
+    await f.phone.event({ kind: "live_activity", data: { ...report(true), requestedAtMs: 1_800_000_000_000_000 } });
+    let answer = await f.phone.received();
+    while (answer?.kind !== "error") answer = await f.phone.received();
+    assert.equal(answer.data.code, "bad_request");
+    await delay(100);
+    assert.equal(closed, false, "the host's relay socket stays open");
+    assert.ok(!f.connection.messages.some((m) => m.type === "activityToken" || m.type === "activityPush"), "a refused report reaches the relay as nothing");
+    await f.sendReport(true);
+    assert.equal((await f.turn()).timestamp, 1_800_000_002);
+    assert.equal(closed, false);
     assert.equal(f.failures.length, 0);
   });
 
