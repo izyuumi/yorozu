@@ -69,10 +69,16 @@ def main() -> int:
     app = target_source_names(text, "YorozuIOS")
     if nse is None:
         return fail("could not read YorozuNotificationService sources from the generated pbxproj")
+    if not nse:
+        return fail("YorozuNotificationService sources are empty in the generated pbxproj")
+    if "NotificationService.swift" not in nse:
+        return fail("NotificationService.swift is missing from the YorozuNotificationService sources")
     if ATTRIBUTES in nse:
         return fail(f"{ATTRIBUTES} is still in the YorozuNotificationService sources")
-    if ATTRIBUTES not in (widgets or []) and ATTRIBUTES not in (app or []):
-        return fail(f"{ATTRIBUTES} is missing from the app and widget sources")
+    if ATTRIBUTES not in (app or []):
+        return fail(f"{ATTRIBUTES} is missing from the YorozuIOS sources")
+    if ATTRIBUTES not in (widgets or []):
+        return fail(f"{ATTRIBUTES} is missing from the YorozuWidgets sources")
 
     hits: list[str] = []
     for name in nse:
@@ -85,14 +91,17 @@ def main() -> int:
         if not files:
             return fail(f"could not find NSE source {name} under apps/ios")
         for path in files:
-            if re.search(r"(?m)^\s*import ActivityKit\b", path.read_text()):
+            if re.search(
+                r"(?m)^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:(?:public|package|internal|fileprivate|private)\s+)?import\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func)\s+)?ActivityKit\b",
+                path.read_text(),
+            ):
                 hits.append(str(path.relative_to(ROOT)))
     if hits:
         return fail("ActivityKit import in NSE sources:\n  " + "\n  ".join(hits))
 
     print(
         f"ok: {ATTRIBUTES} is out of YorozuNotificationService "
-        f"({len(nse)} sources) and still in the app or widgets; "
+        f"({len(nse)} sources) and still in the app and widgets; "
         "no import ActivityKit in the NSE compile set."
     )
     return 0
