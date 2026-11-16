@@ -76,6 +76,16 @@ import YorozuWire
         #expect(await settled { model.outage == nil })
     }
 
+    @Test func backgroundWakeStopsTheTransportWithoutAnOutage() async throws {
+        let (model, transport) = try await opened()
+        model.setActive(true) // RootView initial onChange: .active.
+        model.setActive(false) // the wake only runs while the scene is inactive.
+        await model.backgroundWake()
+        #expect(await transport.stops == 1)
+        #expect(await settled { model.state == .offline })
+        #expect(model.outage == nil)
+    }
+
     /// A model whose transport the app stopped on suspend, with the stop's `.offline` applied.
     private func ownStop() async throws -> (AppModel, ScriptedTransport) {
         let (model, transport) = try await opened()
