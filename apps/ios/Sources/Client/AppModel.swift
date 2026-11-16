@@ -100,8 +100,10 @@ final class AppModel {
     private static let logger = Logger(subsystem: "to.yumi.yorozu", category: "Demo")
     private static let connectionLog = Logger(subsystem: "to.yumi.yorozu", category: "Connection")
 
-    static let typingTimeout: Duration = .seconds(30)
-    static let stallTimeout: Duration = .seconds(5 * 60)
+    /// Turn timing; tests shorten these, production keeps the defaults.
+    @ObservationIgnored var typingTimeout: Duration = .seconds(30)
+    @ObservationIgnored var stallTimeout: Duration = .seconds(5 * 60)
+    @ObservationIgnored var awaitingWindow: Int64 = 10 * 60 * 1000
     static let requestTimeout: Duration = .seconds(30)
 
     typealias Transport = @MainActor (Pairing, PeerInfo) throws -> any ClientTransport
@@ -354,13 +356,18 @@ final class AppModel {
         for conversation in cache.loadAll() { conversations[conversation.id] = conversation }
     }
 
-    private func resetTransientState() {
+    /// Typing and stalls with their timers, so a late timeout can't bring either back.
+    private func clearTurns() {
         for timer in typingTimers.values { timer.cancel() }
         typingTimers = [:]
         typing = []
         for timer in stallTimers.values { timer.cancel() }
         stallTimers = [:]
         stalled = []
+    }
+
+    private func resetTransientState() {
+        clearTurns()
         inFlightTimer?.cancel()
         inFlightTimer = nil
         queue = RequestQueue()
@@ -1124,15 +1131,13 @@ final class AppModel {
     /// Conversations whose turn has no answer yet: the agent is typing, or the owner's last message went
     /// out in the last `awaitingWindow` with nothing after it.
     var awaitingReply: [String] {
-        let since = Self.now - Self.awaitingWindow
+        let since = Self.now - awaitingWindow
         return conversations.values.filter { conversation in
             if typing.contains(conversation.id) { return true }
             guard let last = conversation.items.last(where: { $0.kind != .tools }), last.kind == .user, last.rejected == nil else { return false }
             return (last.status ?? .queued) >= .sending && last.ts >= since
         }.map(\.id)
     }
-
-    private static let awaitingWindow: Int64 = 10 * 60 * 1000
 
     /// The widgets' snapshot (`WidgetSnapshot`); nothing in demo mode or before pairing.
     func publishWidgets() {
@@ -1309,8 +1314,9 @@ final class AppModel {
         }
         typing.insert(convId)
         if stallTimers[convId] == nil { progressed(convId) }
+        let timeout = typingTimeout
         typingTimers[convId] = Task { [weak self] in
-            try? await Task.sleep(for: Self.typingTimeout)
+            try? await Task.sleep(for: timeout)
             guard !Task.isCancelled else { return }
             self?.setTyping(convId, false)
         }
@@ -1321,8 +1327,9 @@ final class AppModel {
         guard typing.contains(convId) else { return }
         stallTimers[convId]?.cancel()
         stalled.remove(convId)
+        let timeout = stallTimeout
         stallTimers[convId] = Task { [weak self] in
-            try? await Task.sleep(for: Self.stallTimeout)
+            try? await Task.sleep(for: timeout)
             guard !Task.isCancelled else { return }
             self?.stalled.insert(convId)
         }
