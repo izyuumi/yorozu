@@ -1,5 +1,5 @@
 import type { ActivityRecord, ActivityStorage } from "./activitystore.js";
-import { applyTurn, cleanJobs, ENDED_LIMIT, holdFor, plan, tidy, type ActivityReport, type OwnerTurnChange, type WireJob } from "./liveactivity.js";
+import { applyTurn, cleanJobs, ENDED_LIMIT, holdFor, plan, tidy, validStamp, type ActivityReport, type OwnerTurnChange, type WireJob } from "./liveactivity.js";
 
 type Lifetime = { kind: "legacy" } | { kind: "seeded" | "ended"; record: ActivityRecord };
 type Watch<Timer> = { lifetime: Lifetime; jobs: WireJob[]; sent: WireJob[]; turns: Record<string, string>; ended: string[]; replied?: string[]; capacityWarned?: boolean; pushedAt?: number; timer?: Timer };
@@ -43,6 +43,7 @@ export class ActivityWatch<Timer> {
   // Forgets before load; applied to the loaded records instead of the empty pre-load map.
   private forgottenBeforeLoad = new Set<string>();
   private dropWarned = false;
+  private stampWarned = new WeakSet<ActivityRecord>();
   liveActivity = false;
 
   constructor(options: Options<Timer>) { this.options = options; }
@@ -358,7 +359,13 @@ export class ActivityWatch<Timer> {
     await this.write(async () => {
       if (failures !== this.failures || this.records.get(deviceKey) !== record || record.token !== token || !this.canReserve()) return;
       k = record.kLast + 1;
-      if (!Number.isSafeInteger(k)) return;
+      const refused = !validStamp(k) ? "timestamp exhausted; no more pushes for this activity"
+        : [next.staleDate, next.dismissalDate].some((date) => date !== undefined && !validStamp(date)) ? "date out of range; push not sent" : undefined;
+      if (refused) {
+        if (!this.stampWarned.has(record)) this.options.warn(`yorozu: Live Activity ${refused}`);
+        this.stampWarned.add(record);
+        return;
+      }
       const reserved: ActivityRecord = next.event === "end"
         ? tombstone({ ...record, kLast: k })
         : { ...record, kLast: k, sent: jobs };
@@ -425,6 +432,7 @@ export class ActivityWatch<Timer> {
     if (!this.liveActivity && !stored) return;
     const old = this.activities.get(deviceKey);
     if (report.activityId !== undefined && report.requestedAtMs !== undefined) {
+      if (!Number.isSafeInteger(report.requestedAtMs) || report.requestedAtMs < 1e11 || report.requestedAtMs >= 1e14) return;
       // UUIDs compare case-insensitively; validation never trims or coerces wire fields.
       const activityId = report.activityId.toLowerCase();
       const same = stored?.activityId.toLowerCase() === activityId;
