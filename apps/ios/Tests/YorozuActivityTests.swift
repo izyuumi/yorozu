@@ -162,25 +162,6 @@ private func job(_ token: String, _ kind: YorozuJob.Kind, _ state: YorozuJob.Sta
         }
     }
 
-    @Test func pushesUpdateTheActivity() {
-        var labels = ActivityLabels()
-        labels.upsert(token: "turn", convId: "conv", kind: .turn, title: nil, previews: false)
-        let start = [job("turn", .turn)]
-        let asked = YorozuJobs.pushed(.approval, convId: "conv", title: "Trip", previews: true, jobs: start, labels: &labels, now: t0)
-        #expect(asked.map(\.kind) == [.needsYou, .turn])
-        let ask = asked[0].token
-        #expect(labels.entries[ask] == ActivityLabels.Entry(convId: "conv", kind: .needsYou, title: "Trip"))
-        let twice = YorozuJobs.pushed(.approval, convId: "conv", title: "Trip", previews: true, jobs: asked, labels: &labels, now: t0 + 1)
-        #expect(twice == asked)
-        let replied = YorozuJobs.pushed(.reply, convId: "conv", title: nil, previews: true, jobs: asked, labels: &labels, now: t0 + 2)
-        #expect(replied == [job("turn", .turn, .done, finished: 2)])
-        #expect(Set(labels.entries.keys) == ["turn"])
-        let failed = YorozuJobs.pushed(.failurePushed, convId: "conv", title: nil, previews: false, jobs: start, labels: &labels, now: t0)
-        #expect(failed.first?.state == .failed)
-        let unknown = YorozuJobs.pushed(.reply, convId: "other", title: nil, previews: false, jobs: start, labels: &labels, now: t0)
-        #expect(unknown == start)
-    }
-
     @Test func stateStaysSmallAndCarriesNoConversation() throws {
         var labels = ActivityLabels()
         var jobs: [YorozuJob] = []

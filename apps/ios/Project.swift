@@ -67,7 +67,7 @@ let project = Project(
                 // The plugin's direct listener on the LAN (#532); browsed only once the owner allowed Local Network.
                 "NSBonjourServices": ["_yorozu._tcp"],
                 "NSLocalNetworkUsageDescription": "Yorozu connects directly to your host on the same network, for faster messages.",
-                // One Live Activity, opt-in (Settings › Live Activities): started in the app, updated by the app, the notification service and, with a host that supports it, counts-only relay pushes.
+                // One Live Activity, opt-in (Settings › Live Activities): started in the app, updated by the app and, with a host that supports it, counts-only relay pushes.
                 "NSSupportsLiveActivities": true,
                 // The voice model is an Apple-hosted asset pack on iPhone and iPad (YorozuAssets).
                 "BAAppGroupID": .string(appGroup),
@@ -155,9 +155,14 @@ let project = Project(
                     "NSExtensionPrincipalClass": "$(PRODUCT_MODULE_NAME).NotificationService",
                 ],
             ]),
-            sources: ["Sources/YorozuNotificationService/**", "Sources/Shared/**", "Sources/WidgetShared/Model/**"],
+            sources: [
+                "Sources/YorozuNotificationService/**",
+                "Sources/Shared/**",
+                // L1: the extension must not compile or link ActivityKit.
+                .glob("Sources/WidgetShared/Model/**", excluding: ["Sources/WidgetShared/Model/YorozuActivityAttributes.swift"]),
+            ],
             resources: ["Resources/Localizable.xcstrings"],
-            // The App Group holds the widgets' snapshot, which a reply's notification updates, and the Live Activity's labels.
+            // The App Group holds the widgets' snapshot, which a reply's notification updates.
             entitlements: .dictionary([
                 "keychain-access-groups": [.string(notificationKeychainGroup)],
                 "com.apple.security.application-groups": [.string(appGroup)],

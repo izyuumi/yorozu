@@ -55,6 +55,8 @@ jobs:
           mise use -g "tuist@$tuist"
           mise bin-paths "tuist@$tuist" >> "$GITHUB_PATH"
       - run: tuist generate --no-open --path apps/ios
+      - name: Notification service has no ActivityKit
+        run: python3 apps/ios/scripts/check-nse-no-activitykit.py
       - name: iPhone and iPad
         run: |
           env -u SDKROOT xcodebuild build -workspace apps/ios/Yorozu.xcworkspace -scheme YorozuIOS \
