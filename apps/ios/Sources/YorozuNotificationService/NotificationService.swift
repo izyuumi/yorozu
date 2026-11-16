@@ -16,7 +16,7 @@ final class NotificationService: UNNotificationServiceExtension {
         content.body = preview.body
         if let convId = preview.convId { content.userInfo["convId"] = convId }
         guard let convId = preview.convId, WireEvent.isId(convId) else { return contentHandler(content) }
-        if NotificationEffects.of(preview.cls, convId: convId).updatesWidget, WidgetStore.update({
+        if NotificationEffects.of(preview.cls).updatesWidget, WidgetStore.update({
             $0.receive(convId: convId, title: preview.title, body: preview.body, event: preview.event, at: Date(), previews: WidgetStore.previews)
         }) {
             WidgetCenter.shared.reloadAllTimelines()

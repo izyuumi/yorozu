@@ -155,7 +155,12 @@ let project = Project(
                     "NSExtensionPrincipalClass": "$(PRODUCT_MODULE_NAME).NotificationService",
                 ],
             ]),
-            sources: ["Sources/YorozuNotificationService/**", "Sources/Shared/**", "Sources/WidgetShared/Model/**"],
+            sources: [
+                "Sources/YorozuNotificationService/**",
+                "Sources/Shared/**",
+                // L1: the extension must not compile or link ActivityKit.
+                .glob("Sources/WidgetShared/Model/**", excluding: ["Sources/WidgetShared/Model/YorozuActivityAttributes.swift"]),
+            ],
             resources: ["Resources/Localizable.xcstrings"],
             // The App Group holds the widgets' snapshot, which a reply's notification updates.
             entitlements: .dictionary([
