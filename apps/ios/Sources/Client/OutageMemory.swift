@@ -22,7 +22,8 @@ struct OutageMemory: Equatable {
     /// `.hostOffline` is an outage only while the transport is running (a late one after the app's
     /// own stop is not); `.offline` is one unless the app stopped the transport, including a late
     /// `.offline` after `appRuns()` that still belongs to that stop; `.connecting`/`.handshaking`
-    /// keep the last outage; anything else clears it and drops the absorb token.
+    /// keep the last outage and drop a leftover absorb token (a second stop may not emit another
+    /// `.offline`); anything else clears it and drops the absorb token.
     mutating func apply(_ state: RelayConnection.State) {
         switch state {
         case .hostOffline:
@@ -30,7 +31,8 @@ struct OutageMemory: Equatable {
         case .offline:
             if absorbStop { absorbStop = false }
             else if link == .running { outage = state }
-        case .connecting, .handshaking: break
+        case .connecting, .handshaking:
+            absorbStop = false
         default:
             outage = nil
             absorbStop = false

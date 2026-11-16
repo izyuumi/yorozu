@@ -58,6 +58,18 @@ import YorozuWire
         #expect(memory.link == .stoppedByApp)
     }
 
+    @Test func aSecondStopWithoutASecondOfflineDoesNotSwallowTheNextOutage() {
+        var memory = OutageMemory()
+        memory.appStops()
+        memory.apply(.offline)
+        #expect(memory.outage == nil)
+        memory.appStops() // overlapping stop; set() would not emit a second .offline
+        memory.appRuns()
+        memory.apply(.connecting)
+        memory.apply(.offline)
+        #expect(memory.outage == .offline)
+    }
+
     @Test func resetClearsTheOutageAndRuns() {
         var memory = OutageMemory()
         memory.apply(.hostOffline)
