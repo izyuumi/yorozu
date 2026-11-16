@@ -46,7 +46,7 @@ struct YorozuActivityState: Codable, Hashable, Sendable {
     var lastUpdate: Date? { updatedAt ?? jobs.map(YorozuJobs.recency).max() }
 }
 
-/// A change from any job source: the app, the notification service, later a push.
+/// A change from any job source: the app, later a push.
 enum JobChange: Hashable, Sendable {
     case upsert(YorozuJob)
     case finish(token: String, state: YorozuJob.State)
@@ -183,34 +183,6 @@ enum YorozuJobs {
     /// Recording and transcription are not on screen in the app, so they keep the activity while it is in front.
     static func keepsActivityInApp(_ jobs: [YorozuJob]) -> Bool {
         jobs.contains { !$0.finished && ($0.kind == .recording || $0.kind == .transcribing) }
-    }
-
-    /// A push the notification service decrypted: a reply ends the conversation's turn and its approval, a
-    /// failure fails the turn, an approval adds a needs-you row (one per conversation). Writes the new row's
-    /// label into `labels`; returns the jobs unchanged when nothing applies.
-    static func pushed(_ event: JobEvent, convId: String, title: String?, previews: Bool, jobs current: [YorozuJob],
-                       labels: inout ActivityLabels, now: Date) -> [YorozuJob] {
-        func running(_ kind: YorozuJob.Kind) -> String? {
-            labels.tokens(for: convId, kind: kind).first { token in current.contains { $0.token == token && !$0.finished } }
-        }
-        var jobs = current
-        switch event {
-        case .reply:
-            if let token = running(.turn) { jobs = merge(jobs, .finish(token: token, state: .done), now: now) }
-            if let token = running(.needsYou) { jobs = merge(jobs, .remove(token: token), now: now) }
-        case .failurePushed:
-            if let token = running(.turn) { jobs = merge(jobs, .finish(token: token, state: .failed), now: now) }
-        case .approval:
-            guard running(.needsYou) == nil else { break }
-            let job = YorozuJob(kind: .needsYou, startedAt: now)
-            labels.upsert(token: job.token, convId: convId, kind: .needsYou, title: title, previews: previews)
-            jobs = merge(jobs, .upsert(job), now: now)
-        case .transcriptReady, .recordingCap, .localFailure:
-            break
-        }
-        let next = apply(jobs, nil, now: now)
-        labels.prune(keeping: Set(next.map(\.token)))
-        return next
     }
 }
 

@@ -1,4 +1,3 @@
-import ActivityKit
 import UserNotifications
 import WidgetKit
 import YorozuWire
@@ -16,30 +15,12 @@ final class NotificationService: UNNotificationServiceExtension {
             ?? Bundle.main.localizedString(forKey: fallback, value: nil, table: nil)
         content.body = preview.body
         if let convId = preview.convId { content.userInfo["convId"] = convId }
-        guard let convId = preview.convId, WireEvent.isId(convId), let event = Self.events[preview.cls] else { return contentHandler(content) }
-        if event == .reply, WidgetStore.update({
+        guard let convId = preview.convId, WireEvent.isId(convId) else { return contentHandler(content) }
+        if NotificationEffects.of(preview.cls, convId: convId).updatesWidget, WidgetStore.update({
             $0.receive(convId: convId, title: preview.title, body: preview.body, event: preview.event, at: Date(), previews: WidgetStore.previews)
         }) {
             WidgetCenter.shared.reloadAllTimelines()
         }
-        let title = preview.title
-        Task {
-            await Self.updateActivity(event, convId: convId, title: title)
-            contentHandler(content)
-        }
-    }
-
-    private static let events: [String: JobEvent] = ["reply": .reply, "failed": .failurePushed, "approval": .approval]
-
-    /// Updates the Live Activity silently: the notification itself alerts. It can't start one.
-    private static func updateActivity(_ event: JobEvent, convId: String, title: String?) async {
-        guard let activity = YorozuActivityAttributes.current else { return }
-        let previews = WidgetStore.previews
-        var labels = ActivityLabelsStore.read()
-        let jobs = activity.content.state.jobs
-        let next = YorozuJobs.pushed(event, convId: convId, title: title, previews: previews, jobs: jobs, labels: &labels, now: Date())
-        ActivityLabelsStore.write(labels, previews: previews)
-        guard next != jobs else { return }
-        await YorozuActivityAttributes.show(next, on: activity, endWhenIdle: true)
+        contentHandler(content)
     }
 }
