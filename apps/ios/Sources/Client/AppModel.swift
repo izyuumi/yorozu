@@ -49,8 +49,8 @@ final class AppModel {
     @ObservationIgnored private var listener: Task<Void, Never>?
     @ObservationIgnored private(set) var typingTimers: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private(set) var stallTimers: [String: Task<Void, Never>] = [:]
-    /// When each held turn's typing began; a turn held past `awaitingWindow` is dropped.
-    @ObservationIgnored private var typingSince: [String: Int64] = [:]
+    /// When each turn's hold through a connection gap began; a turn held past `awaitingWindow` is dropped.
+    @ObservationIgnored private var heldSince: [String: ContinuousClock.Instant] = [:]
     @ObservationIgnored private let cache: ConversationCache
     @ObservationIgnored private let storage: any PairingStorage
     @ObservationIgnored private let migration: PairingMigration.State
@@ -108,6 +108,8 @@ final class AppModel {
     @ObservationIgnored var awaitingWindow: Int64 = 10 * 60 * 1000
     /// Milliseconds since 1970; tests set the time.
     @ObservationIgnored var now: () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }
+    /// Monotonic time for how long a turn is held; tests set it.
+    @ObservationIgnored var clock: () -> ContinuousClock.Instant = { .now }
     static let requestTimeout: Duration = .seconds(30)
 
     typealias Transport = @MainActor (Pairing, PeerInfo) throws -> any ClientTransport
@@ -366,7 +368,7 @@ final class AppModel {
         for timer in typingTimers.values { timer.cancel() }
         typingTimers = [:]
         typing = []
-        typingSince = [:]
+        heldSince = [:]
         for timer in stallTimers.values { timer.cancel() }
         stallTimers = [:]
         stalled = []
@@ -623,7 +625,10 @@ final class AppModel {
         case .state(let new):
             Self.connectionLog.info("state \(String(describing: new), privacy: .public)")
             state = new
-            if new != .ready { transfers.sessionLost() }
+            if new != .ready {
+                transfers.sessionLost()
+                for convId in typing { holdTyping(convId) }
+            }
             outageMemory.apply(new)
             switch new {
             case .pairingFailed:
@@ -832,7 +837,7 @@ final class AppModel {
             let files = ChatAttachment.list(reply.attachments)
             append(ChatItem(id: reply.messageId, kind: .agent, text: reply.text, ts: reply.ts, attachments: files, replyTo: reply.replyTo,
                 presentation: reply.presentation), to: reply.convId)
-            setTyping(reply.convId, false)
+            progressed(reply.convId)
         case .reaction(let reaction):
             receive(reaction)
         case .uploadAck, .uploadState, .chunk:
@@ -1025,9 +1030,6 @@ final class AppModel {
         }
         if conversation.createdAt > (conversation.items.first?.ts ?? .max) { conversation.createdAt = conversation.items[0].ts }
         store(conversation)
-        // A reply that arrived while the session was down ends the held turn.
-        if typing.contains(page.convId), let last = conversation.items.last(where: { $0.kind != .tools }),
-            last.kind == .agent || last.kind == .error { setTyping(page.convId, false) }
     }
 
     private func finishCronWait() {
@@ -1319,12 +1321,13 @@ final class AppModel {
         typingTimers[convId] = nil
         guard active else {
             typing.remove(convId)
-            typingSince[convId] = nil
+            heldSince[convId] = nil
             stallTimers.removeValue(forKey: convId)?.cancel()
             stalled.remove(convId)
             return
         }
-        if typing.insert(convId).inserted { typingSince[convId] = now() }
+        typing.insert(convId)
+        heldSince[convId] = nil
         if stallTimers[convId] == nil { progressed(convId) }
         armTypingTimer(convId)
     }
@@ -1339,14 +1342,23 @@ final class AppModel {
         }
     }
 
-    /// No keepalive can arrive without a session, so a turn is held through a gap, up to `awaitingWindow`.
+    /// No keepalive can arrive without a session, so a turn is held through a gap, up to `awaitingWindow` from the gap's start.
     func typingTimerFired(_ convId: String) {
         guard typing.contains(convId) else { return }
-        if state != .ready, now() - (typingSince[convId] ?? now()) < awaitingWindow {
+        if state != .ready, clock() - holdTyping(convId) < .milliseconds(awaitingWindow) {
             armTypingTimer(convId)
         } else {
             setTyping(convId, false)
         }
+    }
+
+    /// When the turn's hold began; the first call in a gap starts it, later ones keep it.
+    @discardableResult
+    private func holdTyping(_ convId: String) -> ContinuousClock.Instant {
+        if let since = heldSince[convId] { return since }
+        let since = clock()
+        heldSince[convId] = since
+        return since
     }
 
     /// Restarts the stall clock of a running turn; typing keepalives alone don't count as progress.

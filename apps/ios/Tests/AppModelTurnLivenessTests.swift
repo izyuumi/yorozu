@@ -93,12 +93,16 @@ import YorozuWire
     }
 
     @Test func heldTypingEndsAfterTheAwaitingWindow() async throws {
-        let (model, _) = try await startedThenLost()
-        let window = model.awaitingWindow, start = self.start
-        model.now = { start + window / 2 }
+        let (model, transport) = try await opened()
+        try await started(model, transport)
+        let gap = ContinuousClock.now, window = Duration.milliseconds(model.awaitingWindow)
+        model.clock = { gap }
+        await transport.emit(.state(.offline))
+        try #require(await harness.settled { model.state != .ready })
+        model.clock = { gap + window / 2 }
         model.typingTimerFired(convId)
         #expect(model.typing.contains(convId))
-        model.now = { start + window + 1 }
+        model.clock = { gap + window + .milliseconds(1) }
         model.typingTimerFired(convId)
         #expect(model.state != .ready)
         #expect(!model.typing.contains(convId))
@@ -106,42 +110,36 @@ import YorozuWire
         #expect(model.typingTimers[convId] == nil)
     }
 
-    @Test func aReplyEndsTheTurnAtOnce() async throws {
-        let (model, transport) = try await startedThenLost()
+    /// The cap counts the gap, not the turn: a long turn isn't dropped at its first short gap.
+    @Test func aLongTurnSurvivesAShortGap() async throws {
+        let (model, transport) = try await opened()
+        try await started(model, transport)
+        let start = self.start
+        model.now = { start + 15 * 60 * 1000 }
+        await transport.emit(.state(.offline))
+        try #require(await harness.settled { model.state != .ready })
         model.typingTimerFired(convId)
-        try await reopen(transport, model)
+        #expect(model.typing.contains(convId))
+        #expect(model.awaitingReply.contains(convId))
+    }
+
+    /// Replies come in chunks and several blocks per run; none of them ends the turn's row.
+    @Test func replyChunksKeepOneTurn() async throws {
+        let (model, transport) = try await opened()
+        try await started(model, transport)
         // Keep the chat in view so a Mac test doesn't post a user notification for the reply.
         model.setActive(true)
         model.setOnScreen(convId, true)
-        let replyId = WireEvent.newId()
-        await transport.emit(.event(.reply(Reply(convId: convId, messageId: replyId, text: "Hi", ts: start))))
-        #expect(await harness.settled { model.conversations[convId]?.items.last?.id == replyId })
-        #expect(!model.typing.contains(convId))
-        #expect(!model.awaitingReply.contains(convId))
-        #expect(model.typingTimers[convId] == nil)
-    }
-
-    @Test func aBackfilledReplyEndsTheHeldTurn() async throws {
-        let (model, transport) = try await startedThenLost()
-        try await reopen(transport, model)
-        let user = HistoryItem(kind: .user, id: messageId, seq: 5, ts: start - 11 * 60 * 1000, text: "Hello")
-        await transport.emit(.event(.history(History(convId: convId, items: [user], more: true, rev: 1))))
-        #expect(await harness.settled { model.conversations[convId]?.items.last?.seq == 5 })
+        let first = WireEvent.newId(), second = WireEvent.newId()
+        await transport.emit(.event(.reply(Reply(convId: convId, messageId: first, text: "Hi", ts: start))))
+        await transport.emit(.event(.reply(Reply(convId: convId, messageId: second, text: "There", ts: start + 1))))
+        #expect(await harness.settled { model.conversations[convId]?.items.last?.id == second })
+        let armed = try #require(model.typingTimers[convId])
+        await transport.emit(.event(.typing(Typing(convId: convId, active: true))))
+        #expect(await harness.settled { model.typingTimers[convId] != armed })
         #expect(model.typing.contains(convId))
-
-        // An older page with an answered turn doesn't end the current one.
-        let older = [HistoryItem(kind: .user, id: WireEvent.newId(), seq: 3, ts: start - 20 * 60 * 1000, text: "Earlier"),
-            HistoryItem(kind: .agent, id: WireEvent.newId(), seq: 4, ts: start - 19 * 60 * 1000, text: "Earlier answer")]
-        await transport.emit(.event(.history(History(convId: convId, before: 5, items: older, more: false, rev: 1))))
-        #expect(await harness.settled { model.conversations[convId]?.items.count == 3 })
-        #expect(model.typing.contains(convId))
-
-        let replyId = WireEvent.newId()
-        let reply = HistoryItem(kind: .agent, id: replyId, seq: 6, ts: start, text: "Hi")
-        await transport.emit(.event(.history(History(convId: convId, after: 5, items: [reply], more: false, rev: 2))))
-        #expect(await harness.settled { model.conversations[convId]?.items.last?.id == replyId })
-        #expect(!model.typing.contains(convId))
-        #expect(!model.awaitingReply.contains(convId))
+        #expect(model.awaitingReply.contains(convId))
+        #expect(model.typingTimers[convId] != nil)
     }
 
     @Test func aTurnThatNeverStartedStillLeavesAfterTheWindow() async throws {
