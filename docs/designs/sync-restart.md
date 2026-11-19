@@ -20,27 +20,27 @@ How often S1b and S2 happen is unknown. 01's logs measure it for two weeks on th
 
 ## Goals
 
-1. A message the host accepted runs at most once across restarts, within the bounds in "Promises and their limits".
+1. A message the host handed to OpenClaw runs at most once across restarts, within the bounds in "Promises and their limits". One the host accepted in an earlier process and never handed runs again when the device resends it.
 2. Each turn's progress (accepted, handed to OpenClaw, started, settled) is recorded durably with the boot id of the process that wrote it, so that at start-up the host logs, once per process, how many messages each earlier process left unsettled, by category.
-3. Nothing a device sees changes, except that a repeat after a restart gets only `delivered` instead of running again.
+3. Nothing a device sees changes, except that a repeat after a restart of a message already handed gets only `delivered` instead of running again.
 4. Shipped apps, the Windows app, older hosts, the relay and the Windows conformance host keep working unchanged: no new event, field or capability.
 
 Non-goals (01): marking or reporting interrupted messages; any action at start-up beyond counting; automatic rerun; `run_started` at session open; app changes; top-level docs, contract or plugin README edits.
 
 ## Solution
 
-- **Run ledger.** The host keeps a durable record per message id, written when the message is accepted and stamped with the boot id. A repeat of a recorded id gets `delivered` and does not run again, also after a restart. When the store can't be read, the host checks the transcript instead.
+- **Run ledger.** The host keeps a durable record per message id, written when the message is accepted and stamped with the boot id. A repeat of a recorded id gets `delivered` and does not run again, also after a restart, unless its entry is `accepted` from an earlier boot (accepted, never handed, then a restart): that one runs, so a message OpenClaw never held is not lost. When the store can't be read, the host checks the transcript instead.
 - **Progress writes.** The record moves `accepted → handed → started → settled` (plus `parked`), each write stamping the current boot id. The `handed` write is awaited immediately before the dispatch call.
 - **Start-up counts.** Once per process, the host logs one line per earlier boot id with the counts of that process's unsettled entries. It changes nothing.
 - **Dispatch logs.** Each dispatch's `deferredToActiveRun` value and each follow-up start after its dispatch returned are logged (A-6).
 
 ## Promises and their limits
 
-**At-most-once** holds for a message id within 24 h and the latest 10,000 messages, once its claim write has landed. The claim write starts right after the claim, before `delivered`, without being awaited. It does not hold:
+**At-most-once** holds for a message id within 24 h and the latest 10,000 messages, once its `handed` write has landed (an earlier-boot `accepted` entry reruns on purpose; "Claim and dedupe"). Within one process it holds from the claim on. The claim write starts right after the claim, before `delivered`, without being awaited. It does not hold:
 
 - in degraded mode (the store can't be read at start-up): a message still in OpenClaw's queue is not in the transcript, and a failed transcript read runs the message;
-- for a claim whose store write failed (logged, target 0);
-- for a restart between the claim and its write landing.
+- for a message whose `handed` write failed (logged, target 0): after a restart its entry still reads `accepted` (or is missing), so a resend runs;
+- for a restart between the `handed` call and its write landing (the dispatch may already have run; A-12's deadline lets it go ahead after 2 s).
 
 **Start-up counts** are as good as the writes behind them. A failed or unlanded write leaves an entry one step behind (logged, target 0). An entry stays unsettled in the store until it ages out, so a later restart within 24 h logs the same earlier boot id again; readers take the first line per boot id.
 
@@ -48,8 +48,8 @@ Non-goals (01): marking or reporting interrupted messages; any action at start-u
 
 ## User stories
 
-1. As the owner, I want a message the host already accepted to run at most once even if the Gateway restarts, so that the OpenClaw agent doesn't do the same work twice.
-2. As the owner, I want a message my device resends after a restart (because it never got ✓✓) to get ✓✓ and not run again, so that a flaky connection costs nothing.
+1. As the owner, I want a message the host already handed to OpenClaw to run at most once even if the Gateway restarts, so that the OpenClaw agent doesn't do the same work twice.
+2. As the owner, I want a message my device resends after a restart (because it never got ✓✓) to get ✓✓ and not run again if OpenClaw already had it, and to run if OpenClaw never had it, so that a flaky connection costs nothing.
 3. As the owner, I want a message that arrives on both the relay and the direct path to run once, also right after a restart.
 4. As the owner, I want the host to keep working when its store fails, falling back to the transcript to spot repeats, so that a store failure never fails a turn.
 5. As the owner, I want a run that fails for a temporary reason to be retried after 5, 15, 30, 60 and 120 s, as before, including across a restart.
@@ -124,8 +124,10 @@ A follow-up whose start fires after its dispatch returned moves `handed → star
 On every `message` event in the Hub, before `delivered`, the Hub calls the injected synchronous `claim(message)`:
 
 1. Unknown id: a new `accepted` entry, its write started and not awaited; returns `"fresh"`.
-2. Known id (any state): logs `yorozu: duplicate message skipped <messageId> <state> boot <same|earlier>`; returns `"duplicate"`. `boot earlier` marks a copy that crossed a restart; `boot same` is mostly the relay-plus-direct double arrival (A-20).
-3. The Hub broadcasts `delivered` in both cases, runs a fresh message (`onMessage`) and does nothing more for a duplicate, as `hub.ts` does today (CA-8).
+2. Known id, `accepted` with an earlier boot id (accepted, never handed to OpenClaw, then a restart): treated as fresh. Logs `yorozu: duplicate message rerun <messageId> accepted boot earlier never handed`, writes a new `accepted` entry with the current boot id and time (started, not awaited); returns `"fresh"`. Skipping it would lose a message the device sent and OpenClaw never held; this follows A-9's direction (never-held messages get sent) without A-9's start-up requeue, which stays deferred.
+3. Known id, `accepted` with the same boot id: logs `yorozu: duplicate message skipped <messageId> accepted boot same`; returns `"duplicate"`. Mostly the relay-plus-direct double arrival (A-20).
+4. Known id in any other state (`handed`, `started`, `parked`, `settled`), either boot: logs `yorozu: duplicate message skipped <messageId> <state> boot <same|earlier>`; returns `"duplicate"`. `boot earlier` marks a copy that crossed a restart.
+5. The Hub broadcasts `delivered` in every case, runs a fresh message (including a rerun) (`onMessage`) and does nothing more for a duplicate, as `hub.ts` does today (CA-8).
 
 **Degraded mode (decision 3).** If the `runs` store can't be read at load, the host logs `yorozu: run ledger unavailable: <error>`, starts with an empty map and logs no start-up counts. The claim checks the map first; on a miss it runs the transcript check: found → duplicate, entered in the map; missing → fresh; read failed → fresh, logged `yorozu: run ledger transcript check failed: <error>`. New entries still go to the map and the store. The check reuses history's matching (`history.ts` `itemsOf`, `:214`, user items keyed by transport message id, `:403`). It is synchronous on the event loop while degraded; moving it off the loop and retrying the load in the background are deferred until `run ledger unavailable` shows up (CN-1).
 
@@ -146,6 +148,12 @@ yorozu: restart ledger <bootId>: not handed <n>, handed not started <n>, started
 | `yorozu: run started <messageId> attempt <n> boot <bootId>` | The turn's own `onAgentRunStart`; attempt 0 first, a parked rerun counts up. |
 | `yorozu: dispatch returned <messageId> deferred <steer\|followup\|none\|other:<value>> started <true\|false>` | Right after the dispatch call returns (A-6). `started` = its own start had fired. |
 | `yorozu: follow-up started after dispatch <messageId>` | Its own `onAgentRunStart` fires after its dispatch returned (A-6). |
+
+**Log-reading caveats.** No code change; read the lines with these in mind. Line numbers are as of ticket 01 on `feat/sync-ledger`.
+
+1. **`not handed` undercounts.** The `accepted` write is fire-and-forget (`ledger.ts:124`). A restart before it lands leaves no entry, so that message is not counted.
+2. **Queued follow-ups show up as started.** A follow-up OpenClaw queued logs `dispatch returned … deferred followup started false` and stays `handed`; its `run started` line, its `started` state and its `follow-up started after dispatch` line come only when its own run starts, later (`ledger.ts:144-149`, `:155-157`). So `run started` lines count those late starts too. For turns that started at dispatch, subtract the `follow-up started after dispatch <messageId>` lines from the `run started` lines. A queued follow-up lost to a restart has no `run started` line and counts as `handed not started`.
+3. **One ledger per process.** `runs.ts:12-23` binds a single ledger, and one bound cfg, agent and log, per process. With more than one account, the counts and the transcript fallback would mix accounts. Revisit before multi-account.
 
 ### Wiring
 
@@ -240,6 +248,9 @@ The PR's first code commit holds only red tests; the PR body names each and its 
 12. **Pruning.** Entries older than 24 h are dropped on load and deleted from the store; the map stays within 24 h and 10,000 on claims.
 13. **Device view unchanged.** A normal turn sends the same events as before the change (existing `genui-golden` passes unmodified).
 14. **Legacy guards.** A Hub without `claim` behaves as before: `apps/relay/src/direct.test.ts` and `apps/windows/conformance/host/fake-host.ts` unchanged, and the relay suite and `bash apps/windows/ci/core.sh` pass.
+15. **Earlier-boot `accepted` reruns.** A store row for M in `accepted` under boot A; a new ledger under boot B; M arrives: `onMessage` runs, `duplicate message rerun M accepted boot earlier never handed` is logged, and the row reads `accepted` under boot B with the new time.
+16. **Same-boot `accepted` stays a duplicate.** M claimed (still `accepted`) and M again in the same process: `onMessage` ran once; `duplicate message skipped M accepted boot same`.
+17. **Order under a slow `handed` write.** Two messages in one conversation while the `handed` write is slow: both dispatch, in arrival order.
 
 **Acceptance commands** (Node 26, as CI; from the repo root):
 
@@ -260,7 +271,7 @@ bash apps/windows/ci/core.sh
 - **A-9's requeue in 01.** Deferred ("A-9 implementation").
 - **Waiting for the claim write before `delivered`.** Not taken: it changes ✓✓ from "received and decrypted" (`OWNER_DECISIONS.md`) to close a short gap.
 - **No deadline on the `handed` write.** Rejected: the store runs in a worker, so a stuck worker would hold every dispatch (A-12, "Store timing").
-- **Relying on OpenClaw's own message dedupe.** Not enough: its `MessageSid` cache is memory-only, and its durable source-turn check covers only messages OpenClaw already received (T0 answer 2). The host still needs its own dedupe for messages it accepted and never handed over, and to avoid repeating preparation work (CA-9).
+- **Relying on OpenClaw's own message dedupe.** Not enough: its `MessageSid` cache is memory-only, and its durable source-turn check covers only messages OpenClaw already received (T0 answer 2). The host still needs its own dedupe for messages it accepted and has not handed over yet in the same process, and to avoid repeating preparation work (CA-9).
 - **Transcript only, no store.** Not taken: queued messages aren't in the transcript. Kept as the degraded fallback (decision 3).
 - **Removing the Hub's in-memory list and requiring a ledger.** Not taken: the relay and Windows conformance Hubs are built without one.
 
@@ -309,13 +320,14 @@ After two weeks of 01's logs from the mini (A-6), a NEW spec with a fresh EGM cy
   6. Does `onToolStart` fire before the tool runs? No guarantee (unused here).
   7. Keyed store API? `register`/`delete`/`entries`/`lookup`, `evict-oldest` or `reject-new`, awaited transactional writes.
 - **T0b answers** (after EGM round 1): B1 steer and follow-up return timing (above); B2 the follow-up queue is per process and lost at a restart; B3 OpenClaw's recovery custody is private (unused); B4 no opt-out from restart recovery; B5 `runningTurns` is a start marker and can go stale for a follow-up.
-- **Measures (Yorozu (the agent), two weeks after 01's Release Mac build on the mini):** `rg 'yorozu: (run started|duplicate message skipped|restart ledger|dispatch returned|follow-up started after dispatch|run ledger)' ~/.openclaw/logs/`.
+- **Measures (Yorozu (the agent), two weeks after 01's Release Mac build on the mini):** `rg 'yorozu: (run started|duplicate message (skipped|rerun)|restart ledger|dispatch returned|follow-up started after dispatch|run ledger)' ~/.openclaw/logs/`.
 
 | Log line | Target |
 |---|---|
 | `run started <id> attempt 0` for one id under two boot ids | 0 |
 | `run ledger write failed`, `run ledger unavailable`, `run ledger transcript check failed` | 0 |
 | `duplicate message skipped … boot earlier` | Counted (S1 incidents prevented); `boot same` lines are path doubles and not counted (A-20) |
+| `duplicate message rerun … accepted boot earlier never handed` | Counted (never-held messages saved by a resend; A-9 input) |
 | `restart ledger <bootId>: …` (first line per boot id) | Counted per category; decides A-5, A-9 and the later spec's scope |
 | `dispatch returned … deferred followup`, `follow-up started after dispatch` | Counted (how often messages wait in OpenClaw's queue) |
 
@@ -343,5 +355,15 @@ Yorozu (the agent), 2026-11-19 ~13:30 JST, final.
 | A-24 | RESOLVED for 01 | Latency is stated as one synchronous SQLite write, unmeasured; 01's `run started` and `dispatch returned` lines bound it in the logs ("Risks"). |
 | A-10, A-11, A-17 – A-19, A-21 – A-23, A-25 | CARRIED to the later spec | They concern tickets 02–04, which v5 removes. |
 | N-1 – N-7 | CARRIED to the later spec, or moot | Nits on removed 02–04 text; any that touch 01 are covered by the sections above. |
+
+### Round 4 (Yorozu, #750/#751)
+
+| Item | Disposition | Where |
+|---|---|---|
+| Earlier-boot `accepted` deduped | CHANGED in 01 | It reruns and logs `duplicate message rerun`; same-boot `accepted` and every later state stay duplicates ("Claim and dedupe"; tests 15, 16). |
+| Order under a slow `handed` write | TEST added | Test 17. |
+| `not handed` undercount | DOCUMENTED | "Log-reading caveats" 1. |
+| Queued follow-ups read as started | DOCUMENTED | "Log-reading caveats" 2. |
+| One ledger per process | DOCUMENTED; revisit before multi-account | "Log-reading caveats" 3. |
 
 Round 2 dispositions (CA-1 – CA-17, CN-1 – CN-13) are in v4 of this file (`git show 3c677c72:docs/designs/sync-restart.md`). Those still live in 01: CA-8 (duplicate gets only `delivered`), CA-9 (own dedupe), CA-16 (release triggers), CN-1 (sync transcript check).
