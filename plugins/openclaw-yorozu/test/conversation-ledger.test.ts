@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { registerHooks } from "node:module";
 import { beforeEach, test } from "node:test";
+import { setImmediate } from "node:timers/promises";
 import type { Message } from "../src/envelope.ts";
 import type { RunRecord, Store } from "../src/ledger.ts";
 import "./genui-hooks.ts";
@@ -104,6 +105,29 @@ test("a failed handed write is logged and dispatch still runs", async () => {
   assert.ok(runCalls().includes("dispatch"));
   assert.ok(h.lines.includes("yorozu: run ledger write failed: Error: handed store down"), "the failed handed write was logged");
   assert.equal(state, "settled");
+});
+
+test("dispatch runs after the default deadline while the handed write is blocked", async (t) => {
+  const h = await open();
+  const m = message();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const release = Promise.withResolvers<void>();
+  host.register = (_namespace: string, _key: string, value: RunRecord) => {
+    if (value.state === "handed") return release.promise;
+  };
+
+  const turn = h.run(m);
+  t.after(async () => {
+    release.resolve();
+    await turn;
+  });
+  await setImmediate();
+  t.mock.timers.tick(1_999);
+  await setImmediate();
+  assert.deepEqual(runCalls(), ["accepted"]);
+  t.mock.timers.tick(1);
+  await setImmediate();
+  assert.deepEqual(runCalls(), ["accepted", "dispatch"], "dispatch must run at the deadline");
 });
 
 test("no deferral, steer, and an already-started follow-up settle", async () => {

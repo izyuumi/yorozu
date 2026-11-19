@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
+import { setImmediate as immediate } from "node:timers/promises";
 import "./genui-hooks.ts";
 import { host, yorozuRuntime } from "./genui-host.js";
 import { createLedger, type LedgerDeps, type RunRecord, type Store } from "../src/ledger.ts";
@@ -184,5 +185,39 @@ test("a slow accepted write cannot land after handed, started or settled", async
   assert.deepEqual(host.calls.map(({ value }: { value: RunRecord }) => value.state), [
     "accepted", "handed", "started", "settled",
   ], "writes for one id land in call order");
+  assert.deepEqual(await runs().lookup("m"), record("A", "settled"));
+});
+
+test("handing resolves at its deadline and later writes wait for handed to land", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { ledger, lines } = fixture("A", { handDeadlineMs: 20 });
+  const release = Promise.withResolvers<void>();
+  t.after(() => release.resolve());
+  host.register = (_namespace: string, _key: string, value: RunRecord) => {
+    if (value.state === "handed") return release.promise;
+  };
+  await ledger.load();
+  ledger.claim(message("m"));
+  let returned = false;
+  void ledger.handing("m", convId).then(() => { returned = true; });
+
+  t.mock.timers.tick(19);
+  await immediate();
+  assert.equal(returned, false, "handing must wait before the deadline");
+  assert.deepEqual(lines, []);
+  t.mock.timers.tick(1);
+  await immediate();
+  assert.equal(returned, true, "handing must resolve at the deadline");
+  assert.deepEqual(lines, ["yorozu: run ledger write slow m handed"]);
+
+  ledger.runStarted("m", 0, false);
+  ledger.turnEnded("m", convId, { parked: false, queued: false });
+  await immediate();
+  assert.equal((await runs().lookup("m"))?.state, "accepted");
+  release.resolve();
+  await ledger.idle();
+  assert.deepEqual(host.calls.map(({ value }: { value: RunRecord }) => value.state), [
+    "accepted", "handed", "started", "settled",
+  ]);
   assert.deepEqual(await runs().lookup("m"), record("A", "settled"));
 });
