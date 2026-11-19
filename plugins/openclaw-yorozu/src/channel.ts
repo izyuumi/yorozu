@@ -15,6 +15,7 @@ import { chunkMarkdownText } from "openclaw/plugin-sdk/reply-runtime";
 import { resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
 import { channelReadyPatch, channelStoppedPatch } from "openclaw/plugin-sdk/gateway-runtime";
 import { loadAttachmentIndex, mediaMaxBytes } from "./attachments.js";
+import { resolveHermesBackend } from "./backends.js";
 import { channelCard, MESSAGE_TOOL_HINTS, PRESENTATION_CAPABILITIES, renderedPayload } from "./cards.js";
 import {
   DEFAULT_CHUNK_LIMIT,
@@ -100,6 +101,7 @@ const deliveryReplyTo = (cfg: OpenClawConfig, threadId?: string | number | null,
 async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<void> {
   const { account, abortSignal } = ctx;
   outboundLog = ctx.log;
+  resolveHermesBackend(ctx.cfg, ctx.log);
   // The agent and thread keys OpenClaw routes Yorozu to; bindings and identity links can differ from the config.
   const route = resolveOwnerRoute(ctx.cfg, account.agent, account.accountId);
   const agent = route.agentId;
