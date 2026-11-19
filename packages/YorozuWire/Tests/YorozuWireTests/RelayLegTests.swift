@@ -151,14 +151,84 @@ struct RelayLegTests {
             throw error
         }
     }
+
+    /// `joined` moves standing to `.knownToRelay` on the actor, so a later `unknown device` unpairs
+    /// (it would be `.pairingFailed` if standing were still `.codeOnly`).
+    @Test func aJoinedCodeOnlyLegUnpairsOnUnknownDevice() async throws {
+        let deadline = ContinuousClock.now + .seconds(8)
+        let relay = try LoopbackRelay()
+        defer { relay.stop() }
+        try await relay.wait(until: deadline, "loopback listener ready") { $0.port != nil }
+        let urlSession = URLSession(configuration: .ephemeral)
+        defer { urlSession.invalidateAndCancel() }
+        let leg = try codeOnlyLeg(relay: relay, urlSession: urlSession)
+        let probe = StandingProbe(updates: await leg.updates())
+        defer { probe.cancel() }
+        do {
+            await leg.start()
+            try await probe.wait(until: deadline, "relayJoined") { $0.joined }
+            relay.close(code: 4001, reason: "unknown device")
+            try await probe.wait(until: deadline, "unpaired after joined") { $0.state == .unpaired }
+            await leg.stop()
+        } catch {
+            await leg.stop()
+            throw error
+        }
+    }
+
+    /// `closed()` applies `afterRetryAsKnown` on the actor: a first `unknown token` reconnects as known,
+    /// a second is terminal. If standing were not updated, the second close would reconnect again.
+    @Test func anUnknownTokenCloseRetriesAsKnownOnceThenFails() async throws {
+        let deadline = ContinuousClock.now + .seconds(8)
+        let relay = try LoopbackRelay(onJoin: .close(code: 4001, reason: "unknown token"))
+        defer { relay.stop() }
+        try await relay.wait(until: deadline, "loopback listener ready") { $0.port != nil }
+        let urlSession = URLSession(configuration: .ephemeral)
+        defer { urlSession.invalidateAndCancel() }
+        let leg = try codeOnlyLeg(relay: relay, urlSession: urlSession)
+        let probe = StandingProbe(updates: await leg.updates())
+        defer { probe.cancel() }
+        do {
+            await leg.start()
+            try await relay.wait(until: deadline, "first join refused") { $0.joinCount >= 1 }
+            try await relay.wait(until: deadline, "retried join") { $0.joinCount >= 2 }
+            try await probe.wait(until: deadline, "pairingFailed after second unknown token") {
+                $0.state == .pairingFailed("unknown token")
+            }
+            try await Task.sleep(for: .milliseconds(300))
+            #expect(relay.snapshot.joinCount == 2, "a third join would mean standing was not updated")
+            await leg.stop()
+        } catch {
+            await leg.stop()
+            throw error
+        }
+    }
+
+    private func codeOnlyLeg(relay: LoopbackRelay, urlSession: URLSession) throws -> RelayConnection {
+        let port = try #require(relay.snapshot.port)
+        let host = YorozuCrypto.generateKeypair()
+        let room = UUID().uuidString
+        let pairing = QrPayload(v: 3, relayUrl: "ws://127.0.0.1:\(port)",
+            macPubkey: host.publicKey.base64URLEncodedString(), token: UUID().uuidString, roomId: room,
+            secret: "test-secret")
+        let dial = try #require(URL(string: "ws://127.0.0.1:\(port)/?room=\(room)"))
+        return RelayConnection(path: .relay, dial: dial, pairing: pairing, identity: .generate(),
+            relayKnows: false, local: PeerInfo(app: "relay-standing-actor"), urlSession: urlSession)
+    }
 }
 
 /// Real WebSocket relay; never answers Noise, so every frame must be an init.
 private final class LoopbackRelay: @unchecked Sendable {
+    enum OnJoin: Sendable {
+        case answer
+        case close(code: UInt16, reason: String)
+    }
+
     struct Snapshot {
         var port: UInt16?
         var readyCount = 0
         var initCount = 0
+        var joinCount = 0
         var connections = 0
         var hostOffline = false
         var failure: String?
@@ -168,12 +238,16 @@ private final class LoopbackRelay: @unchecked Sendable {
     private let queue = DispatchQueue(label: "yorozu.tests.loopback-relay")
     private let lock = NSLock()
     private var recorded = Snapshot()
+    private let onJoin: OnJoin
     // Connections and all WebSocket operations belong to queue; recorded belongs to lock.
     private var connections: [NWConnection] = []
+    /// Set when this relay sends a close; later socket errors from that close are not failures.
+    private var closing = false
 
     var snapshot: Snapshot { lock.withLock { recorded } }
 
-    init() throws {
+    init(onJoin: OnJoin = .answer) throws {
+        self.onJoin = onJoin
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         let webSocket = NWProtocolWebSocket.Options()
@@ -198,7 +272,8 @@ private final class LoopbackRelay: @unchecked Sendable {
                 case .ready:
                     self.send(["type": "nonce", "nonce": "n1"], on: connection)
                     self.receive(on: connection)
-                case .failed(let error): self.fail("connection: \(error)")
+                case .failed(let error):
+                    if !self.closing { self.fail("connection: \(error)") }
                 default: break
                 }
             }
@@ -215,6 +290,13 @@ private final class LoopbackRelay: @unchecked Sendable {
         queue.async {
             guard let connection = self.connections.first else { return self.fail("no relay socket") }
             self.send(["type": "owner", "online": online], on: connection)
+        }
+    }
+
+    func close(code: UInt16, reason: String) {
+        queue.async {
+            guard let connection = self.connections.last else { return self.fail("no relay socket") }
+            self.sendClose(code: code, reason: reason, on: connection)
         }
     }
 
@@ -240,6 +322,20 @@ private final class LoopbackRelay: @unchecked Sendable {
         throw ProbeFailure(message: "timed out: \(what)")
     }
 
+    private func sendClose(code: UInt16, reason: String, on connection: NWConnection) {
+        closing = true
+        var payload = Data()
+        payload.append(UInt8(code >> 8))
+        payload.append(UInt8(code & 0xff))
+        payload.append(contentsOf: reason.utf8)
+        let metadata = NWProtocolWebSocket.Metadata(opcode: .close)
+        let context = NWConnection.ContentContext(identifier: "relay-close", metadata: [metadata])
+        connection.send(content: payload, contentContext: context, isComplete: true,
+            completion: .contentProcessed { [weak self] error in
+                if let error, self?.closing != true { self?.fail("close: \(error)") }
+            })
+    }
+
     private func send(_ message: [String: Any], on connection: NWConnection) {
         do {
             let data = try JSONSerialization.data(withJSONObject: message)
@@ -255,7 +351,10 @@ private final class LoopbackRelay: @unchecked Sendable {
     private func receive(on connection: NWConnection) {
         connection.receiveMessage { [weak self] data, context, _, error in
             guard let self else { return }
-            if let error { self.fail("receive: \(error)"); return }
+            if let error {
+                if !self.closing { self.fail("receive: \(error)") }
+                return
+            }
             let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition)
                 as? NWProtocolWebSocket.Metadata
             if metadata?.opcode == .close { return }
@@ -264,9 +363,15 @@ private final class LoopbackRelay: @unchecked Sendable {
                     let message = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
                     switch message["type"] as? String {
                     case "join":
-                        let room = try #require(message["roomId"] as? String)
-                        self.send(["type": "joined", "roomId": room, "ownerOnline": true,
-                            "flowControl": false], on: connection)
+                        self.lock.withLock { self.recorded.joinCount += 1 }
+                        switch self.onJoin {
+                        case .answer:
+                            let room = try #require(message["roomId"] as? String)
+                            self.send(["type": "joined", "roomId": room, "ownerOnline": true,
+                                "flowControl": false], on: connection)
+                        case .close(let code, let reason):
+                            self.sendClose(code: code, reason: reason, on: connection)
+                        }
                     case "frame":
                         let payload = try #require(message["payload"] as? String)
                         guard case .handshakeInit = try Frame(payload: payload) else {
@@ -286,4 +391,51 @@ private final class LoopbackRelay: @unchecked Sendable {
         let message: String
         var description: String { message }
     }
+}
+
+
+/// Observes `RelayConnection` updates so actor tests can wait for `relayJoined` or a terminal state.
+private final class StandingProbe: @unchecked Sendable {
+    struct Snapshot {
+        var joined = false
+        var state: RelayConnection.State?
+    }
+
+    private let lock = NSLock()
+    private var recorded = Snapshot()
+    private var task: Task<Void, Never>?
+
+    init(updates: AsyncStream<RelayConnection.Update>) {
+        start(updates)
+    }
+
+    private func start(_ updates: AsyncStream<RelayConnection.Update>) {
+        task = Task { [weak self] in
+            for await update in updates {
+                guard let self else { return }
+                self.lock.withLock {
+                    if case .relayJoined = update { self.recorded.joined = true }
+                    if case .state(let new) = update { self.recorded.state = new }
+                }
+            }
+        }
+    }
+
+    func cancel() { task?.cancel() }
+
+    var snapshot: Snapshot { lock.withLock { recorded } }
+
+    func wait(until deadline: ContinuousClock.Instant, _ what: String,
+        _ check: (Snapshot) -> Bool) async throws {
+        while ContinuousClock.now < deadline {
+            if check(snapshot) { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw StandingProbeTimeout(message: "timed out: \(what)")
+    }
+}
+
+private struct StandingProbeTimeout: Error, CustomStringConvertible {
+    let message: String
+    var description: String { message }
 }
