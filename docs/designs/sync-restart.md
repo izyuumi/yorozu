@@ -113,7 +113,7 @@ A follow-up whose start fires after its dispatch returned moves `handed → star
 
 **Writes.** Every write updates the map synchronously, stamps the current boot id, and goes through one promise chain per id, so writes land in call order. A writer for an id the map lacks (a parked message whose entry was pruned) first inserts it with `at` = now. A failed write logs `yorozu: run ledger write failed: <error>` and never fails a turn; a failed `handing` write still lets the dispatch run.
 
-**Store timing (A-12).** OpenClaw's keyed-store calls run synchronously in the Gateway process (`DatabaseSync`, no worker; `docs/openclaw-channel.md:49`, `cards.ts:124`), and `register` returns a promise that settles after the call. So the awaited `handing` write costs one SQLite write plus any earlier write of the same id still on its chain (the claim's), and no deadline is added: a timer could not fire during a synchronous hang anyway, and a rejection is caught and logged.
+**Store timing (A-12).** The async keyed store the plugin opens (`api.runtime.state.openKeyedStore`, `createPluginStateKeyedStore`, `~/openclaw/src/plugin-state/plugin-state-store.ts:477`) runs its operations in OpenClaw's state worker (`...InWorker`, same file `:65-73`), not synchronously on the Gateway's event loop (correcting v5's first draft, found while building 01). So the awaited `handing` write gets a deadline: `handing` resolves when the write lands or after 2 s, whichever is first; on the deadline it logs `yorozu: run ledger write slow <messageId> handed` and the dispatch runs (fail open, as for a failed write). The write itself is left to finish on its chain, so later writes for the id still land in call order. `LedgerDeps` gains an optional `handDeadlineMs` (default 2000) for tests; nothing else in the frozen interface changes.
 
 **Store.** Namespace `runs`, `{maxEntries: 10_000, overflowPolicy: "evict-oldest"}`, like `replies`. The store's `defaultTtlMs` is not used: it counts from the last write, and entries are rewritten.
 
@@ -259,7 +259,7 @@ bash apps/windows/ci/core.sh
 - **Marking handed after the dispatch call.** Not taken (A-4): a restart during the call would leave an entry OpenClaw holds looking never-handed.
 - **A-9's requeue in 01.** Deferred ("A-9 implementation").
 - **Waiting for the claim write before `delivered`.** Not taken: it changes ✓✓ from "received and decrypted" (`OWNER_DECISIONS.md`) to close a short gap.
-- **A deadline on the `handed` write.** Not taken (A-12, "Store timing").
+- **No deadline on the `handed` write.** Rejected: the store runs in a worker, so a stuck worker would hold every dispatch (A-12, "Store timing").
 - **Relying on OpenClaw's own message dedupe.** Not enough: its `MessageSid` cache is memory-only, and its durable source-turn check covers only messages OpenClaw already received (T0 answer 2). The host still needs its own dedupe for messages it accepted and never handed over, and to avoid repeating preparation work (CA-9).
 - **Transcript only, no store.** Not taken: queued messages aren't in the transcript. Kept as the degraded fallback (decision 3).
 - **Removing the Hub's in-memory list and requiring a ledger.** Not taken: the relay and Windows conformance Hubs are built without one.
@@ -334,7 +334,7 @@ Yorozu (the agent), 2026-11-19 ~13:30 JST, final.
 | A-7 | FIXED in 01 | Boot id per entry; watermark and sweep marker removed (test 5). |
 | A-8 | DEFERRED | Ticket 03. |
 | A-9 | DECIDED; implementation deferred | "A-9 implementation: deferred" with the reason. |
-| A-12 | RESOLVED for 01 | Synchronous `DatabaseSync` store, awaited `handed` write, no deadline ("Store timing"). |
+| A-12 | RESOLVED for 01 | The store runs in OpenClaw's state worker, so the awaited `handed` write has a 2 s deadline, then logs and dispatches ("Store timing"). |
 | A-13 | RESOLVED for 01 | `conversation.ts` reaches the ledger through `currentLedger()` from `runs.ts` (calls are skipped when it is undefined); `runs.ts` imports `runtime.ts` and `history.ts`, never `conversation.ts`, so there is no cycle ("Wiring", "Module interfaces"). |
 | A-14 | RESOLVED for 01 | One `runStarted` (the ledger's); the call site is `onAgentRunStart` in `handleMessage`; `afterReturn` is a new per-turn flag set only there, separate from the existing `started`. |
 | A-15 | RESOLVED for 01 | 01's harness files are listed in "Files and release" (`test/genui-host.js` stub extensions); the iOS harness belongs to the deferred ticket 04. |
