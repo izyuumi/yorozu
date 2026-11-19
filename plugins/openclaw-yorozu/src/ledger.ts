@@ -10,6 +10,7 @@ export type LedgerDeps = {
   bootId: string;
   log: { info(line: string): void; warn(line: string): void };
   inTranscript: (convId: string, messageId: string) => "found" | "missing" | "unreadable";
+  handDeadlineMs?: number;
 };
 export type Ledger = {
   load(): Promise<"loaded" | "degraded">;
@@ -25,7 +26,7 @@ export type Ledger = {
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_ENTRIES = 10_000;
 
-export function createLedger({ runs, now, bootId, log, inTranscript }: LedgerDeps): Ledger {
+export function createLedger({ runs, now, bootId, log, inTranscript, handDeadlineMs = 2000 }: LedgerDeps): Ledger {
   const records = new Map<string, RunRecord>();
   const pending = new Map<string, Promise<void>>();
   let loading: ReturnType<Ledger["load"]> | undefined;
@@ -126,7 +127,17 @@ export function createLedger({ runs, now, bootId, log, inTranscript }: LedgerDep
     load: () => loading ??= load(),
     counts: () => [...countLines],
     claim,
-    handing: (messageId, convId) => write(messageId, convId, "handed"),
+    handing(messageId, convId) {
+      const handed = write(messageId, convId, "handed");
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          log.warn(`yorozu: run ledger write slow ${messageId} handed`);
+          resolve();
+        }, handDeadlineMs).unref();
+      });
+      return Promise.race([handed, deadline]).finally(() => clearTimeout(timer));
+    },
     runStarted(messageId, attempt, afterReturn) {
       log.info(`yorozu: run started ${messageId} attempt ${attempt} boot ${bootId}`);
       if (afterReturn) log.info(`yorozu: follow-up started after dispatch ${messageId}`);
