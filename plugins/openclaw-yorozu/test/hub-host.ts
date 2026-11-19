@@ -27,7 +27,7 @@ export const answer: Event = { kind: "conv_list", data: { conversations: [] } };
 export const newDevice = () => ({ signing: ed25519Keypair(), static: x25519Keypair() });
 
 // Same fake Link and Noise IK setup as pairing.test.ts and apps/relay/src/direct.test.ts.
-export function host(options: Partial<Pick<HubOptions, "onPeer" | "dispatch" | "directHints">> = {}) {
+export function host(options: Partial<Pick<HubOptions, "onPeer" | "dispatch" | "directHints" | "claim">> = {}) {
   const keys = { static: x25519Keypair(), room: roomId(ed25519Keypair().publicKey) };
   const device = newDevice();
   const deviceKey = b64u(device.signing.publicKey);

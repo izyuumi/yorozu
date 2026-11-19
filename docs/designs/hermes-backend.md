@@ -2,7 +2,7 @@
 
 - **Status:** v7, final: the Yorozu agent's decisions on EGM round 3 (2026-11-19 ~14:47 JST) and on v6 (2026-11-19 ~14:57 JST); no further review rounds (EGM: the multi-stage spec review). Each finding's handling is in "Review dispositions (round 3)" (with "Changes in v7") and "(round 2)"; round 1's are in this file's history at `0e63bcad`.
 - **Brief:** the Hermes backend test spec v4 with its §8 decisions (box handover `transfers/20261119-yorozu-hermes-backend-spec.md`). The direction is final.
-- **Sync spec:** the sync restart durability spec v5, ticket 01 only: the run ledger, draft PR #751 on branch `feat/sync-ledger`. This spec calls it "the sync spec" and its code "sync 01". What the H tickets call in it is listed once, in "Sync 01 calls". Sync tickets 02–04 are deferred to a later spec and nothing here depends on them.
+- **Sync spec:** the sync restart durability spec v5, ticket 01 only: the run ledger, merged to `main` as #751 (1030ed1f). This spec calls it "the sync spec" and its code "sync 01". What the H tickets call in it is listed once, in "Sync 01 calls". Sync tickets 02–04 are deferred to a later spec and nothing here depends on them.
 - **Baseline:** `origin/main` at `8a278a5c`. Nothing this spec describes exists there yet, and neither does sync 01.
 - **Roles:** *the owner* uses the app and approves. *The Yorozu agent* (written "Yorozu (the agent)" in the sync spec) owns the product decisions and runs the operator steps on the Mac mini. *Coder* wrote this spec and implements H1–H3. "Yorozu" alone is the product.
 - **Box handover:** `/home/box/handover` on the box, the Linux machine the agents share. `transfers/` holds the source specs and the H0 fixtures.
@@ -97,7 +97,7 @@ These are final. This spec builds on them and doesn't reopen them.
 | A-6 | same | Sync tickets 02–04 wait for two weeks of sync 01's logs and a new spec. |
 | A-9 | same | A message never handed goes back into the retry store when the OpenClaw Gateway is back; deferred to the later spec, not in sync 01. |
 | A-12 | same (sync spec, "Store timing") | The store runs in OpenClaw's state worker, so `handing` resolves after at most 2 s. |
-| Stack order | The Yorozu agent, 2026-11-19 13:30 JST | H1 is a draft PR stacked on `feat/sync-ledger`, H2 on H1, H3 on H2. Merged forward only, never rebased. No dependency on sync 02–04. |
+| Stack order | The Yorozu agent, 2026-11-19 13:30 JST | H1 is a draft PR stacked on `feat/sync-ledger`, H2 on H1, H3 on H2. Merged forward only, never rebased. No dependency on sync 02–04. Updated 2026-11-19 ~15:30 JST after #751 merged: H1 targets `main` directly once this spec's PR merges; H2 on H1, H3 on H2. |
 | Auto-retry rule | The owner, `OWNER_DECISIONS.md:92` | A run that fails for a temporary reason before any reply or tool call is rerun automatically on the 5/15/30/60/120 s schedule, about four minutes in all. |
 | F1 | The Yorozu agent, 2026-11-19 ~14:47 JST (final, on EGM round 3) | H3 is merged into `main` by 2026-12-17, so real use gets two weeks before 2026-12-31. If it isn't, the Yorozu agent tells the owner, who decides whether to extend. |
 | F2 | same | With the backend off (the flag, or anything else that makes it off), a parked Hermes message ends with one `run_failed` and is never rerun on OpenClaw. |
@@ -542,12 +542,12 @@ export function requestBody(message: Message, session: string): string;
 |---|---|---|---|---|
 | 0 | `docs: Hermes backend test design` (this file only) | `main` | now | on the owner's approval |
 | H0 | Operator steps 7–13 (no PR) | — | now | — |
-| H1 | `chore(plugin): accept the Hermes test backend config (dormant)` | `feat/sync-ledger` (sync 01's draft PR #751) | now | into `main`, after sync 01 merges and the stop rule passes |
+| H1 | `chore(plugin): accept the Hermes test backend config (dormant)` | `main`, after this spec's PR (row 0) merges (sync 01 is already on `main`, #751) | now | into `main`, on the owner's approval |
 | H2 | `chore(plugin): Hermes client with fake-server tests (dormant)` | H1's branch, draft | after operator steps 8–11 and 13, if the stop rule passes | into `main`, after H1 merges |
 | H3 | `chore(plugin): run an opted-in conversation's turns on Hermes (test)` | H2's branch, draft | after H2 is up and the stop rule passes | into `main` by 2026-12-17 (F1), after H2 merges and the before-code answers are in the PR |
 | H6 | The test run, the report, and on a no-go the removal PRs | — | after H3 merges and operator step 14 | — |
 
-- **Merged forward only.** History on these branches is never rewritten or rebased. New commits on a base branch are merged into the branch above it (`feat/sync-restart` → `feat/sync-ledger` → H1 → H2 → H3). Each PR merges into `main` with the repository's usual squash merge under its Conventional Commits title; then the next PR's base becomes `main`, and `main` is merged into it.
+- **Merged forward only.** History on these branches is never rewritten or rebased. New commits on a base branch are merged into the branch above it (`main` → H1 → H2 → H3). Each PR merges into `main` with the repository's usual squash merge under its Conventional Commits title; then the next PR's base becomes `main`, and `main` is merged into it.
 - **Deadline** (F1). Real use needs at least two weeks before 2026-12-31, so H3 is merged by 2026-12-17. If it hasn't merged by then, the Yorozu agent tells the owner, who decides whether to extend.
 - **Every merge** to `main` needs the owner's approval in the owner's own words.
 - **PR bodies.** Each H PR body cites the owner-rule exception (#748, `8a278a5c`, `OWNER_DECISIONS.md:13`), names its release trigger (below) and links this spec.

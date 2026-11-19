@@ -13,19 +13,20 @@ import { resolveAgentRoute, resolveThreadSessionKeys } from "openclaw/plugin-sdk
 import { stageOutbound, uploadedFiles, type MediaAccess } from "./attachments.js";
 import { CARD_GUIDANCE, cardFor, cardKey, DROPPED, errorTag, replyChunks, turnCardKey, withCard } from "./cards.js";
 import { isId, type Attachment, type Event, type Message, type ReplyTo, type ToolStatus } from "./envelope.js";
-import { itemText, liveReplyIds, liveSessionId } from "./history.js";
+import { DEFAULT_CHUNK_LIMIT, itemText, liveReplyIds, liveSessionId } from "./history.js";
 import type { Presentation, PresentationSdk } from "./presentation.js";
 import { storeCard } from "./presentations.js";
 import { noteReply } from "./replies.js";
 import { noteFirstMessage } from "./push.js";
 import { activityTurn, broadcast, notifyReply } from "./relay.js";
 import { isTemporary, park } from "./retry.js";
+import { currentLedger } from "./runs.js";
 import { yorozuRuntime } from "./runtime.js";
 import { maybeTitle } from "./sessions.js";
 import { PEER } from "./target.js";
 
 const CHANNEL_ID = "yorozu";
-export const DEFAULT_CHUNK_LIMIT = 4000;
+export { DEFAULT_CHUNK_LIMIT };
 const TYPING_KEEPALIVE_MS = 8_000;
 const TYPING_MAX_MS = 30 * 60 * 1000;
 
@@ -122,8 +123,10 @@ export function liveTurn(convId: string): Readonly<LiveTurn> | undefined {
 }
 
 export async function handleMessage(ctx: TurnContext, message: Message, attempt = 0): Promise<void> {
+  const ledger = currentLedger();
   const owner = registerTurn(message);
   let ended: "failed" | "retrying" | undefined;
+  let queued = false;
   let terminalEmitted = false;
   const { convId, messageId } = message;
   const send = (...events: Event[]) => void broadcast(events);
@@ -220,8 +223,11 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
 
     // As the app reads a turn's end: a reply is done, a reported failure failed, a retry still running, nothing gone.
     const turn = { messageId, agentId: route.agentId, sessionKey };
+    let ownStart = false;
+    let afterReturn = false;
     try {
-      await runChannelInboundEvent({
+      if (ledger) await ledger.handing(messageId, convId);
+      const result = await runChannelInboundEvent({
         channel: CHANNEL_ID,
         accountId: route.accountId,
         raw: message,
@@ -283,6 +289,10 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
               allowToolLifecycleWhenProgressHidden: true,
               suppressDefaultToolProgressMessages: true,
               onAgentRunStart: () => {
+                if (!ownStart) {
+                  ownStart = true;
+                  ledger?.runStarted(messageId, attempt, afterReturn);
+                }
                 // The turn sendPayload stores cards under: from its agent run's start, so a message that waits in
                 // OpenClaw's queue behind a running turn does not take that turn's cards. One run per session at a time.
                 runningTurns.set(convId, turn);
@@ -299,6 +309,10 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
           }),
         },
       });
+      afterReturn = true;
+      const deferred = result?.dispatched ? result.dispatchResult?.deferredToActiveRun : undefined;
+      queued = deferred === "followup" && !ownStart;
+      ledger?.dispatchReturned(messageId, deferred, ownStart);
     } catch (error) {
       const retrying = !firstReply && !toolRan && isTemporary(error) && (await park(message, attempt).catch(() => false));
       log?.warn(`yorozu: run failed${retrying ? ` (retry ${attempt + 1} queued)` : ""}: ${String(error)}`);
@@ -326,6 +340,7 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
     ended = "failed";
     send({ kind: "error", data: { code: "run_failed", message: String(error).slice(0, 500), convId, messageId } });
   } finally {
+    ledger?.turnEnded(messageId, convId, { parked: ended === "retrying", queued });
     if (ended !== "retrying") {
       removeTurn(message, owner);
       if (!terminalEmitted) activityTurn(convId, { kind: ended === "failed" ? "failed" : "settled" });
