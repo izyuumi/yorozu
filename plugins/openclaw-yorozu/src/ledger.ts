@@ -114,7 +114,10 @@ export function createLedger({ runs, now, bootId, log, inTranscript, handDeadlin
         log.warn("yorozu: run ledger transcript check failed: unreadable");
       }
     }
-    if (previous) {
+    if (previous?.state === "accepted" && previous.boot !== bootId) {
+      log.info(`yorozu: duplicate message rerun ${messageId} accepted boot earlier never handed`);
+      records.delete(messageId);
+    } else if (previous) {
       log.info(`yorozu: duplicate message skipped ${messageId} ${previous.state} boot ${previous.boot === bootId ? "same" : "earlier"}`);
       return "duplicate";
     }
