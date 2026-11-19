@@ -1,6 +1,6 @@
 # Hermes Agent as a second backend: side-by-side test
 
-- **Status:** v6, final: the Yorozu agent's decisions on EGM round 3 (2026-11-19 ~14:47 JST); no further review rounds (EGM: the multi-stage spec review). Each finding's handling is in "Review dispositions (round 3)" and "(round 2)"; round 1's are in this file's history at `0e63bcad`.
+- **Status:** v7, final: the Yorozu agent's decisions on EGM round 3 (2026-11-19 ~14:47 JST) and on v6 (2026-11-19 ~14:57 JST); no further review rounds (EGM: the multi-stage spec review). Each finding's handling is in "Review dispositions (round 3)" (with "Changes in v7") and "(round 2)"; round 1's are in this file's history at `0e63bcad`.
 - **Brief:** the Hermes backend test spec v4 with its §8 decisions (box handover `transfers/20261119-yorozu-hermes-backend-spec.md`). The direction is final.
 - **Sync spec:** the sync restart durability spec v5, ticket 01 only: the run ledger, draft PR #751 on branch `feat/sync-ledger`. This spec calls it "the sync spec" and its code "sync 01". What the H tickets call in it is listed once, in "Sync 01 calls". Sync tickets 02–04 are deferred to a later spec and nothing here depends on them.
 - **Baseline:** `origin/main` at `8a278a5c`. Nothing this spec describes exists there yet, and neither does sync 01.
@@ -41,8 +41,8 @@ Any benefit for OpenClaw Gateway restarts belongs to the later retirement shape 
   - Tool rows show live only: history doesn't show them.
   - Attachments aren't sent (the input says so), reactions reach no agent, and there are no cards.
   - Approvals are denied with a plain line.
-  - OpenClaw commands (`/help`, `/status`, `/model`, an abort) go to Hermes as plain text; only `/new` and `/reset` are answered by the plugin.
-  - A message sent while a Hermes run is going waits until that run ends (up to 30 minutes), so it can outlast the app's 10-minute awaiting window.
+  - OpenClaw commands (`/help`, `/status`, `/model`, an abort) go to Hermes as plain text. `/new` and `/reset` reset the OpenClaw session in place as in any conversation, and also turn Hermes off for that conversation, with a short notice (F8).
+  - A message sent while a Hermes run is going waits until that run ends (up to 30 minutes), so it can outlast the app's 10-minute awaiting window. While the Hermes gateway is down, a run's turn keeps polling for it (up to the same 30 minutes), so the conversation's later messages wait too.
   - Automations still run on OpenClaw, and Hermes doesn't see what they post.
   - Both backends share one ChatGPT quota, so heavy Hermes use can rate-limit OpenClaw turns too.
 - The owner decides go, extend or no-go from the report ("Outcome" in the Test plan). The end date and what happens to the code are in Referenced decisions (owner-rule exception, D1); the removal steps are under "Rollback" in Further notes.
@@ -56,7 +56,7 @@ Any benefit for OpenClaw Gateway restarts belongs to the later retirement shape 
 5. As the owner, I want a Hermes run that failed for a permanent reason (no model provider, a refused API key) to show its error once and never be retried, so that I learn about it at once.
 6. As the owner, I want the plugin to resubmit a message to Hermes only under the request key Hermes already holds, unless Hermes itself failed that run for a temporary reason before any tool ran, so that a retry doesn't knowingly repeat a tool.
 7. As the owner, I want a step that needs an approval to be denied with a plain line in the reply while the rest of the answer arrives, so that one gated tool doesn't lose the whole answer.
-8. As the owner, I want `/new` and `/reset` in an opted-in conversation to tell me to start a new conversation, so that the Hermes and OpenClaw sessions can't drift apart (F8).
+8. As the owner, I want `/new` and `/reset` in an opted-in conversation to reset its session in place as they do everywhere (`OWNER_DECISIONS.md:25`), put the conversation back on OpenClaw, and tell me that `/backend hermes` turns Hermes back on, so that the Hermes and OpenClaw sessions can't drift apart (F8).
 9. As the owner, I want a Hermes turn that an OpenClaw Gateway restart cut off to end as a cut-off OpenClaw turn does under sync 01 (nothing rerun or resent by itself, the app's awaiting window ends it, counted in the restart ledger line), so that a restart never makes Hermes repeat work it may still be doing.
 10. As the owner, I want a `channels.yorozu` config change (a plugin reload) not to lose a Hermes reply on its way.
 11. As the owner, I want returning every conversation to OpenClaw to take one config change, and a Hermes message parked at that moment to end with one error rather than run on OpenClaw, so that rollback never runs a message twice.
@@ -77,7 +77,7 @@ The owner's devices (the iPhone, iPad and Mac apps) talk end to end encrypted, t
 - The exception covers the plugin delegating turns to Hermes. *(Follows from its text; not asked.)*
 - Yorozu still has no host process: the plugin keeps the host keys and the relay. *(Not asked.)*
 - The Hermes gateway is a third-party agent runtime, like OpenClaw, so "never Python" doesn't apply to it; Yorozu itself adds no Python. *(Operator step 7's question a, answered by F7.)*
-- `/new` and `/reset` in an opted-in conversation answer with a short notice instead of resetting the session in place, departing from `OWNER_DECISIONS.md:25` for the test only. *(Operator step 7's question b, answered by F8.)*
+- `/new` and `/reset` in an opted-in conversation keep `OWNER_DECISIONS.md:25` ("`/new` inside a conversation resets that session in place"): OpenClaw resets the session in place as today, and the plugin also drops the conversation's Hermes route, so it is back on OpenClaw. *(Operator step 7's question b, answered by F8.)*
 
 ### Referenced decisions
 
@@ -101,12 +101,12 @@ These are final. This spec builds on them and doesn't reopen them.
 | Auto-retry rule | The owner, `OWNER_DECISIONS.md:92` | A run that fails for a temporary reason before any reply or tool call is rerun automatically on the 5/15/30/60/120 s schedule, about four minutes in all. |
 | F1 | The Yorozu agent, 2026-11-19 ~14:47 JST (final, on EGM round 3) | H3 is merged into `main` by 2026-12-17, so real use gets two weeks before 2026-12-31. If it isn't, the Yorozu agent tells the owner, who decides whether to extend. |
 | F2 | same | With the backend off (the flag, or anything else that makes it off), a parked Hermes message ends with one `run_failed` and is never rerun on OpenClaw. |
-| F3 | same | The key file path is fixed: `~/.hermes-yorozu-test/yorozu-plugin.key`. Its mode must be exactly 0600; any other mode refuses it (backend off, one `warn` line), never just a warning with the backend on. The API key is never logged. |
+| F3 | same; mode rule revised 2026-11-19 ~14:57 JST (v7) | The key file path is fixed: `~/.hermes-yorozu-test/yorozu-plugin.key`. The rule is `(mode & 0o077) !== 0` refuses it: any group or other permission bit refuses the file (backend off, one `warn` line), never just a warning with the backend on. Any owner-only mode is accepted: 0600 and 0400 as intended, and by the same rule 0700, 0500 and 0200 (a mode without read permission then fails at the read check). The API key is never logged. |
 | F4 | same | `YOROZU_OPENCLAW_CONFIG` is a test-only override of the OpenClaw config path, defaulting to the normal path (`~/.openclaw/openclaw.json`). Plugin code never reads it. |
 | F5 | same | Each delegated turn writes one turn-end line with its outcome and the token counts Hermes reports (counts only). |
 | F6 | same | H1, H2 and H3 use non-`feat` Conventional Commits types (`chore(plugin)`, `test(plugin)`), and so do the rollback reverts: no minor bump, nothing in the public release notes. |
 | F7 | same | No Yorozu Python: the plugin talks to Hermes over its HTTP API only. Anything that would have to run inside Hermes is out of scope and comes to the Yorozu agent first. Answers operator step 7's question a. |
-| F8 | same | In an opted-in conversation, `/new` and `/reset` answer with a short notice for this test. Answers operator step 7's question b. |
+| F8 | same; reversed 2026-11-19 ~14:57 JST (v7) | No departure from `OWNER_DECISIONS.md:25`. In an opted-in conversation, `/new` and `/reset` reset the OpenClaw session in place exactly as today, and also drop that conversation's Hermes route (its route-store entry), so it is back on OpenClaw and the sessions can't drift, with a short notice: Hermes is off for this conversation; `/backend hermes` turns it back on. Answers operator step 7's question b. |
 | F9 | same | The `/backend` claim check is a start-up warning in the plugin (`warn`, never throws, never blocks plugin load) plus one test, replacing the test-only check. |
 
 ### Glossary
@@ -118,7 +118,7 @@ These are final. This spec builds on them and doesn't reopen them.
 | Config entry, flag | `channels.yorozu.backends` and its `hermes.enabled`. **Backend on/off** is the result of resolving the flag and the key file at `startAccount`. |
 | API key, key file | Hermes's `API_SERVER_KEY`; the file `~/.hermes-yorozu-test/yorozu-plugin.key` holding it, written at operator step 14. |
 | Request key, key store | The `Idempotency-Key` (D3); keyed-store namespace `hermes-keys`, holding `keyAttempt` per message id. |
-| Route store | Keyed-store namespace `backends`: one entry per opted-in conversation, holding its unsettled run ids. |
+| Route store | Keyed-store namespace `backends`: one entry per opted-in conversation, holding its Hermes session id and its unsettled run ids. `/new` and `/reset` delete it (F8). |
 | Plugin reload | `startAccount` runs again in the same OpenClaw Gateway process after a `channels.yorozu` change. The module stays loaded. |
 | Restart | The OpenClaw Gateway process stops and starts. |
 | Opted-in conversation | A conversation with a route-store entry. |
@@ -196,7 +196,7 @@ The only place this spec states them. Checked against sync 01's code at PR #751 
 | `claim(message): "fresh" \| "duplicate"` | The Hub, before `delivered`; unchanged | A duplicate gets only `delivered` and never reaches `routeMessage`. Parked reruns (`runParked`) don't pass through it. |
 | `handing(messageId, convId): Promise<void>` | `t.handing()`, awaited immediately before every `createRun` (A-4) | Writes `handed` under the current boot id. Resolves when the write lands, after a failed write (logged `yorozu: run ledger write failed: <error>`), or after 2 s (logged `yorozu: run ledger write slow <messageId> handed`, A-12). Never rejects; the POST always goes. |
 | `runStarted(messageId, retryAttempt, false)` | `t.started()` | Logs `yorozu: run started <messageId> attempt <n> boot <bootId>`; writes `started` only from `handed`. `afterReturn` is always `false`: Hermes has no follow-up queue. |
-| `turnEnded(messageId, convId, {parked, queued: false})` | `t.parked()` with `parked: true`; `t.done()` and `t.fail()` with `parked: false`; a notice calls `currentLedger()?.turnEnded(messageId, convId, {parked: false, queued: false})` directly, with no other turn event | `parked` or `settled`. With `queued` always `false`, a Hermes entry never stays `handed` after its turn ends. |
+| `turnEnded(messageId, convId, {parked, queued: false})` | `t.parked()` with `parked: true`; `t.done()` and `t.fail()` with `parked: false`; a notice calls `currentLedger()?.turnEnded(messageId, convId, {parked: false, queued: false})` directly, with no other turn event, except the F8 reset notice, whose entry `handleMessage` ends | `parked` or `settled`. With `queued` always `false`, a Hermes entry never stays `handed` after its turn ends. |
 
 Not used: `dispatchReturned` (it measures OpenClaw's follow-up queue, A-6), `findUserMessage`, and `load`, `counts` and `idle` (start-up and tests). The start-up line `yorozu: restart ledger <bootId>: not handed <n>, handed not started <n>, started <n>, parked <n>` counts Hermes entries exactly as OpenClaw ones.
 
@@ -244,7 +244,7 @@ export function hermesSection(cfg: OpenClawConfig): HermesSection | undefined {
 | `enabled` isn't `true` | off | `info` `yorozu: hermes backend off: disabled` |
 | `fs.statSync` (follows symlinks) throws | off | `warn` `… off: key file unreadable (<error.code>)` |
 | not a regular file (a directory, a pipe) | off | `warn` `… off: key file is not a regular file` |
-| `(mode & 0o777) !== 0o600` (F3: exactly 0600, refused otherwise) | off | `warn` `… off: key file mode is <octal mode>, not 0600` |
+| `(mode & 0o077) !== 0` (F3: any group or other bit refuses; every owner-only mode, 0600 and 0400 included, passes) | off | `warn` `… off: key file mode is <octal mode>; group and other must have no access (0600 or 0400)` |
 | `fs.readFileSync` throws | off | `warn` `… off: key file unreadable (<error.code>)` |
 | empty after trimming and removing one pair of surrounding `"` or `'` | off | `warn` `… off: key file is empty` |
 | otherwise | on: `{url: new URL("http://127.0.0.1:8652"), key}` | `info` `yorozu: hermes backend on` |
@@ -295,10 +295,18 @@ The API key is never logged and never put in a URL or an error message (F3). H1'
 |---|---|---|
 | `/backend hermes` | Session entry exists: `setRoute`; notice "This conversation now uses Hermes (test). Hermes doesn't see the earlier messages." No entry yet: notice "Send one message first, then /backend hermes." | Notice "This conversation already uses Hermes." |
 | any other `/backend …` | `handleMessage`: OpenClaw passes it to its agent as text | `hermesTurn`: Hermes gets it as text |
-| `/new`, `/reset` | `handleMessage` | Notice "Start a new conversation for a fresh Hermes session." |
+| `/new`, `/reset` | `handleMessage` | Reset and route drop (F8, below): `handleMessage`, as in any conversation, then the notice "Hermes is off for this conversation; /backend hermes turns it back on." |
 | anything else | `handleMessage` | `hermesTurn` |
 
 - The session entry check is `liveSessionId(agent, sessionKey)` from `history.ts`, with the thread session key from `resolveThreadSessionKeys`. Only `/backend hermes` needs it. A deleted opted-in conversation keeps its route-store entry; it is inert, because no message arrives for it.
+- **Hermes session id.** `setRoute(convId, messageId)` stores the session id `yorozu-<convId>-<messageId>` (the opt-in message's id) in the route entry, and `requestBody` uses it. A fresh opt-in after `/new` therefore starts a fresh Hermes session, so the opt-in notice ("Hermes doesn't see the earlier messages") stays true.
+- **Reset and route drop** (F8; `/new` or `/reset` in an opted-in conversation, on its FIFO). `OWNER_DECISIONS.md:25` holds unchanged:
+  1. End earlier runs: turn step 3 for the route entry's `unsettled` ids, with its 60 s bound, so dropping the route doesn't orphan a run the plugin could still stop. Ids still kept are logged `yorozu: hermes earlier run not ended <id> <status>` and dropped with the entry.
+  2. `dropRoute(convId)`: deletes the route-store entry (map, then store, awaited). If the store delete fails, the map change is undone, `warn` `yorozu: hermes route not dropped: <errorTag>`, the notice "Hermes couldn't be turned off for this conversation; nothing was reset." goes out (with the notice's own `turnEnded`), and the message reaches neither backend, so the sessions can't drift.
+  3. `handleMessage(turn, message)`: OpenClaw resets the session in place exactly as today, and its own ledger calls end the entry.
+  4. The notice above, mirrored without the user message (OpenClaw recorded the command) and without the notice's `turnEnded` call (`handleMessage` already ended the entry).
+
+  The key-store entries of the conversation's earlier messages stay; a parked one fails closed in `routedRerun` (Wiring).
 - **Order.** `/backend hermes` and every opted-in message run on the conversation's FIFO, so a message sent right after the opt-in queues behind it. Messages for conversations that aren't opted in go straight to `handleMessage`, as today.
 - **A notice** goes out through `sendDurableMessageBatch` with the options of `post` in `updates.ts` (`durability: "best_effort"`, `mirror`). When the session entry exists, the user message is mirrored first. With no entry, neither is mirrored: the notice shows on devices but not in history. A status other than `sent` is logged `yorozu: hermes notice not sent: <status>`. The ledger entry then ends through the notice's `turnEnded` call ("Sync 01 calls"): no `run_started`, typing or activity event.
 - **Backend off.** Every message goes to `handleMessage` as today. With the backend on, `routeMessage` sees `/backend hermes` before OpenClaw does.
@@ -319,8 +327,12 @@ The API key is never logged and never put in a URL or an error message (F3). H1'
 1. **Claimed.** The Hub's `claim` returned `"fresh"` and `delivered` went out.
 2. **Live turn.** `t = externalTurn(deps.turn, message, retryAttempt)`.
 3. **End earlier runs.** Turns of one conversation run one at a time, so every id in the route entry's `unsettled` belongs to a turn that has ended; its output is never delivered. For each: `status(id)`. If `unknown`: `resolveUnknown`, then `status` again. If still not terminal (running, waiting on an approval, `unknown`): `stop(id)`, then `status` again. Remove the id when it is terminal or `not_found`; otherwise keep it and log `yorozu: hermes earlier run not ended <id> <status>`. A throw keeps the id, is logged, and the turn goes on.
-4. **Request key.** Read the key store. With no entry, write `{keyAttempt: 0}` and await it; if that fails, `t.fail("The Hermes request key couldn't be stored.")`. Then, only for a new entry, mirror the user message (Mirror). Key first, then mirror, so a crash between them loses a history line and never mirrors twice. A failed mirror is logged and the turn goes on; the history line is lost (accepted).
-5. **Body.** `requestBody(message)` uses only the stored `Message` and fixed strings, so every attempt with one request key is byte-identical (a different body gets 409). `input` joins, with blank lines: a quote line `> <replyTo.text, whitespace collapsed, at most 500 characters>` (or `> (an earlier message)` with no text) when the message quotes one; the text; `[n attachment(s) not sent to the Hermes test]` when it has attachments. The body is `{input, session_id: "yorozu-<convId>", instructions: INSTRUCTIONS}`, where `INSTRUCTIONS` is exactly: `You are answering in Yorozu, a chat app on the owner's iPhone, iPad and Mac. Write plain Markdown; tables are fine. Your reply text is the message: don't use a message tool and don't use a card format.` The persona comes from the operator step 12 import.
+
+   **Bound** (R3 A-4). Turn step 3 as a whole has a 60 s deadline, a `setTimeout` from its start (so mock timers drive it), and it also stops at the first `unavailable` from any of its calls. When either happens: no further call starts, the result of a call still in flight is ignored, every id not yet removed stays in `unsettled`, one `warn` `yorozu: hermes earlier runs check stopped <convId>: <timeout|unavailable>, <n> ids kept` is written, and **the turn proceeds** to turn step 4; the next turn tries the kept ids again. So turn step 3 adds at most 60 s before `createRun`, and a Hermes gateway that is down costs it one call, not about 150 s per id.
+4. **Request key.** Read the key store. With no entry, write `{keyAttempt: 0}` and await it; if that fails, `t.fail("The Hermes request key couldn't be stored.")`. Then, only for a new entry, mirror the user message (Mirror). Key first, then mirror, so a crash between them loses a history line and never mirrors twice. A failed mirror (the call rejects) is logged and the turn goes on; the history line is lost (accepted).
+
+   **Mirror timeout** (R3 A-9). The mirror call is bounded by a 10 s `setTimeout`. If it hasn't settled by then, the turn ends: `t.fail("The Hermes test couldn't record your message in history; it wasn't sent to Hermes.")`, logged `warn` `yorozu: hermes mirror timed out <messageId>`, and the turn-end line with `outcome=mirror_timeout`, `run=-`. No POST goes out and the message isn't parked; the FIFO's next message runs. A late-settling mirror call may still add the history line; it is ignored. A hang therefore holds the conversation's queue for at most 10 s, never until a restart.
+5. **Body.** `requestBody(message, session)` uses only the stored `Message`, the route entry's session id and fixed strings, so every attempt with one request key is byte-identical (a different body gets 409). `input` joins, with blank lines: a quote line `> <replyTo.text, whitespace collapsed, at most 500 characters>` (or `> (an earlier message)` with no text) when the message quotes one; the text; `[n attachment(s) not sent to the Hermes test]` when it has attachments. The body is `{input, session_id: <the route entry's session id, "yorozu-<convId>-<opt-in messageId>">, instructions: INSTRUCTIONS}`, where `INSTRUCTIONS` is exactly: `You are answering in Yorozu, a chat app on the owner's iPhone, iPad and Mac. Write plain Markdown; tables are fine. Your reply text is the message: don't use a message tool and don't use a card format.` The persona comes from the operator step 12 import.
 6. **Hand, then create.** `await t.handing()`, then `createRun({key: "<messageId>:<keyAttempt>", body})`. Every attempt, a parked rerun included, passes `handing`. Each result logs `yorozu: hermes createRun <messageId>:<keyAttempt> run=<runId|-> replayed=<true|false|-> error=<kind|->`.
 
    **Turn-end line** (F5, R3 A-1). Beside the `createRun` lines, each delegated turn writes exactly one `yorozu: hermes turn end <messageId> run=<runId|-> outcome=<outcome> tokens_in=<n|null> tokens_out=<n|null> tokens_total=<n|null>` when it finally ends. It is written at `info` for `outcome=completed` and at `warn` for every other outcome. A park writes none (the rerun's turn writes it), and a notice writes none. `run` is the last run id this message's turn saw, `-` if none. Counts only, never content.
@@ -338,13 +350,14 @@ The API key is never logged and never put in a URL or an error message (F3). H1'
      | `unreachable` | Retry later with the schedule used up after `unavailable` ("isn't answering") |
      | `refused` | `auth` from `createRun`, or from a replayed run's `status` |
      | `rejected` | `conflict`, `not_found` or `http` from `createRun`, or from a replayed run's `status` |
-     | `lost` | Turn step 7, lost stream: `status` throws ("Lost contact…") |
+     | `lost` | Turn step 7, lost stream: `status` throws `not_found`, `auth` or `http` ("Lost contact…"); `unavailable` keeps polling (R3 A-2) |
      | `capped` | Turn step 7: the 30-minute cap |
      | `approval` | Turn outcomes: an approval that couldn't be answered |
      | `empty` | Turn step 8: an empty `output` |
      | `unsent` | Turn step 8: a batch status other than `sent` |
+     | `mirror_timeout` | Turn step 4: the mirror call didn't settle within 10 s (R3 A-9) |
      | `store` | A key-store write fails (turn step 4, or the status table's `keyAttempt + 1` write); a key-store lookup rejects in `routedRerun` |
-     | `off` | `routedRerun`: a key-store entry with no deps (backend off or route store not loaded, F2) |
+     | `off` | `routedRerun`: a key-store entry with no deps (backend off or route store not loaded, F2), or with deps but a conversation no longer opted in (F8) |
      | `crashed` | An entry point caught an unexpected throw |
    - On success, `addUnsettled(runId)` (a failed write is logged). If `replayed`, read `status(runId)` and act by the status table. Otherwise attach (turn step 7).
    - `unavailable`: retry later with the same request key.
@@ -353,7 +366,7 @@ The API key is never logged and never put in a URL or an error message (F3). H1'
    - A replayed run whose `status` throws: `unavailable` retries later with the same request key; other kinds fail as above.
 7. **Attach.** `t.started()`, then read `events(runId)` and handle each event (Turn outcomes). The turn is capped at 30 minutes from `t.started()`: at the cap, `stop(runId)` (best effort; the id stays unsettled) and `t.fail("The Hermes run took over 30 minutes.")`.
 
-   **Lost stream.** When the stream ends without a terminal event, or `events` throws, the turn polls `status(runId)` every 5 s and acts by the status table, until a row ends the turn or the cap fires. A polled status with pending controls of the approval kind is handled as an `approval.request` event. If `status` throws: `t.fail("Lost contact with the Hermes run.")`, with the id kept unsettled, so the next turn's turn step 3 ends it. After a lost stream the turn sees statuses only, so tool rows and Live Activity steps stop updating (typing goes on), and a temporary failure fails the turn instead of advancing the request key: events may have been missed, so the tool signal is unreliable.
+   **Lost stream.** When the stream ends without a terminal event, or `events` throws, the turn polls `status(runId)` every 5 s and acts by the status table, until a row ends the turn or the cap fires. A polled status with pending controls of the approval kind is handled as an `approval.request` event. If `status` throws `unavailable` (a refused connection, a timeout, 429, 503), the turn keeps polling: one transient error, or a Hermes gateway that is down and comes back, doesn't end it, and the cap still bounds it (R3 A-2). Only a `status` throw of kind `not_found`, `auth` or `http` ends it: `t.fail("Lost contact with the Hermes run.")`, `outcome=lost`, with the id kept unsettled, so the next turn's turn step 3 ends it. After a lost stream the turn sees statuses only, so tool rows and Live Activity steps stop updating (typing goes on), and a temporary failure fails the turn instead of advancing the request key: events may have been missed, so the tool signal is unreliable.
 8. **Deliver.** An empty `output` is `t.fail("Hermes finished with an empty reply.")`. Otherwise send `output`, then one line per denied approval, with `sendDurableMessageBatch` and the options of `post` in `updates.ts`. A status other than `sent` is `t.fail("The Hermes reply couldn't be sent: <status>.")`. Then the push (before-code question 3), then `t.done()`. No `maybeTitle` or `noteFirstMessage`: the conversation's first message was an OpenClaw turn, which set the title.
 
 **Error text.** `<text>` is a `run.failed` event's `error` when it is a string, else its `message` field when that is a string, else its JSON; for a status, it is the failed run's `output`. `isTemporary` is `retry.ts`'s test (overloaded, rate limit, 429/503/529, "temporarily unavailable", `ECONNRESET`, `ETIMEDOUT`). Fixture 09's "not connected to any AI provider" isn't temporary, so it is reported at once.
@@ -417,7 +430,7 @@ A replayed `failed` run is never retried: the turn can't tell whether a tool ran
 | Restart before `handing` (turn steps 1–5) | Hermes never got the POST. The entry stays `accepted`, counted `not handed`. No device event, no rerun; the awaiting window ends the turn. A device resend of the same id is a duplicate. |
 | Restart after `handing` | No requeue (sync decision 5), no device event: the entry stays `handed` or `started`; the awaiting window ends the turn. The Hermes run is orphaned; the next turn in that conversation stops it (turn step 3). |
 | Hermes clean stop mid-run | `run.interrupted` (pending operator step 11): `run_failed`. |
-| Hermes `kill -9` mid-run | Lost stream; `status` throws while Hermes is down: "Lost contact…", the id stays unsettled. The next turn resolves or stops it in turn step 3 once Hermes is back, also across a restart, because the id is in the route store. |
+| Hermes `kill -9` mid-run | Lost stream; `status` throws `unavailable` while Hermes is down, so the turn keeps polling (R3 A-2). Back within the cap: the run reports `unknown`, and the status table resolves it. Not back by the cap: `outcome=capped`, the id stays unsettled, and the next turn resolves or stops it in turn step 3 once Hermes is back, also across a restart, because the id is in the route store. |
 | OpenClaw Gateway and Hermes at once | Not tested on its own (Further notes). |
 
 ### Wiring (H1, H3)
@@ -439,7 +452,9 @@ const deps = hermes && keys && state && { client: hermesClients.create(hermes), 
 runParked(abortSignal, (message, attempt) =>
   void (keys ? routedRerun({ keys, turn, deps, log: ctx.log }, message, attempt) : handleMessage(turn, message, attempt)));
 // routedRerun: keys.lookup(messageId) has no entry → handleMessage(turn, …), as today.
-//   An entry, with deps → on the FIFO, hermesTurn(deps, message, attempt).
+//   An entry, with deps → on the FIFO, hermesTurn(deps, message, attempt) if routedToHermes(convId);
+//     if the conversation is no longer opted in (/new or /reset dropped its route, F8) → end(…, "off", "This conversation is
+//     back on OpenClaw; this message wasn't rerun.") once; never handleMessage.
 //   An entry without deps → end(externalTurn(turn, message, attempt), "off", …) once; a lookup that rejects → the same with "store"; never handleMessage.
 ```
 
@@ -483,7 +498,9 @@ export type KeyRecord = { keyAttempt: number };
 export function hermesKeys(): Keyed<KeyRecord>;                     // {namespace: "hermes-keys", maxEntries: 10_000, overflowPolicy: "evict-oldest"}
 export type HermesState = {
   routedToHermes(convId: string): boolean;                          // sync, from the map
-  setRoute(convId: string): Promise<"set" | "already">;             // rejects (map undone) if the store write fails
+  setRoute(convId: string, messageId: string): Promise<"set" | "already">;   // stores session "yorozu-<convId>-<messageId>"; rejects (map undone) if the store write fails
+  session(convId: string): string | undefined;                      // the route entry's Hermes session id
+  dropRoute(convId: string): Promise<void>;                         // F8; deletes the entry; rejects (map undone) if the store delete fails
   unsettled(convId: string): string[];
   addUnsettled(convId: string, runId: string): Promise<void>;       // idempotent
   removeUnsettled(convId: string, runId: string): Promise<void>;
@@ -507,17 +524,17 @@ export function externalTurn(ctx: ConversationContext, message: Message, attempt
 
 // src/hermes-turn.ts (H3)
 export type TurnOutcome = "completed" | "failed" | "interrupted" | "cancelled" | "unresolved" | "unreachable" | "refused"
-  | "rejected" | "lost" | "capped" | "approval" | "empty" | "unsent" | "store" | "off" | "crashed";   // the turn-end line
+  | "rejected" | "lost" | "capped" | "approval" | "empty" | "unsent" | "mirror_timeout" | "store" | "off" | "crashed";   // the turn-end line
 export type HermesDeps = { client: HermesClient; state: HermesState; keys: Keyed<KeyRecord>; turn: ConversationContext;
   park: (message: Message, retryAttempt: number) => Promise<boolean>; log?: Log };
 export const hermesClients = { create: (backend: HermesBackend) => createHermesClient(backend) };   // only tests replace `create`
 export function routeMessage(deps: HermesDeps, message: Message): Promise<void>;
 export function routedRerun(r: { keys: Keyed<KeyRecord>; turn: ConversationContext; deps?: HermesDeps; log?: Log }, message: Message, retryAttempt: number): Promise<void>;
 export function hermesTurn(deps: HermesDeps, message: Message, retryAttempt?: number): Promise<void>;
-export function requestBody(message: Message): string;
+export function requestBody(message: Message, session: string): string;
 ```
 
-`Keyed` comes from `cards.ts` and `Store` from sync 01's `ledger.ts`. The route store is `{namespace: "backends", retention: "retained"}`, loaded into a map when the instance is created; `setRoute` and the `unsettled` writes go to the map, then the store, awaited; a failed store write undoes the map change and rejects. A failed load makes `openHermesState` log `warn` `yorozu: hermes state unavailable: <errorTag>` and return undefined.
+`Keyed` comes from `cards.ts` and `Store` from sync 01's `ledger.ts`. The route store is `{namespace: "backends", retention: "retained"}`, loaded into a map when the instance is created; its value is `{session, unsettled}`. `setRoute`, `dropRoute` and the `unsettled` writes go to the map, then the store, awaited; a failed store write or delete undoes the map change and rejects. A failed load makes `openHermesState` log `warn` `yorozu: hermes state unavailable: <errorTag>` and return undefined.
 
 ### Tickets, order and gates
 
@@ -560,8 +577,8 @@ Red tests (each passes the key file path as `resolveHermesBackend`'s third argum
 1. The manifest has `backends.hermes` with `additionalProperties: false` at both levels, and `enabled` defaults to `false`.
 2. `backends` absent: `resolveHermesBackend` returns undefined and logs nothing, even with a valid key file; through `startAccount`, a stubbed global `fetch` is never called.
 3. `enabled: false`: one `hermes backend off: disabled`.
-4. Each refusal with its line: a missing file (`unreadable (ENOENT)`), a directory (`not a regular file`), modes 0644, 0640 and 0400 (`mode is 0644, not 0600` and so on, F3), an empty key, a key of only quotes.
-5. Mode 0600 is accepted. A quoted key loses its quotes. The URL is `http://127.0.0.1:8652/`.
+4. Each refusal with its line: a missing file (`unreadable (ENOENT)`), a directory (`not a regular file`), modes 0644, 0640 and 0604 (`mode is 0644; group and other must have no access (0600 or 0400)` and so on: any group or other bit, F3), an empty key, a key of only quotes.
+5. Modes 0600 and 0400 are accepted (`(mode & 0o077) === 0`, F3). A quoted key loses its quotes. The URL is `http://127.0.0.1:8652/`.
 6. The API key never appears in any log line from tests 3–5.
 
 Guards: `hub-session`, `prerun-error`, `genui-golden`, `presentations`.
@@ -618,7 +635,7 @@ Before code, Coder answers these by reading `~/openclaw` (2026.9.8, read only) a
 - **What the stubs drive.** The `sendDurableMessageBatch` stub doesn't run the outbound adapter, so tests check its call (text, `mirror`) instead of `reply` events, and count pushes only through `notifyReply` when before-code question 3 is "no".
 
 Red tests:
-1. Routing: one test per cell of the routing table, including the no-entry notice (no `setRoute`, no mirror), `/Backend  Hermes` opting in, and `/backend` and `/backend off` passing through to OpenClaw (not opted in) and to Hermes as text (opted in); `/new`, `/reset` and `/new foo` in an opted-in conversation get the short notice (F8) and reach neither backend. After every notice the `runs` entry is `settled`, no `run_started`, typing or activity event went out, and no turn-end line was written.
+1. Routing: one test per cell of the routing table, including the no-entry notice (no `setRoute`, no mirror), `/Backend  Hermes` opting in, and `/backend` and `/backend off` passing through to OpenClaw (not opted in) and to Hermes as text (opted in); `/new`, `/reset` and `/new foo` in an opted-in conversation (F8): its `unsettled` ids get turn step 3's calls first; then the route-store row is gone and `routedToHermes` is false; `handleMessage` gets the message once (OpenClaw resets in place, as when not opted in) and the fake server gets no `createRun`; then the notice "Hermes is off for this conversation; /backend hermes turns it back on." goes out, with no notice `turnEnded` call of its own; the next plain message goes to `handleMessage`; a later `/backend hermes` opts in again with a new session id (`yorozu-<convId>-<that messageId>`) in the next POST's body; a Hermes message parked before the `/new` ends on its rerun with one `run_failed` "…back on OpenClaw…" and a turn-end line `outcome=off`, with no `handleMessage` and no POST; with the store delete failing, the route stays, the "couldn't be turned off" notice goes out, and neither backend gets the message. After every other notice the `runs` entry is `settled`, no `run_started`, typing or activity event went out, and no turn-end line was written.
 2. Backend off (`backends` absent), through `startAccount`: `host.relay`'s `onMessage` and `host.rerun` reach `handleMessage`; the fake server gets no request; neither namespace exists.
 3. Backend on, through `startAccount`: an opted-in message reaches the fake server through `hermesClients.create`; a second `startAccount` (reload) sees the same route.
 4. A plain turn: `run_started` once; typing on, then off; the batch called once with `output` and `mirror`; the user message mirrored once with the Mirror fields; `activityTurn` `done`; ledger entry `settled`; one `createRun` line and one `info` turn-end line with `outcome=completed` and the status's `tokens_in`, `tokens_out` and `tokens_total` (read by one extra `status` request after the `run.completed` event); with no `usage` in that status, or with that request failing, `tokens_in=null tokens_out=null tokens_total=null` and still `outcome=completed`; one push per before-code question 3.
@@ -628,20 +645,21 @@ Red tests:
 8. Replay by status: `completed` delivers once; `failed` (fixtures 11 and 10) is `run_failed` with no batch call, even for a temporary error; `cancelled` and `interrupted` are `run_failed`; `running` attaches and delivers; `unknown` calls `resolveUnknown` with the exact body, then maps.
 9. `run.failed` temporary (`rate limit`) with no tool: request key `:1`, parked, and the rerun answers. The same after a `tool.started`: `run_failed`. Fixture 09's permanent error: `run_failed` at once.
 10. `run.interrupted`, with or without a tool: `run_failed`, the request key unchanged.
-11. Lost stream: a stream that closes at once makes the turn poll `status` every 5 s; `running` then `completed` delivers once; a polled temporary `failed` is `run_failed` with the request key unchanged; a polled status with an approval control is denied as in test 13; `events` throwing `not_found` polls too; a `status` throw fails with a turn-end line `outcome=lost` and the id kept unsettled.
-12. Earlier runs, across a simulated restart, on the next message: an `unknown` id gets `resolveUnknown`; a `running` id gets `stop`; both are removed once terminal; the new run runs.
+11. Lost stream: a stream that closes at once makes the turn poll `status` every 5 s; `running` then `completed` delivers once; a polled temporary `failed` is `run_failed` with the request key unchanged; a polled status with an approval control is denied as in test 13; `events` throwing `not_found` polls too; a `status` that throws `unavailable` (one 503, one 429, a refused connection) keeps polling and a later `completed` delivers once, with no `lost` line (R3 A-2); a `status` throw of `not_found`, `auth` or `http` fails with a turn-end line `outcome=lost` and the id kept unsettled.
+12. Earlier runs, across a simulated restart, on the next message: an `unknown` id gets `resolveUnknown`; a `running` id gets `stop`; both are removed once terminal; the new run runs. Bound (R3 A-4): with `status` hanging for every earlier id, after 60 s of mock time one `earlier runs check stopped <convId>: timeout` line, the ids kept, and the new run's POST goes; with the first `status` refused (`unavailable`), the same at once with `unavailable` and no call for the other ids.
 13. Approval: `deny` with the exact body; the "Denied:" line ends the reply; the run completes. No pending control, or a failing `deny`: `stop`, then `run_failed`.
 14. `requestBody`: byte-identical across reruns; `instructions` is exactly `INSTRUCTIONS`; the quote line with text, with multi-line text, and without text; the attachments note with 1 and with 3; text only.
 15. The 30-minute cap: the fake server answers `running` to every status read and the stream ends at the idle timeout, so the turn polls until the cap: `stop`, then `run_failed`, a turn-end line `outcome=capped`, the id kept unsettled.
 16. Plugin reload mid-turn: a second deps over the same state instance while the first turn's stream is open; the reply is delivered once.
-17. Restart interplay, each across a simulated restart: a turn held before `handing` (the mirror stub hangs; the fake server got no POST) stays `accepted`, is counted `not handed 1` in the `restart ledger` line, gets no device event and is never rerun; a turn cut off after its POST stays `handed` or `started`, is counted so, gets no error and is never rerun; a parked one stays `parked`, is counted so, and reruns through `routedRerun` with the same request key; for each, the new ledger's `claim` of the same message answers `"duplicate"`.
+17. Restart interplay, each across a simulated restart: a turn held before `handing` (the mirror stub hangs and mock time stays under the mirror's 10 s timeout; the fake server got no POST) stays `accepted`, is counted `not handed 1` in the `restart ledger` line, gets no device event and is never rerun; a turn cut off after its POST stays `handed` or `started`, is counted so, gets no error and is never rerun; a parked one stays `parked`, is counted so, and reruns through `routedRerun` with the same request key; for each, the new ledger's `claim` of the same message answers `"duplicate"`.
 18. A message OpenClaw parked reruns on OpenClaw after its conversation was opted in; a key-store lookup that rejects fails the message closed with one `run_failed` and a turn-end line `outcome=store`, with no `handleMessage`.
 19. Error paths, one test each: `auth` and `conflict` from `createRun`; an empty `output`; a batch status other than `sent`; a failing key write; a failing mirror (logged, the turn goes on); an unexpected throw (one `run_failed`, the FIFO's next message still runs). Each writes exactly one turn-end line, even when a second end is attempted afterwards, with its `outcome`: `refused`, `rejected`, `empty`, `unsent`, `store`, `completed` (the failed mirror, at `info`) and `crashed` (each at `warn`).
 20. FIFO: two messages in one opted-in conversation run in order; a message right after `/backend hermes` queues behind the opt-in; a throwing link doesn't block the next.
 21. Backend off at a reload, through `startAccount` with `enabled: false`: a parked Hermes message ends with one `run_failed` "…wasn't rerun" and a turn-end line `outcome=off` (F2), with no `handleMessage` and no request; a message OpenClaw parked still reruns on OpenClaw. The same with the backend on and the route store failing to load, which also logs `hermes state unavailable`.
 22. No log line from any test contains the API key.
-23. State: `setRoute` then `routedToHermes` is true, and a second `setRoute` answers `"already"`; a new `createHermesState` over the same rows (restart) sees the route; `addUnsettled` twice keeps one; a failing store write rejects and leaves the map unchanged.
+23. State: `setRoute` then `routedToHermes` is true and `session` is `yorozu-<convId>-<messageId>`, and a second `setRoute` answers `"already"`; `dropRoute` removes the row, and a failing delete rejects and leaves the route; a new `createHermesState` over the same rows (restart) sees the route; `addUnsettled` twice keeps one; a failing store write rejects and leaves the map unchanged.
 24. The `/backend` claim warning (F9), the one test, as described under "Routing and commands (H3)": through `startAccount` with the genui-host claim stubs, in CI.
+25. Mirror timeout (R3 A-9): with `host.mirror === "hang"`, after 10 s of mock time the turn ends with one `run_failed` "…wasn't sent to Hermes.", one `warn` `hermes mirror timed out`, and one `warn` turn-end line `outcome=mirror_timeout`, `run=-`, tokens `null`; the fake server got no POST, nothing is parked, the `runs` entry is `settled`, and the FIFO's next message in that conversation runs.
 
 Guards: `genui-golden`, `prerun-error`, `hub-session`, `presentations` and the sync 01 tests. New check: `backend-passthrough`; run with `YOROZU_OPENCLAW_SDK=$HOME/openclaw`, it must pass; without it, it is skipped, as in CI.
 
@@ -657,7 +675,7 @@ H2's PR adds the recordings to "Hermes API facts" and makes these changes before
 | Operator step 9.4: `approvals.mode` denies every escalation server-side while the run continues | yes | H2 drops `deny` and its part of test 6; H3 drops the `approval.request` row, the polled-approval rule, the "Denied:" line and test 13's body, which becomes: an escalation fails that tool step and the run completes with Hermes's own message (D4 holds; P11 passes so) |
 | | no | as written |
 | Operator step 9.5: `stop` ends a run waiting on an approval | no | turn step 3 can't end such an orphan: a Risks row, and the run ends at Hermes's own limits |
-| Operator step 11: `GET /api/sessions/{id}` names the session's running or `unknown` run | yes | turn step 3 reads it instead of `unsettled`; `unsettled`, `addUnsettled`, `removeUnsettled` and the route entry's field go (the route store value becomes `{}`); H3 tests 11, 12, 15 and 23 assert the session read instead |
+| Operator step 11: `GET /api/sessions/{id}` names the session's running or `unknown` run | yes | turn step 3 reads it instead of `unsettled`; `unsettled`, `addUnsettled`, `removeUnsettled` and the route entry's field go (the route store value becomes `{session}`); H3 tests 11, 12, 15 and 23 assert the session read instead |
 | | no | as written |
 | Operator step 10 | — | information only; H3's FIFO serializes either way |
 
@@ -690,7 +708,7 @@ The Yorozu agent runs every step on the Mac mini, except where it says the owner
    2. Choose OpenAI Codex, and answer **N** to importing the Codex CLI tokens.
    3. Open `https://auth.openai.com/codex/device`, enter the device code, sign in.
    4. The Yorozu agent checks with `H auth status openai-codex`.
-   5. Closed, nothing to ask: the two questions this step used to carry are answered. (a) The Hermes gateway runs as a third-party runtime and Yorozu adds no Python; the plugin talks to it over HTTP only (F7). (b) `/new` and `/reset` in an opted-in conversation answer with a short notice in this test (F8; routing table, H3 red test 1).
+   5. Closed, nothing to ask: the two questions this step used to carry are answered. (a) The Hermes gateway runs as a third-party runtime and Yorozu adds no Python; the plugin talks to it over HTTP only (F7). (b) `/new` and `/reset` in an opted-in conversation reset the session in place as today (`OWNER_DECISIONS.md:25`) and put the conversation back on OpenClaw, with a short notice (F8; routing table, H3 red test 1).
 8. **A completed run with a tool.** POST a run with `session_id` `yorozu-h0-probe-8` and input "Run `date` in the terminal and tell me the output." Record the event stream, the status (with `usage`), and the tool events' fields (tool call id, success field). Separately, record a `run.failed` after a tool ran, if one can be provoked, to learn what `partial` means.
 9. **Approvals.** Hermes's `approvals.mode: smart` runs commands it judges safe and asks for the rest.
    1. Set `agent.disabled_toolsets: [cronjob]` in the test home's `config.yaml`.
@@ -717,7 +735,7 @@ The Yorozu agent runs every step on the Mac mini, except where it says the owner
 
     A "no" to the second keeps Hermes hand-started. Then:
     1. Check that the plugin the OpenClaw Gateway loads includes the H3 merge: `git -C <main checkout> merge-base --is-ancestor <H3 merge commit> HEAD`. Run `YOROZU_OPENCLAW_SDK=$HOME/openclaw node --test plugins/openclaw-yorozu/test/backend-passthrough.test.ts`. A failure goes to Coder, and nothing below runs.
-    2. Check that `grep -c '^API_SERVER_KEY=' ~/.hermes-yorozu-test/.env` prints 1, then `cd ~/.hermes-yorozu-test && (umask 077; grep '^API_SERVER_KEY=' .env | cut -d= -f2- > yorozu-plugin.key)`. Check that `stat -f %Lp ~/.hermes-yorozu-test/yorozu-plugin.key` prints `600` (F3: any other mode keeps the backend off). Never print the file.
+    2. Check that `grep -c '^API_SERVER_KEY=' ~/.hermes-yorozu-test/.env` prints 1, then `cd ~/.hermes-yorozu-test && (umask 077; grep '^API_SERVER_KEY=' .env | cut -d= -f2- > yorozu-plugin.key)`. Check that `stat -f %Lp ~/.hermes-yorozu-test/yorozu-plugin.key` prints `600` or `400` (F3: the plugin refuses any mode with a group or other bit, `mode & 0o077`, and keeps the backend off). Never print the file.
     3. `cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak-hermes-test`.
     4. `openclaw config set channels.yorozu.backends.hermes.enabled true`. Check that `openclaw config get channels.yorozu.backends.hermes.enabled` prints `true` (a boolean, not `"true"`) and the OpenClaw Gateway log shows `yorozu: hermes backend on`. A `yorozu: /backend is claimed by …` or `/backend claim check skipped` line from the same start goes to Coder (F9); it doesn't stop enablement, because with the backend on `/backend hermes` never reaches OpenClaw.
     5. Write `~/Library/LaunchAgents/local.hermes-yorozu-test.plist`, with `<home>` the absolute path of `~/.hermes-yorozu-test`: `Label` `local.hermes-yorozu-test`; `ProgramArguments` `[<home>/hermes-agent/.hermes/bin/hermes, gateway, run]`; `WorkingDirectory` `<home>`; `EnvironmentVariables` `{HERMES_HOME: <home>, PATH: <home>/hermes-agent/.hermes/bin:/usr/bin:/bin:/usr/sbin:/sbin}`; `KeepAlive` true; `StandardOutPath` and `StandardErrorPath` `<home>/logs/launchd.log`.
@@ -736,10 +754,10 @@ The Yorozu agent runs every step on the Mac mini, except where it says the owner
 | P2 | A long tool run (about 5 min) | The owner's devices | Tool rows and Live Activity steps update; typing never lapses |
 | P3 | A device offline during the turn | The owner's devices | The reply shows after catch-up, once (the app merges items by id), in order |
 | P4 | Two devices, sending from one | The owner's devices | The other shows the message and the reply, no duplicates |
-| P5 | The Yorozu agent stops the Hermes gateway, then the owner sends a message, and starts it again within 3 min; separately, a clean stop and a `kill -9` mid-run | Test home + a device | Stopped and back in time: the reply arrives once. Every other case: one error row, no stuck typing, and the next message in that conversation runs. |
+| P5 | The Yorozu agent stops the Hermes gateway, then the owner sends a message, and starts it again within 3 min; separately, a clean stop and a `kill -9` mid-run | Test home + a device | Stopped and back in time: the reply arrives once. Every other case: one error row, no stuck typing, and the next message in that conversation runs. Each stop's start and end go in the vault note, so these turns are excluded from lost replies. |
 | P6 | An OpenClaw Gateway restart mid-turn | H3 test 17 | Before `handing`: counted `not handed`, no rerun. After: counted, no device event, no rerun. Parked: the rerun replays the same request key (one Hermes run). A resend gets only `delivered`. |
 | P7 | The same message twice; a timeout after admission; a rerun after a park | H2/H3 tests | One Hermes run per request key; the key advances only after a temporary `run.failed` with no tool |
-| P8 | Rename, pin, archive, delete; `/new` | The owner's devices | As on OpenClaw; `/new` gets the notice |
+| P8 | Rename, pin, archive, delete; `/new` | The owner's devices | As on OpenClaw; `/new` resets the session in place, the next message runs on OpenClaw, and the notice says `/backend hermes` turns Hermes back on |
 | P9 | History after reinstalling the app | The owner's device | The full conversation, including the `/backend hermes` line, each Hermes reply once |
 | P11 | A command that needs approval | H3 test 13, plus one real check after operator step 14 | Denied with the plain line; the run continues |
 | P12 | Quality on the 20 tasks | Operator step 13 | Hermes / OpenClaw / tie counts |
@@ -750,10 +768,15 @@ The Yorozu agent runs every step on the Mac mini, except where it says the owner
 - **Quota.** The Yorozu agent runs `rg -i 'rate.?limit|\b429\b' ~/.openclaw/logs/ | rg -v 'yorozu: hermes'` daily. During the P12 batch, an OpenClaw 429 stops the batch. During real use, it makes the Yorozu agent ask the owner to stop sending in opted-in conversations. The flag stays on.
 - **Tool gaps.** When a Hermes reply says it lacks a tool OpenClaw has, the owner or the Yorozu agent adds it to the test's vault note under `Projects/Yorozu/`.
 - **Double run.** Two different run ids in the `createRun` lines for one request key: Hermes's. One message with two request keys whose first run had used a tool: the plugin's.
-- **Lost reply.** A delegated message whose turn-end line says `outcome=lost`, or that has a `createRun` line and no turn-end line, excluding turns cut off by an OpenClaw Gateway restart. The Yorozu agent reads that run's status afterwards: `completed` means the plugin lost a finished reply (the plugin's); a run that never ended, or that Hermes no longer knows, is Hermes's.
+- **Lost reply** (R3 A-2: it means Hermes lost it, because the fixed no-go rule counts only those). A candidate is a delegated message whose turn-end line says `outcome=lost`, or that has a `createRun` line and no turn-end line. Not candidates, so never blamed on Hermes:
+  - turns cut off by an OpenClaw Gateway restart;
+  - turns that overlap a deliberate stop of the Hermes gateway (P5, or a stop the Yorozu agent made for any other reason); the Yorozu agent writes each deliberate stop's start and end time in the test's vault note when it makes it, and those windows are the exclusion;
+  - a transient `status` error while polling: by turn step 7 it keeps polling and never ends a turn as `lost`.
+
+  **Daily check.** With the quota check, the Yorozu agent reads `GET /v1/runs/{id}` for every run id on the past day's `outcome=lost` and `outcome=capped` turn-end lines and every candidate without a turn-end line, so the read happens well within the run record's retention. For a candidate: `completed` means the plugin lost a finished reply (blamed on the plugin); a run that is still not terminal, or `unknown` after that day, is blamed on Hermes; `not_found` (Hermes no longer has the record, including one that expired before the read) is recorded "unclassified" and counts toward neither side's no-go. `capped` ids are recorded with their status for information and aren't lost replies.
 - **Spend.** At the go/no-go the owner checks the ChatGPT account: no new subscription or billing line.
 - **Report.** The Yorozu agent writes it to the vault under `Projects/Yorozu/`: P1–P9 and P11 pass or fail; double runs and lost replies with blame; the P12 counts; P13; restart counts; spend; tool gaps.
-- **Outcome.** At n = 20 the numbers are indicative only, so the owner decides: **go** (the Yorozu backend switch, which opens ADR-H4), **extend** (moves the go/no-go date; the code stays until then, and a date past 2026-12-31 needs a new owner exception), or **no-go**. One rule is fixed: any double run or lost reply blamed on Hermes is a no-go. With no decision by 2026-12-31, the outcome is no-go.
+- **Outcome.** At n = 20 the numbers are indicative only, so the owner decides: **go** (the Yorozu backend switch, which opens ADR-H4), **extend** (moves the go/no-go date; the code stays until then, and a date past 2026-12-31 needs a new owner exception), or **no-go**. One rule is fixed: any double run or lost reply blamed on Hermes is a no-go ("unclassified" lost replies don't count). With no decision by 2026-12-31, the outcome is no-go.
 
 ## Testing decisions
 
@@ -814,7 +837,8 @@ The Yorozu agent runs every step on the Mac mini, except where it says the owner
 | Dormant code in a public beta | Nothing merges before the stop rule; the flag is off by default; H1 test 2 and H3 test 2 check that no Hermes path runs without the config entry. |
 | Owner data in committed fixtures | Scrubbed before commit; H2 test 8; Coder reads each file. |
 | The sync work slips | The whole stack waits on sync 01 only; the 2026-12-17 deadline rule. |
-| Hermes and OpenClaw histories drift | Opt-in needs one OpenClaw turn first; `/new` and `/reset` answer with a notice. |
+| Hermes and OpenClaw histories drift | Opt-in needs one OpenClaw turn first; `/new` and `/reset` reset the OpenClaw session in place and drop the Hermes route (F8), and a later opt-in starts a fresh Hermes session id. |
+| Turn step 3 or the mirror call hangs | Both bounded (R3 A-4: 60 s, then the turn proceeds; R3 A-9: 10 s, then the turn ends `mirror_timeout`); neither can hold a conversation's queue until a restart. |
 | Reply ids differ from the transcript ids | The app's existing text match applies, as for cron deliveries (unverified for Hermes replies; checked in P9). |
 | The API key leaks | No redirects followed; never logged or put in an error; H2 test 7 and H3 test 22. |
 | The `.env` API key format differs from what operator step 14.2 expects | The reader strips one pair of quotes; a wrong key fails with `auth` and "refused the API key". |
@@ -836,10 +860,15 @@ The Yorozu agent runs every step on the Mac mini, except where it says the owner
 
 ## Review dispositions (round 3)
 
-EGM round 3 of this dev spec, on v5 (`0a578106`; report `hermes-egm-r3.md` in Coder's context folder). The Yorozu agent's final decisions, 2026-11-19 ~14:47 JST; no further rounds. "R3 A-n" is the report's action A-n, not a sync spec label.
+EGM round 3 of this dev spec, on v5 (`0a578106`; report `hermes-egm-r3.md` in Coder's context folder). The Yorozu agent's final decisions, 2026-11-19 ~14:47 JST, revised on v6 at ~14:57 JST (v7); no further rounds. "R3 A-n" is the report's action A-n, not a sync spec label.
+
+**Changes in v7** (the Yorozu agent on v6, 2026-11-19 ~14:57 JST). F8 reversed: no departure from `OWNER_DECISIONS.md:25`; `/new` and `/reset` reset in place and drop the Hermes route, and a fresh opt-in gets a fresh Hermes session id. F3 revised: the rule is `mode & 0o077` (0600 and 0400 accepted). R3 A-2, A-4 and A-9 taken. Everything else as in v6.
 
 | Id | Disposition | Reason |
 |---|---|---|
+| R3 A-2 | FIXED (v7) | "Lost reply" now means Hermes lost it. Polling keeps going on `unavailable` up to the cap; only `not_found`, `auth` or `http` ends a turn `lost` (turn step 7, outcome list, H3 test 11, the `kill -9` restart row, a "What differs" bullet). The lost-reply rule excludes turns overlapping deliberate Hermes stops (P5 and others, logged in the vault note); the daily check reads the status of the past day's `lost` and `capped` run ids and candidates with no turn-end line; `not_found` (an expired record included) is "unclassified" and counts toward no no-go. |
+| R3 A-4 | FIXED (v7) | Turn step 3 is bounded: a 60 s deadline, and it also stops at the first `unavailable`. On either, kept ids stay, one `warn` line, and the turn proceeds to turn step 4. H3 test 12 covers both. |
+| R3 A-9 | FIXED (v7) | The mirror call has a 10 s timeout that ends the turn with `run_failed`, a `warn` line and `outcome=mirror_timeout` (outcome list, `TurnOutcome`), with no POST and no park. New H3 red test 25; test 17 keeps mock time under 10 s. No Risks row accepts a hang. |
 | R3 A-1 | FIXED (F5) | One turn-end line, defined in turn step 6: format, write-once rule (never on a park, never for a notice), `info`/`warn` levels, a closed `outcome` list mapping every `t.fail` and `t.done` site, and `tokens_in`/`tokens_out`/`tokens_total` from the run status's `usage` (`null` when not reported; one extra `status` call per completed streamed turn). Restored in the lost-reply rule, P13, H3 red tests 4, 6, 11, 15 and 19 (and 1, 18, 21), Testing decisions, and the Problem pointer. |
 | R3 A-7 | FIXED | The lookup, written in full: `hermesSection(cfg)` in `backends.ts`, mirroring `resolveAccount`'s cast (`channel.ts:72-84`); `YorozuConfig`, `YorozuAccount` and `resolveAccount` unchanged; no `hermesConfigured` field. `conversation.ts`'s private `TurnContext` is renamed `ConversationContext` when exported, avoiding `src/target.ts:26`. |
 | R3 A-10 | FIXED (F6) | H1–H3 titles and commits are `chore(plugin)` / `test(plugin)`; H3 stays out of the release notes; reverts use `chore(plugin): revert …`. |
@@ -847,10 +876,11 @@ EGM round 3 of this dev spec, on v5 (`0a578106`; report `hermes-egm-r3.md` in Co
 | R3 A-16 (M-23, N-4 part) | FIXED | Round 2's M-23 and N-4 changes made and their rows corrected below. The rest of A-16 not taken. |
 | F1 | ACCEPTED | H3 merged by 2026-12-17 (Referenced decisions; Tickets). |
 | F2 | ACCEPTED | Flag off ends a parked Hermes message with `run_failed` (`outcome=off`) and never reruns it on OpenClaw (as v5 designed; now a recorded decision). |
-| F3 | ACCEPTED | Fixed key path; mode exactly 0600, any other mode refused (backend off, `warn`); key never logged. H1 tests 4 and 5 and operator step 14.2 follow. |
+| F3 | ACCEPTED; revised in v7 | Fixed key path; refused when `(mode & 0o077) !== 0` (any group or other bit; backend off, `warn`); every owner-only mode accepted, 0600 and 0400 the intended ones; key never logged. The check table, H1 tests 4 (0644, 0640, 0604 refused) and 5 (0600, 0400 accepted) and operator step 14.2 follow. |
 | F4 | ACCEPTED | `YOROZU_OPENCLAW_CONFIG` is test-only, defaulting to `~/.openclaw/openclaw.json`; plugin code never reads it. After F9 no H test needs it. |
-| F7, F8 | ACCEPTED | No Yorozu Python ("Out of scope"); `/new` and `/reset` notice. Operator step 7's two questions closed; story 8 and H3's start gate no longer wait on them. |
-| All other R3 actions (A-2 to A-6, A-8, A-9, A-11 to A-13, A-15, A-17, the rest of A-16) and Nits N-1 to N-10 | NOT TAKEN | Outside the Yorozu agent's final v6 scope; the design stays as in v5 there. |
+| F7 | ACCEPTED | No Yorozu Python ("Out of scope"). Operator step 7's question a closed. |
+| F8 | ACCEPTED; reversed in v7 | `/new` and `/reset` in an opted-in conversation reset the OpenClaw session in place as today (`OWNER_DECISIONS.md:25`, no departure), drop the conversation's route (after turn step 3 for its unsettled ids), and send the notice that `/backend hermes` turns Hermes back on; a parked Hermes message of that conversation fails closed (`outcome=off`); a fresh opt-in gets a fresh session id. Owner reading, story 8, Solution, routing table, `HermesState` (`dropRoute`, `session`), Wiring, H3 tests 1 and 23, P8, operator step 7.5 and the drift Risks row follow. Operator step 7's question b closed; story 8 and H3's start gate no longer wait on it. |
+| All other R3 actions (A-3, A-5, A-6, A-8, A-11 to A-13, A-15, A-17, the rest of A-16) and Nits N-1 to N-10 | NOT TAKEN | Outside the Yorozu agent's final v6 and v7 scope; the design stays as in v5 there. |
 
 ## Review dispositions (round 2)
 
