@@ -32,6 +32,17 @@ enum PairingMigration {
         let logger = Logger(subsystem: "to.yumi.yorozu", category: "Migration")
         var step = "read failed"
         do {
+            if try storage.load(Pairing.unpairedAccount) != nil {
+                state.legacyFallback = false
+                do {
+                    try storage.clear("pairing-v3")
+                    logger.info("pairing: cleared abandoned old item")
+                    return .nothingToDo
+                } catch {
+                    logger.info("pairing: kept abandoned old item (clear failed)")
+                    return .kept
+                }
+            }
             guard let old = try storage.load("pairing-v3") else {
                 state.legacyFallback = false
                 logger.info("pairing: nothing to do")

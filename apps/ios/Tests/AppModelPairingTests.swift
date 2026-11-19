@@ -22,6 +22,25 @@ import YorozuWire
     private func openFirstSession() async throws -> AppModel { try await harness.openFirstSession() }
     private func stored() -> Pairing? { harness.stored() }
 
+    @Test func unpairDoesNotRestoreLeftoverLegacyOnNextLaunch() throws {
+        let pairing = try store(paired: true)
+        let model = makeModel()
+        #expect(model.pairing == pairing)
+        storage.items["pairing-v3"] = try JSONEncoder().encode(pairing)
+        storage.failClearAccounts = ["pairing-v3"]
+        migration.legacyFallback = true
+        model.unpair()
+        #expect(model.pairing == nil)
+        #expect(!migration.legacyFallback)
+        #expect(try Pairing.load(storage: storage, state: migration) == nil)
+
+        storage.failClearAccounts = []
+        let relaunched = AppModel(demo: false, storage: storage, migration: PairingMigration.State(),
+            cache: cache, transport: { [transports] _, _ in try transports.make() },
+            shares: { [] }, notifications: {})
+        #expect(relaunched.pairing == nil)
+    }
+
     @Test(arguments: [true, false]) func aFailedConnectKeepsTheStoredPairing(paired: Bool) throws {
         let pairing = try store(paired: paired)
         let model = makeModel()
