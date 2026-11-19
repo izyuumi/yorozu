@@ -15,8 +15,12 @@ export const host = {
   queued: false,
   /** Overrides staging a reply's files: gets the media URLs. */
   stage: undefined,
-  /** Makes a keyed store's `register` fail ("reject") or never finish ("hang"). */
+  /** Makes `register` reject, hang, wait a tick, or run a custom hook before writing. */
   register: undefined,
+  /** Makes a keyed store's `entries` reject. */
+  entries: undefined,
+  /** Records completed writes and dispatch calls when a test supplies an array. */
+  calls: undefined,
   /** Makes `lookup` fail ("reject"), never finish ("hang"), or hang only for cards ("cards-hang"). */
   lookup: undefined,
 };
@@ -26,14 +30,20 @@ const openKeyedStore = ({ namespace, maxEntries }) => {
   const rows = host.stores.get(namespace) ?? host.stores.set(namespace, new Map()).get(namespace);
   return {
     register: async (key, value) => {
+      if (typeof host.register === "function") await host.register(namespace, key, value);
       if (host.register === "reject") throw new Error("store down");
       if (host.register === "hang") await new Promise(() => {});
+      if (host.register === "slow") await new Promise((resolve) => setImmediate(resolve));
       rows.delete(key);
       rows.set(key, value);
-      for (const old of rows.keys()) {
-        if (rows.size <= (host.cap ?? maxEntries)) break;
-        rows.delete(old);
+      const cap = host.cap ?? maxEntries;
+      if (cap !== undefined) {
+        for (const old of rows.keys()) {
+          if (rows.size <= cap) break;
+          rows.delete(old);
+        }
       }
+      host.calls?.push({ kind: "write", namespace, key, value });
     },
     lookup: async (key) => {
       if (typeof host.lookup === "function") await host.lookup(namespace, key);
@@ -42,7 +52,10 @@ const openKeyedStore = ({ namespace, maxEntries }) => {
       return rows.get(key);
     },
     delete: async (key) => rows.delete(key),
-    entries: async () => [...rows].map(([key, value]) => ({ key, value })),
+    entries: async () => {
+      if (host.entries === "reject") throw new Error("store down");
+      return [...rows].map(([key, value]) => ({ key, value }));
+    },
   };
 };
 
@@ -72,9 +85,11 @@ export const createTypingCallbacks = () => ({});
 // The agent run starts (`onAgentRunStart`) before `host.run`, or, with `host.queued`, when `host.run` calls `start`.
 export const runChannelInboundEvent = async ({ adapter }) => {
   const turn = adapter.resolveTurn();
+  host.calls?.push({ kind: "dispatch", messageId: turn.ctxPayload.messageId });
   const start = () => turn.replyOptions?.onAgentRunStart?.("run");
   if (!host.queued) start();
-  await host.run?.(turn.delivery.deliver, start, turn.ctxPayload);
+  const dispatchResult = await host.run?.(turn.delivery.deliver, start, turn.ctxPayload);
+  return { dispatched: true, dispatchResult };
 };
 
 // What channel.ts takes from openclaw/plugin-sdk/*: the plugin object as declared, and the presentation SDK as in

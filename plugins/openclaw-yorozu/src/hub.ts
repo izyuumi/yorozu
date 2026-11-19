@@ -54,6 +54,7 @@ export type HubOptions = {
   refused?: (deviceKey: string) => void;
   directHints?: () => DirectHints | undefined;
   onPeer?: (request: Request) => Promise<void>;
+  claim?: (message: Message) => "fresh" | "duplicate";
   onMessage: (message: Message) => void;
   /** Every other event after `peer_info`; false when the plugin does not take it from a device. */
   dispatch: (request: Request) => Promise<boolean>;
@@ -202,7 +203,12 @@ export class Hub {
     }
     if (event.kind === "message") {
       const { convId, messageId } = event.data;
+      const claim = this.opts.claim?.(event.data);
       this.broadcast([{ kind: "delivered", data: { convId, messageId } }]);
+      if (claim) {
+        if (claim === "fresh") this.opts.onMessage(event.data);
+        return;
+      }
       const now = Date.now();
       if (this.taken.has(messageId)) return;
       for (const [id, at] of this.taken) {

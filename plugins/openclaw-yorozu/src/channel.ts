@@ -38,6 +38,7 @@ import { loadMessageTimes } from "./activity.js";
 import { loadReactions, reactionActions, userReaction } from "./reactions.js";
 import { loadReplies } from "./replies.js";
 import { runParked } from "./retry.js";
+import { openLedger } from "./runs.js";
 import { yorozuRuntime } from "./runtime.js";
 import { applyPatch, setThreadBase, watchSessions } from "./sessions.js";
 import { currentConversation, looksLikeOwner, PEER } from "./target.js";
@@ -108,6 +109,7 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
   await loadMessageTimes().catch((error: unknown) => ctx.log?.warn?.(`yorozu: message times failed: ${String(error)}`));
   await loadReplies().catch((error: unknown) => ctx.log?.warn?.(`yorozu: replies failed: ${String(error)}`));
   await loadReactions().catch((error: unknown) => ctx.log?.warn?.(`yorozu: reactions failed: ${String(error)}`));
+  const { claim } = await openLedger({ cfg: ctx.cfg, agent, log: ctx.log });
   const maxBytes = mediaMaxBytes(ctx.cfg, account.accountId);
   ctx.log?.info?.(`[${account.accountId}] yorozu started (agent ${agent}, room ${keys.room})`);
   ctx.setStatus({ accountId: account.accountId, running: true, connected: false, lifecycle: "starting" });
@@ -126,6 +128,7 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
       hostVersion: yorozuRuntime.getRuntime().version,
       ...(account.directPort !== null && { directPort: account.directPort }),
       directBonjour: account.directBonjour,
+      claim,
       onMessage: (message) => void handleMessage(turn, message),
       liveTurn,
       onReaction: (reaction) => {
