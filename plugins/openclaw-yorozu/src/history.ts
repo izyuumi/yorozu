@@ -10,7 +10,6 @@ import {
 import { messageTime, revOf } from "./activity.js";
 import { attachmentAt, attachmentsOf } from "./attachments.js";
 import { cardKey, errorTag, turnCards, type StoredCard } from "./cards.js";
-import { DEFAULT_CHUNK_LIMIT } from "./conversation.js";
 import {
   isId,
   type Attachment,
@@ -29,6 +28,7 @@ import { replyOf } from "./replies.js";
 import { prefix, titleOf } from "./sessions.js";
 
 const CHANNEL_ID = "yorozu";
+export const DEFAULT_CHUNK_LIMIT = 4000;
 const PAGE_ITEMS = 60;
 const PAGE_BYTES = 192 * 1024;
 const ITEM_CHARS = 60_000;
@@ -211,20 +211,40 @@ export async function historyPage(
   return { ...empty, items: page, more, rev };
 }
 
-function itemsOf(cfg: OpenClawConfig, agent: string, convId: string) {
+function transcriptScope(agent: string, convId: string) {
   const sessionKey = prefix(agent) + convId;
-  const entry = getSessionEntry({ agentId: agent, sessionKey });
-  if (!entry?.sessionId) return undefined;
-  const rev = revOf(agent, sessionKey, entry.sessionId);
+  const sessionId = getSessionEntry({ agentId: agent, sessionKey })?.sessionId;
+  return sessionId ? { agentId: agent, sessionKey, sessionId } : undefined;
+}
+
+function itemsOf(cfg: OpenClawConfig, agent: string, convId: string) {
+  const scope = transcriptScope(agent, convId);
+  if (!scope) return undefined;
+  const { sessionKey, sessionId } = scope;
+  const rev = revOf(agent, sessionKey, sessionId);
   let built = cache.get(sessionKey);
-  if (!built || built.sessionId !== entry.sessionId || built.rev !== rev) {
-    const events = loadTranscriptEventsSync({ agentId: agent, sessionId: entry.sessionId, sessionKey });
-    built = { sessionId: entry.sessionId, rev, ...buildItems(cfg, entry.sessionId, events) };
+  if (!built || built.sessionId !== sessionId || built.rev !== rev) {
+    const events = loadTranscriptEventsSync(scope);
+    built = { sessionId, rev, ...buildItems(cfg, sessionId, events) };
     cache.delete(sessionKey);
     cache.set(sessionKey, built);
     for (const key of cache.keys()) if (cache.size > CACHE_MAX) cache.delete(key);
   }
   return built;
+}
+
+export function findUserMessage(_cfg: OpenClawConfig, agent: string, convId: string, messageId: string): "found" | "missing" | "unreadable" {
+  try {
+    const scope = transcriptScope(agent, convId);
+    if (!scope) return "missing";
+    return loadTranscriptEventsSync(scope).some((raw) => {
+      const event = obj(raw);
+      const message = obj(event?.message);
+      return event?.type === "message" && message?.role === "user" && externalUser(message) && transportMessageId(message) === messageId;
+    }) ? "found" : "missing";
+  } catch {
+    return "unreadable";
+  }
 }
 
 export function itemText(cfg: OpenClawConfig, agent: string, convId: string, id: string): string | undefined {
@@ -350,6 +370,16 @@ function timeOf(event: Fields, message?: Fields): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function externalUser(message: Fields): boolean {
+  const provenance = obj(message.provenance)?.kind;
+  return typeof provenance !== "string" || provenance === "external_user";
+}
+
+function transportMessageId(message: Fields): string | undefined {
+  const sent = obj(obj(message.__openclaw)?.transport)?.messageId;
+  return isId(sent) ? sent : undefined;
+}
+
 function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): Built {
   const limit = resolveTextChunkLimit(cfg, CHANNEL_ID, undefined, { fallbackLimit: DEFAULT_CHUNK_LIMIT });
   const items: HistoryItem[] = [];
@@ -391,8 +421,7 @@ function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): 
     const ts = timeOf(event, message);
     if (message.role === "user") {
       closeRun();
-      const provenance = obj(message.provenance)?.kind;
-      if (typeof provenance === "string" && provenance !== "external_user") {
+      if (!externalUser(message)) {
         lastUser = undefined;
         return;
       }
@@ -400,8 +429,7 @@ function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): 
       const media = obj(message.__openclaw)?.media;
       const withMedia = Array.isArray(media) && media.length > 0;
       const text = withMedia ? textOf(message.content).replace(FILE_BLOCK, "").trim() : textOf(message.content);
-      const sent = obj(obj(obj(message.__openclaw)?.transport))?.messageId;
-      const id = isId(sent) ? sent : isId(eventId) ? eventId : derivedId(sessionId, eventId);
+      const id = transportMessageId(message) ?? (isId(eventId) ? eventId : derivedId(sessionId, eventId));
       lastUser = id;
       turn = { user: id, from: items.length };
       replies.set(turnCards(sessionId, id), []);

@@ -24,7 +24,7 @@ import {
   type Reaction,
   type PeerInfo,
 } from "./envelope.js";
-import { CLOSE, Hub, type Link, type Request } from "./hub.js";
+import { CLOSE, Hub, type HubOptions, type Link, type Request } from "./hub.js";
 import type { HostKeys } from "./keys.js";
 import { ActivityStore } from "./activitystore.js";
 import { ActivityWatch } from "./activitywatch.js";
@@ -50,6 +50,7 @@ export type RelayHostOptions = {
   signal: AbortSignal;
   log?: ChannelGatewayContext["log"];
   onStatus: (status: Status) => void;
+  claim?: HubOptions["claim"];
   onMessage: (message: Message) => void;
   liveTurn?: (convId: string) => Readonly<{ steps: number; startedAt: number }> | undefined;
   onReaction: (reaction: Reaction) => void;
@@ -307,6 +308,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
       const cursors = await listCursors();
       if (cursors.length) reply(cursors.map((data) => ({ kind: "read_cursor", data })));
     },
+    claim: opts.claim,
     onMessage: opts.onMessage,
     dispatch,
   });
