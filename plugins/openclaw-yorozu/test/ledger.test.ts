@@ -27,6 +27,36 @@ beforeEach(() => {
   host.calls = [];
 });
 
+test("an earlier boot's accepted entry runs again and is logged as a never-handed duplicate", async () => {
+  const m = message("m");
+  const { ledger: first } = fixture("A");
+  await first.load();
+  assert.equal(first.claim(m), "fresh");
+  await first.idle();
+
+  const { ledger: second, lines } = fixture("B", { now: () => day + 1 });
+  await second.load();
+  assert.equal(second.claim(m), "fresh");
+  await second.idle();
+  assert.deepEqual(await runs().lookup("m"), record("B", "accepted", day + 1));
+
+  assert.equal(second.claim(m), "duplicate");
+  assert.deepEqual(lines, [
+    "yorozu: duplicate message rerun m accepted boot earlier never handed",
+    "yorozu: duplicate message skipped m accepted boot same",
+  ]);
+});
+
+test("a same-boot accepted entry stays a duplicate", async () => {
+  const { ledger, lines } = fixture("A");
+  const m = message("m");
+  await ledger.load();
+  assert.equal(ledger.claim(m), "fresh");
+  assert.equal(ledger.claim(m), "duplicate");
+  assert.deepEqual(lines, ["yorozu: duplicate message skipped m accepted boot same"]);
+  await ledger.idle();
+});
+
 test("every write stamps its boot, including a parked rerun after a restart", async () => {
   const { ledger: first } = fixture("A");
   await first.load();

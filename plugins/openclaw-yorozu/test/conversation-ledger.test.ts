@@ -130,6 +130,39 @@ test("dispatch runs after the default deadline while the handed write is blocked
   assert.deepEqual(runCalls(), ["accepted", "dispatch"], "dispatch must run at the deadline");
 });
 
+test("two messages in one conversation dispatch in order while the handed write is slow", async (t) => {
+  const h = await open();
+  const m1 = message();
+  const m2 = { ...message(), convId: m1.convId };
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const release = Promise.withResolvers<void>();
+  t.after(() => release.resolve());
+  host.register = (_namespace: string, _key: string, value: RunRecord) => {
+    if (value.state === "handed") return release.promise;
+  };
+  const dispatched = () => host.calls.flatMap(({ kind, messageId }: { kind: string; messageId?: string }) =>
+    kind === "dispatch" ? [messageId] : []);
+
+  const first = h.run(m1);
+  await setImmediate();
+  t.mock.timers.tick(1);
+  const second = h.run(m2);
+  await setImmediate();
+
+  t.mock.timers.tick(1_998);
+  await setImmediate();
+  assert.deepEqual(dispatched(), [], "neither message dispatches before its deadline");
+  t.mock.timers.tick(1);
+  await setImmediate();
+  assert.deepEqual(dispatched(), [m1.messageId], "only the first deadline has passed");
+  t.mock.timers.tick(1);
+  await setImmediate();
+  assert.deepEqual(dispatched(), [m1.messageId, m2.messageId], "both dispatch in order while writes are blocked");
+
+  release.resolve();
+  assert.deepEqual(await Promise.all([first, second]), ["settled", "settled"]);
+});
+
 test("no deferral, steer, and an already-started follow-up settle", async () => {
   const h = await open();
   const states = [];
