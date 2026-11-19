@@ -10,6 +10,7 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 
 - Yorozu is an OpenClaw chat channel, a peer of Signal or Telegram: a TypeScript channel plugin inside the owner's OpenClaw Gateway talks over the end-to-end-encrypted relay to Yorozu client apps on iPhone, iPad and Mac. OpenClaw runs the agent, sessions, memory and cron; Yorozu only carries messages, with a Signal-like UX. (2026-10-15)
 - Yorozu runs nothing of its own: no routing, classification, workers, coding agents, memory, jobs, Hermes or cua. All of `Sources/ProjectXCore` engine code and the Mac host role go. (2026-10-15)
+  - Exception, test only: the Hermes backend test may run Hermes Agent as a second backend inside the plugin, behind `channels.yorozu.backends.hermes` (off by default) and opted into per conversation. OpenClaw stays the default throughout. The exception ends at the test's go/no-go or on 2026-12-31, whichever is first; with no go, the flag and its code are removed. (2026-11-19, Yumi)
 - No Mac host process. The OpenClaw channel plugin (`plugins/openclaw-yorozu`, TypeScript) holds the host keys and the relay connection itself. Fallback, only if the spike shows a plugin cannot: a Mac bridge app between Gateway and relay. (2026-10-15)
 - One multiplatform SwiftUI client app for iPhone, iPad and Mac. Clients only; no host role anywhere in Swift. (2026-10-15)
 - Wire protocol 3. Old wire types, store and engine are deleted, not flagged off. (2026-10-15)
