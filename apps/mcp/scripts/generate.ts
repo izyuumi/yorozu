@@ -149,12 +149,16 @@ function appSettings(): AppSetting[] {
   return [...found.values()].sort((a, b) => a.key.localeCompare(b.key));
 }
 
+// Test-only settings from docs/designs/hermes-backend.md, expiring by 2026-12-31.
+const TEST_ONLY_KEYS = new Set(["backends"]);
+
 function hostSettings(setup: Doc): HostSetting[] {
   const manifest = "plugins/openclaw-yorozu/openclaw.plugin.json";
   const schema = JSON.parse(read(manifest)).channelConfigs.yorozu.schema.properties as Record<string, { type: string }>;
-  const rows = [...sectionTree(setup, "2. Config").matchAll(/^\|\s*`channels\.yorozu\.(\w+)`\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*$/gm)];
+  const rows = [...sectionTree(setup, "2. Config").matchAll(/^\|\s*`channels\.yorozu\.(\w+)`\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*$/gm)]
+    .filter(([, key]) => !TEST_ONLY_KEYS.has(key));
   const documented = new Set(rows.map((r) => r[1]));
-  for (const key of Object.keys(schema)) if (!documented.has(key)) problems.push(`channels.yorozu.${key} (${manifest}) is missing from the Config table in docs/setup.md`);
+  for (const key of Object.keys(schema)) if (!TEST_ONLY_KEYS.has(key) && !documented.has(key)) problems.push(`channels.yorozu.${key} (${manifest}) is missing from the Config table in docs/setup.md`);
   return rows.map(([, key, defaultText, meaning]) => {
     const property = schema[key];
     if (!property) problems.push(`docs/setup.md documents channels.yorozu.${key}, which ${manifest} doesn't define`);

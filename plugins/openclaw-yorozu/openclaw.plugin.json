@@ -32,6 +32,18 @@
               "port": { "type": "integer", "minimum": 1024, "maximum": 65535, "default": 8738 },
               "bonjour": { "type": "boolean", "default": true }
             }
+          },
+          "backends": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Test only (Hermes backend test; ends at its go/no-go or on 2026-12-31).",
+            "properties": {
+              "hermes": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": { "enabled": { "type": "boolean", "default": false } }
+              }
+            }
           }
         }
       }
