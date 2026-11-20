@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.0
+
+### Features
+
+- **plugin:** durable run ledger with boot ids and restart counts (sync-restart 01) (#751)
+
 ## 0.16.2
 
 ### Fixes
