@@ -1,7 +1,6 @@
 import Testing
 @testable import YorozuWire
 
-/// When each leg starts and how long a lost session waits (#532 items 5 and 6).
 struct RacePolicyTests {
     typealias Start = RacePolicy.Start
     let direct = ["ws://127.0.0.1:8738", "ws://[::1]:8738"]

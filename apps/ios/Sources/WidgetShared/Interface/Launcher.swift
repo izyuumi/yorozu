@@ -1,6 +1,4 @@
-/// The Lock Screen launcher opens a fresh conversation with the keyboard up and reads no data.
 enum Launcher: CaseIterable, Sendable {
-    /// The composer focused.
     case ask
 
     var kind: String {

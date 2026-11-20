@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Keeps Windows-only pull requests out of the app's version and release notes.
-# Inputs (env): TITLE, BODY (may be empty), BASE (a commit). Checks BASE..HEAD of the current repo.
 set -euo pipefail
 
 TITLE=${TITLE-}
@@ -12,16 +10,10 @@ fi
 
 scope='^[A-Za-z]+\(windows\)'
 windows_file='^(apps/windows/|\.github/workflows/windows-installer\.yml$)'
-# The five Windows types, or any revert: a 'Revert "…"' subject matches neither the feat nor the
-# breaking pattern in scripts/version.sh and does not start with feat, fix or perf, so it moves
-# neither the minor or major version nor the release notes. The workflow skips Dependabot's pull
-# requests before this runs.
 allowed='^((chore|build|ci|test|docs)\(windows\): |Revert ")'
 breaking='^BREAKING[ -]CHANGE: '
 
-# Non-ASCII paths unquoted; a rename lists both sides.
 files=$(git -c core.quotePath=false diff --no-renames --name-only "$BASE" HEAD)
-# Captured first, so a git failure stops the script.
 subjects=$(git log --no-merges --format=%s "$BASE..HEAD")
 messages=$(git log --no-merges --format=%B "$BASE..HEAD")
 applies=false

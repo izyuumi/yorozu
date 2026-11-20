@@ -2,7 +2,6 @@ import Foundation
 import Testing
 import YorozuWire
 
-/// Leaving demo mode: a demo started at launch boots live like a normal launch; one entered from live restores it.
 @MainActor
 @Suite struct AppModelDemoTests {
     private let harness: ModelHarness
@@ -51,7 +50,6 @@ import YorozuWire
         model.enterDemo()
         #expect(model.isDemo)
         #expect(model.pairing == nil)
-        // A chat cached while in demo is not reloaded: leaving restores the saved live state.
         harness.seed([Conversation(id: WireEvent.newId(), createdAt: 2, updatedAt: 2)])
 
         model.exitDemo()

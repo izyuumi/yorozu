@@ -3,7 +3,6 @@ import { registerHooks } from "node:module";
 import { randomUUID } from "node:crypto";
 import { open, readFile, unlink } from "node:fs/promises";
 
-// Only a test double: stale-owner recovery is exercised with the SDK in integration tests.
 export async function testFileLock(file: string, _options: unknown) {
   const lockPath = `${file}.lock`;
   const bytes = JSON.stringify({ pid: process.pid, starttime: 1, instance: randomUUID() });

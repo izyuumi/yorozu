@@ -125,7 +125,6 @@ public struct Message: Codable, Equatable, Sendable {
     }
 }
 
-/// The message a `message`, `reply` or history item answers; capability `replies`.
 public struct ReplyTo: Codable, Equatable, Sendable {
     public static let capability = "replies"
     public static let maxText = 2000
@@ -139,7 +138,6 @@ public struct ReplyTo: Codable, Equatable, Sendable {
     }
 }
 
-/// One person's reaction on a message, both ways; capability `reactions`. The plugin sets `by`.
 public struct Reaction: Codable, Equatable, Sendable {
     public static let capability = "reactions"
     public static let maxEmoji = 32
@@ -158,7 +156,6 @@ public struct Reaction: Codable, Equatable, Sendable {
         self.remove = remove ? true : nil
     }
 
-    /// A `by` this client doesn't know reads as absent, so the reaction still decodes (and is ignored).
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         convId = try c.decode(String.self, forKey: .convId)
@@ -169,7 +166,6 @@ public struct Reaction: Codable, Equatable, Sendable {
     }
 }
 
-/// The reactions on a message, one emoji per person.
 public struct Reactions: Codable, Equatable, Sendable {
     public var user: String?
     public var agent: String?
@@ -220,7 +216,6 @@ public struct Reply: Codable, Equatable, Sendable {
         self.presentation = presentation
     }
 
-    /// A card this client can't read is dropped; the reply keeps the rest.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         convId = try c.decode(String.self, forKey: .convId)
@@ -233,8 +228,6 @@ public struct Reply: Codable, Equatable, Sendable {
     }
 }
 
-/// A read-only card next to the text of a `reply` or an agent history item; capability `presentation`.
-/// The reader is tolerant: a block of an unknown type, or one that fails a check, decodes as `.unknown` with its `alt`.
 public struct Presentation: Codable, Equatable, Sendable {
     public static let capability = "presentation"
     public static let maxBytes = 64 * 1024
@@ -258,7 +251,6 @@ public struct Presentation: Codable, Equatable, Sendable {
             }
         }
 
-        /// The cell as the plugin's `alt` writes it (JavaScript's `String(n)`): no locale grouping, every digit sent.
         public var text: String {
             switch self {
             case .string(let v): v
@@ -266,9 +258,7 @@ public struct Presentation: Codable, Equatable, Sendable {
             }
         }
 
-        /// ECMAScript Number::toString on Swift's shortest round-trip digits; `v` is finite (the table check).
         static func javaScript(_ v: Double) -> String {
-            // "2026.0", "1e-07", "1.2345678901234568e+20": digits and where the point goes (value = 0.digits × 10^point).
             let parts = v.magnitude.description.split(separator: "e")
             let mantissa = parts[0].split(separator: ".", omittingEmptySubsequences: false)
             var digits = Array(mantissa.joined())
@@ -305,7 +295,6 @@ public struct Presentation: Codable, Equatable, Sendable {
             self.rowHeaderColumnIndex = rowHeaderColumnIndex
         }
 
-        /// The row header column, when the index names one.
         public var rowHeader: Int? { rowHeaderColumnIndex.flatMap { headers.indices.contains($0) ? $0 : nil } }
 
         var valid: Bool {
@@ -352,7 +341,6 @@ public struct Presentation: Codable, Equatable, Sendable {
         case chart(Chart, alt: String?)
         case unknown(alt: String?)
 
-        /// The block as plain text: what draws when the block itself can't, and what assistive technology can read.
         public var alt: String? {
             switch self {
             case .text(let text), .context(let text): text
@@ -421,21 +409,16 @@ public struct Presentation: Codable, Equatable, Sendable {
         blocks = try c.decode([Block].self, forKey: .blocks)
     }
 
-    /// The blocks to draw: one that fell back to an empty or missing `alt` is skipped.
     public var drawn: [Block] {
         blocks.filter { if case .unknown(let alt) = $0 { alt?.isEmpty == false } else { true } }
     }
 
-    /// False when nothing but dividers is left to draw: the bubble shows the message's text.
     public var renders: Bool { drawn.contains { $0 != .divider } }
 
-    /// How many blocks fell back to their `alt` or were skipped.
     public var fellBack: Int { blocks.count { if case .unknown = $0 { true } else { false } } }
 
     public static let maxFallbackBytes = 32768
 
-    /// The text the plugin sends with a card-only reply (its `fallback()`): the title and each block's non-empty `alt`,
-    /// joined by blank lines, cut by Unicode scalar to `maxFallbackBytes` of UTF-8 with the marker last.
     public var fallbackText: String {
         let marker = "…(truncated)", limit = Self.maxFallbackBytes - marker.utf8.count
         var result = String.UnicodeScalarView(), size = 0
@@ -450,21 +433,16 @@ public struct Presentation: Codable, Equatable, Sendable {
         return String(result)
     }
 
-    /// True when `text` is only this card's fallback, so the card alone says it.
     public func isFallback(for text: String) -> Bool { !text.isEmpty && text == fallbackText }
 
     public enum Part: Equatable, Sendable { case text, card }
 
-    /// What an agent reply shows, in order: its text bubble, then its card. A card never hides text, except the
-    /// card's own fallback text (a card-only reply); a card that doesn't render leaves the text alone.
     public static func parts(text: String, card: Presentation?) -> [Part] {
         guard let card, card.renders else { return text.isEmpty ? [] : [.text] }
         return card.isFallback(for: text) || text.isEmpty ? [.card] : [.text, .card]
     }
 }
 
-/// A card over `Presentation.maxBytes`, or one that isn't a card, decodes as nil. The decoder hands over no bytes, so
-/// the size is the card's compact JSON, which is how the plugin sends it.
 private struct LossyPresentation: Decodable {
     let value: Presentation?
 
@@ -542,7 +520,6 @@ public struct Upload: Codable, Equatable, Sendable {
     public var index: Int
     public var count: Int
     public var data: String
-    /// The whole file's SHA-256, lowercase hex; sent only to a plugin listing `resume`.
     public var sha256: String?
 
     public init(attachmentId: String, name: String, mime: String, size: Int, index: Int, count: Int, data: String,
@@ -717,7 +694,6 @@ public struct HistoryItem: Codable, Equatable, Sendable {
         self.presentation = presentation
     }
 
-    /// A call whose status this client doesn't know is dropped, and so is a card it can't read; the item keeps the rest.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         kind = try c.decode(Kind.self, forKey: .kind)
@@ -800,26 +776,20 @@ public enum Invite {
     public static let capability = "invite"
 }
 
-/// #532: listed by the plugin only while its direct listener is listening; the probe and the race are in `Direct.swift`.
 public enum Direct {
     public static let capability = "direct"
 }
 
-/// #532: listed by the plugin only while its relay offers `pushProxy`; a client on the direct path then sends its APNs
-/// token in the session (`push_token`), and the plugin registers it at the relay for that device.
 public enum PushProxy {
     public static let capability = "push-proxy"
 }
 
-/// Client → plugin, only over a direct session and only to a plugin listing `push-proxy` (#532); `token` is hex.
 public struct PushToken: Codable, Equatable, Sendable {
     public var token: String
 
     public init(token: String) { self.token = token }
 }
 
-/// Plugin → client, only to a client listing `direct` (#532): where the plugin's direct listener can be reached, sent
-/// right after the client's `peer_info` and again whenever its addresses change. Invalid addresses are dropped.
 public struct DirectHints: Codable, Equatable, Sendable {
     public struct Lan: Codable, Equatable, Sendable {
         public var address: String
@@ -875,10 +845,6 @@ public struct PairInvite: Codable, Equatable, Sendable {
     public init() {}
 }
 
-/// The device's Live Activity, client → plugin; capability `liveActivityPush`, which the plugin lists only while its
-/// relay can push. `pushToken` (hex) is the activity's ActivityKit token, absent once the activity ended. `jobs` is the
-/// activity's whole content state with times in epoch milliseconds; `turns` maps the token of each running turn job to
-/// its conversation, so the plugin can count that turn's steps and end it while the app is suspended.
 public struct ActivityReport: Codable, Equatable, Sendable {
     public static let capability = "liveActivityPush"
 

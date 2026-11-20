@@ -3,7 +3,6 @@ import SwiftUI
 import UIKit
 #endif
 
-/// The accent and palette, shared by the app and the widgets.
 enum Accent: String, CaseIterable, Identifiable {
     case vermilion, pink, purple, indigo, blue, teal, green, graphite
 

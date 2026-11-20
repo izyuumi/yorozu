@@ -13,7 +13,6 @@ const prefix = "openclaw/plugin-sdk/";
 const skip = !sdk ? "set YOROZU_OPENCLAW_SDK to an installed OpenClaw package root"
   : !existsSync(path.join(sdk, "dist/plugin-sdk/websocket-runtime.js")) ? "YOROZU_OPENCLAW_SDK has no dist/plugin-sdk/websocket-runtime.js" : false;
 const source = new URL("../src/", import.meta.url);
-// Replace only relay routing: real handleMessage events feed the real ActivityWatch.
 const activityBridge = `data:text/javascript,${encodeURIComponent(`
   export { broadcast, notifyReply } from ${JSON.stringify(new URL("relay.ts", source).href)};
   let watch;
@@ -51,7 +50,6 @@ test("conversation owner registry (real SDK inbound lifecycle)", { skip }, async
     return f;
   }
 
-  // red: API-adapted
   await t.test("registration visible synchronously before uploadedFiles resolves", async (t) => {
     const f = await fixture(t);
     const lookup = deferred<unknown>();
@@ -63,7 +61,6 @@ test("conversation owner registry (real SDK inbound lifecycle)", { skip }, async
     assert.equal(f.conversation.liveTurn(CONV), undefined);
   });
 
-  // red: API-adapted
   await t.test("uploadedFiles early rejection removes owner", async (t) => {
     const f = await fixture(t);
     f.lookups.set("missing", async () => { throw new Error("synthetic attachment lookup failure"); });
@@ -119,7 +116,6 @@ test("conversation owner registry (real SDK inbound lifecycle)", { skip }, async
     ]);
   });
 
-  // red: API-adapted
   await t.test("tool starts increment unique owner steps; real reply removes owner", async (t) => {
     const f = await fixture(t);
     const run = f.launch(message(3));
@@ -135,7 +131,6 @@ test("conversation owner registry (real SDK inbound lifecycle)", { skip }, async
     assert.equal(f.conversation.liveTurn(CONV), undefined);
   });
 
-  // red: API-adapted
   await t.test("temporary error parks live; same message retry has exactly one owner entry", async (t) => {
     const f = await fixture(t);
     const first = f.launch(message(4));
@@ -146,12 +141,11 @@ test("conversation owner registry (real SDK inbound lifecycle)", { skip }, async
     assert.ok(f.stores.get("retry")?.has(message(4).messageId), "real park wrote retry record");
     const retry = f.launch(message(4), 1);
     await retry.entered.promise;
-    retry.exit.resolve(); // gone removes the only entry; duplicate registration would leak.
+    retry.exit.resolve();
     await retry.done;
     assert.equal(f.conversation.liveTurn(CONV), undefined);
   });
 
-  // red: API-adapted
   await t.test("overlapping messages expose newest steps then fall back to older run", async (t) => {
     const f = await fixture(t);
     const a = f.launch(message(5));

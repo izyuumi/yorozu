@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Tests version.sh against copies of the four version files and throwaway git repositories.
 set -euo pipefail
 
 ci="$(cd "$(dirname "$0")" && pwd)"
@@ -9,12 +8,10 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
-# The fixture sits at <repo>/apps/windows, so the stable and shared tests can make <repo> a git repository.
 repo="$tmp/repo"
 fx="$repo/apps/windows"
 files=(app/package.json app/src-tauri/tauri.conf.json Cargo.toml Cargo.lock)
 version=$(bash "$script" get)
-# The tests write 1.2.3 and 9.9.9; the real files must not already hold either.
 if [ "$version" = 1.2.3 ] || [ "$version" = 9.9.9 ]; then
   echo "version.test.sh: the real version is $version, which the tests use as a changed value; pick other test values" >&2
   exit 1
@@ -25,7 +22,6 @@ passed=0
 ok() { echo "ok - $1"; passed=$((passed + 1)); }
 fail() { echo "FAIL - $1" >&2; failed=$((failed + 1)); }
 
-# A fresh copy of the real files in $fx, the version.sh root.
 fixture() {
   rm -rf "$fx"
   local f
@@ -35,7 +31,6 @@ fixture() {
   done
 }
 
-# expect <exit code> <name> <args...>: runs version.sh on the fixture; output in $out, stderr in $err.
 expect() {
   local want=$1 name=$2 got=0
   shift 2
@@ -44,8 +39,6 @@ expect() {
   if [ "$got" -eq "$want" ]; then ok "$name"; else fail "$name: exit $got, wanted $want ($err)"; fi
 }
 
-# changed <file> [base]: sets $n to the lines changed in a fixture file against base (default the real one).
-# git diff --no-index exits 1 when the files differ; anything above 1 is a git error and stops the test.
 changed() {
   local d rc=0
   d=$(git diff --no-index --numstat "${2:-$real/$1}" "$fx/$1") || rc=$?
@@ -56,13 +49,10 @@ changed() {
   n=$(awk '{ s += $1 + $2 } END { print s + 0 }' <<<"$d")
 }
 
-# Awk programs that set the version of one place to v, as a hand edit would: the first version line of a
-# JSON file or Cargo.toml, and in Cargo.lock the line after each member named by the regex m.
 edit_first='!d && /^ *"?version"? *[:=] *"/ { sub(/"[0-9.]+"/, "\"" v "\""); d = 1 } { print }'
 edit_lock='$0 ~ "^name = \"(" m ")\"\r?$" { p = 1 } p && /^version = / { sub(/"[0-9.]+"/, "\"" v "\""); p = 0 } { print }'
 members='yorozu-core|yorozu-windows|yorozu-probe'
 
-# edit <file> <version> <source> [members regex]: writes source, so edited, to the fixture's file.
 edit() {
   if [ "$1" = Cargo.lock ]; then
     awk -v v="$2" -v m="${4:-$members}" "$edit_lock" "$3" >"$fx/$1"
@@ -79,7 +69,6 @@ expect 0 'set 1.2.3' set 1.2.3
 expect 0 'get after set' get
 [ "$out" = 1.2.3 ] && ok 'get prints 1.2.3' || fail "get printed '$out'"
 expect 0 'check 1.2.3' check 1.2.3
-# One version line in each JSON file and Cargo.toml, three in Cargo.lock; nothing else differs.
 for f in "${files[@]}"; do
   want=2
   [ "$f" = Cargo.lock ] && want=6
@@ -94,7 +83,6 @@ fixture
 expect 0 'check on the real files' check "$version"
 expect 1 'check with another version' check 9.9.9
 
-# One file edited by hand: get and check name it with its value.
 for f in "${files[@]}"; do
   fixture
   label=$f
@@ -123,7 +111,6 @@ expect 2 'set without a version' set
 expect 2 'unknown subcommand' bump
 expect 2 'no subcommand'
 
-# CRLF files: get reads them, and set swaps only the version values, keeping every CR.
 fixture
 mkdir -p "$tmp/want/app/src-tauri"
 for f in "${files[@]}"; do
@@ -141,7 +128,6 @@ for f in "${files[@]}"; do
     fail "set on CRLF: $f differs from the expectation"
 done
 
-# A version line in a section before [workspace.package] is not the workspace version.
 fixture
 awk '/^\[workspace\.package\]$/ { print "[workspace.metadata.x]"; print "version = \"7.7.7\""; print "" } { print }' \
   "$real/Cargo.toml" >"$tmp/Cargo.toml"
@@ -153,7 +139,6 @@ changed Cargo.toml "$tmp/Cargo.toml"
 [ "$n" -eq 2 ] && grep -qx 'version = "7.7.7"' "$fx/Cargo.toml" &&
   ok 'set rewrites only the [workspace.package] line' || fail "set changed $n lines of Cargo.toml: $(cat "$fx/Cargo.toml")"
 
-# set with a version line missing fails, names the file and writes nothing.
 fixture
 awk '!/^  "version": /' "$real/app/src-tauri/tauri.conf.json" >"$tmp/tauri.conf.json"
 cp "$tmp/tauri.conf.json" "$fx/app/src-tauri/tauri.conf.json"
@@ -166,7 +151,6 @@ done
 changed app/src-tauri/tauri.conf.json "$tmp/tauri.conf.json"
 [ "$n" -eq 0 ] && ok 'failed set leaves tauri.conf.json unchanged' || fail "failed set changed $n lines of tauri.conf.json"
 
-# stable and shared, in a throwaway repository around the fixture.
 fixture
 cd "$repo"
 git init -q

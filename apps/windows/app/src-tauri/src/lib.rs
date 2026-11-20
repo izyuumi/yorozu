@@ -1,5 +1,3 @@
-//! The Tauri shell of Yorozu for Windows: one window that renders the core's `Snapshot`.
-
 mod commands;
 mod smoke;
 
@@ -11,7 +9,6 @@ use yorozu_core::{
     store::Protector,
 };
 
-// The distributed client uses Windows DPAPI. Other targets compile for shell checks.
 #[cfg(not(windows))]
 struct UnsupportedProtector;
 #[cfg(not(windows))]
@@ -24,8 +21,6 @@ impl Protector for UnsupportedProtector {
     }
 }
 
-/// The web view may only navigate within the app's own origin (spec section 9).
-/// Windows serves it from `tauri.localhost`; macOS and Linux use the `tauri` scheme.
 pub fn allowed_navigation(url: &tauri::Url) -> bool {
     matches!(
         (url.scheme(), url.host_str(), url.port()),
@@ -37,10 +32,7 @@ pub fn run() {
     let smoke = smoke::from_args(std::env::args());
 
     let mut builder = tauri::Builder::default();
-    // Not under `--smoke`: the smoke run must not hand off to, or be blocked by, an
-    // installed instance that is already running.
     if smoke.is_none() {
-        // A second launch focuses the first one's window and exits.
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();

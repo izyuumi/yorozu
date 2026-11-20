@@ -1,4 +1,3 @@
-// The voice sources' references into Settings and Diagnostics, which the tests leave out.
 import SwiftUI
 import VoiceText
 

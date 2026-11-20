@@ -2,7 +2,6 @@ import Charts
 import SwiftUI
 import YorozuWire
 
-/// The card's own geometry; its width always comes from the row.
 private enum CardMetrics {
     static let cellInset: CGFloat = 10
     static let cellTight: CGFloat = 5
@@ -11,8 +10,6 @@ private enum CardMetrics {
     static let areaOpacity: Double = 0.5
 }
 
-/// A reply's read-only card (capability `presentation`), after its text bubble (alone for a card-only reply): title and tone, then each
-/// block. A block the reader couldn't check draws as its `alt`.
 struct PresentationView: View {
     let card: Presentation
 
@@ -64,7 +61,6 @@ struct PresentationView: View {
     }
 }
 
-/// A tone's symbol, colour and spoken name; neutral has none.
 private struct ToneStyle {
     let symbol: String
     let color: Color
@@ -88,8 +84,6 @@ private struct ToneStyle {
     }
 }
 
-/// A grid that scrolls sideways when it is wider than the card. VoiceOver reads the caption, the header row and
-/// the row header column as headers, and each other cell with its row header and column header.
 private struct CardTable: View {
     let table: Presentation.Table
 
@@ -138,7 +132,6 @@ private struct CardTable: View {
         table.rows[row][column].text
     }
 
-    /// "Traveler A, Paid, 120": the cell with its row header and column header.
     private func spoken(_ row: Int, _ column: Int) -> String {
         ((table.rowHeader.map { [text(row, $0)] } ?? []) + [table.headers[column], text(row, column)]).joined(separator: ", ")
     }
@@ -151,8 +144,6 @@ private struct CardTable: View {
     }
 }
 
-/// A Swift Charts plot. VoiceOver reads the block's `alt` (its title and data as text) and offers the data as an
-/// audio graph through the chart descriptor.
 private struct CardChart: View, AXChartDescriptorRepresentable {
     let chart: Presentation.Chart
     let alt: String?
@@ -170,7 +161,6 @@ private struct CardChart: View, AXChartDescriptorRepresentable {
     private var xTitle: String { chart.xLabel ?? String(localized: "Category") }
     private var yTitle: String { chart.yLabel ?? String(localized: "Value") }
 
-    /// The decoder checked that every series has one value per category.
     private var points: [Point] {
         series.enumerated().flatMap { s, entry in
             categories.indices.map { Point(id: s * categories.count + $0, category: categories[$0], series: entry.name, value: entry.values[$0]) }

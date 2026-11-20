@@ -39,7 +39,6 @@ fn published_swift_plugin_vector() {
     }
     assert!(client.finish(&damaged).is_none());
     let mut session = client.finish(&response).unwrap();
-    // Golden boxes produced by the plugin NoiseIK/Session using the same vector inputs.
     assert_eq!(
         session.seal(b"client box").unwrap().encode(),
         "E6wBsiCehjVPAAAAAAAAAABz_AXoJMddrjqiewKKsMu__fN55zoRz1escg"

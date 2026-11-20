@@ -1,7 +1,6 @@
 import Foundation
 import YorozuWire
 
-/// The schedules the plugin's `describeSchedule` names in words, so the app can name them in its own language.
 struct CronSchedule: Equatable, Sendable {
     enum Unit: Equatable, Sendable { case day, hour, minute, second }
 
@@ -11,7 +10,6 @@ struct CronSchedule: Equatable, Sendable {
         case hourly(minute: Int)
         case daily(hour: Int, minute: Int)
         case weekdays(hour: Int, minute: Int)
-        /// `weekday` 0 is Sunday.
         case weekly(weekday: Int, hour: Int, minute: Int)
         case monthly(day: Int, hour: Int, minute: Int)
         case onExit
@@ -103,7 +101,6 @@ struct CronSchedule: Equatable, Sendable {
         }
     }
 
-    /// The hour belongs to the schedule's own time zone, so it is formatted in GMT to keep the device's zone out of it.
     private static func time(_ hour: Int, _ minute: Int) -> String {
         var style = Date.FormatStyle(date: .omitted, time: .shortened)
         style.timeZone = .gmt

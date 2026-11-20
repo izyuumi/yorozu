@@ -5,7 +5,6 @@ import YorozuWire
 import AppKit
 #endif
 
-/// The picker's entries: the quick emoji, the current one if it is not among them, and More… for the system picker.
 struct ReactionChoices: View {
     static let quick = ["👍", "❤️", "😂", "😮", "😢", "🙏"]
 
@@ -29,7 +28,6 @@ struct ReactionChoices: View {
     }
 }
 
-/// The reactions on a bubble; yours is a button that takes it back.
 struct ReactionChips: View {
     let reactions: Reactions
     let onReact: ((String) -> Void)?
@@ -58,7 +56,6 @@ struct ReactionChips: View {
     }
 }
 
-/// Any emoji, from the system's own picker: the emoji keyboard on iPhone and iPad, the Character Viewer on the Mac.
 struct EmojiSheet: View {
     let onPick: (String) -> Void
     @State private var text = ""
@@ -111,7 +108,6 @@ private struct EmojiField: View {
 private struct EmojiField: UIViewRepresentable {
     @Binding var text: String
 
-    /// Opens on the emoji keyboard when the user has it enabled.
     final class Field: UITextField {
         override var textInputMode: UITextInputMode? {
             UITextInputMode.activeInputModes.first { $0.primaryLanguage == "emoji" } ?? super.textInputMode

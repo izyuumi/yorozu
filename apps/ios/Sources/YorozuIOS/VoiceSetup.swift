@@ -3,9 +3,6 @@ import Observation
 import SpeechEngines
 import VoiceText
 
-/// Which speech engine voice input uses, whether it is ready, and loading it. The engine is picked in
-/// Settings › Voice Input › Model; until then Apple's is the default where it runs, and an owner who already
-/// downloaded LFM3-Audio keeps it.
 @MainActor @Observable
 final class VoiceSetup {
     static let shared = VoiceSetup()
@@ -18,7 +15,6 @@ final class VoiceSetup {
         Task { await apple.refresh() }
     }
 
-    /// Whether this build includes the engine: simulator builds leave out llama.cpp (LFM3-Audio).
     static func compiled(_ engine: VoiceEngineID) -> Bool {
         switch engine {
         case .lfm: Transcriber.available
@@ -26,7 +22,6 @@ final class VoiceSetup {
         }
     }
 
-    /// Why this device can't run the engine; nil when it can.
     static func unsupportedReason(_ engine: VoiceEngineID) -> String? {
         if engine == .apple {
             guard #available(iOS 26, macOS 26, *) else {
@@ -50,10 +45,8 @@ final class VoiceSetup {
 
     static func usable(_ engine: VoiceEngineID) -> Bool { compiled(engine) && unsupportedReason(engine) == nil }
 
-    /// The engines Settings lists: those in this build.
     static var listed: [VoiceEngineID] { VoiceEngineID.allCases.filter(compiled) }
 
-    /// Whether this device can use voice input at all.
     static var supported: Bool {
         #if DEBUG
         if PreviewScene.transcript != nil { return true }
@@ -63,7 +56,6 @@ final class VoiceSetup {
 
     var model: VoiceModel? { engine.flatMap { VoiceModel.all[$0] } }
 
-    /// Whether the chosen engine can transcribe now.
     var ready: Bool {
         #if DEBUG
         if PreviewScene.transcript != nil { return true }
@@ -72,8 +64,6 @@ final class VoiceSetup {
         return engine == .apple ? apple.state == .ready : model?.state == .ready
     }
 
-    /// Picks again, after the owner chose an engine (Settings › Voice Input › Model stores it) or a download
-    /// finished; a language the engine lacks becomes Automatic.
     func refresh() {
         engine = resolve()
         let defaults = UserDefaults.standard
@@ -84,7 +74,6 @@ final class VoiceSetup {
         Task { await apple.refresh() }
     }
 
-    /// Gets the chosen engine ready: downloads its model, or has the system install Apple's language.
     func prepare(cellular: Bool = false) {
         if engine == .apple {
             Task {
@@ -98,7 +87,6 @@ final class VoiceSetup {
 
     func pause() { model?.pause() }
 
-    /// Loads the chosen engine off the main actor; voice input starts this while the owner speaks.
     func load() -> Task<any SpeechEngine, Error> {
         let language = VoiceLanguage(rawValue: UserDefaults.standard.string(forKey: VoiceModel.languageKey) ?? "") ?? .automatic
         switch engine {
@@ -129,18 +117,15 @@ final class VoiceSetup {
         let usable = VoiceEngineID.allCases.filter(Self.usable)
         let downloaded = Set(usable.filter { VoiceModel.all[$0]?.state == .ready })
         let choice = VoiceEngineChoice.resolve(stored: stored, usable: usable, downloaded: downloaded)
-        // An owner from before engines could be picked stays on LFM3-Audio even once Apple's is installed.
         if stored == nil, choice == .lfm { UserDefaults.standard.set(VoiceEngineID.lfm.rawValue, forKey: VoiceModel.engineKey) }
         return choice
     }
 }
 
-/// Apple's speech model for the chosen language, which the system downloads and keeps.
 @MainActor @Observable
 final class AppleSpeechAssets {
     enum State: Equatable {
         case unknown
-        /// Apple Speech has no model for the language.
         case unsupported
         case absent
         case downloading(Double)
@@ -149,9 +134,7 @@ final class AppleSpeechAssets {
     }
 
     private(set) var state = State.unknown
-    /// The languages Apple Speech transcribes, as ISO 639-1 codes; empty until known.
     private(set) var languages: Set<String> = []
-    /// The language Automatic stands for: the device's, as the system names it.
     private(set) var automaticName = ""
 
     func refresh() async {

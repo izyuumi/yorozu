@@ -54,8 +54,6 @@ extension AppModel {
     }
 
     #if os(macOS)
-    /// "Pair with the Gateway on this Mac" (#532 `local-pair`): finds the plugin on loopback, reads its local pairing file
-    /// and asks "Pair with this host?" as for a scanned code. The error to show, or nil.
     func pairWithThisMac() async -> String? {
         guard !isDemo else { return String(localized: "Exit demo mode before pairing with a host.") }
         let found: LocalPairing.Found

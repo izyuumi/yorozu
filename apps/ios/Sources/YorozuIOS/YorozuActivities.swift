@@ -5,24 +5,6 @@ import UIKit
 import YorozuWire
 import os
 
-/// The app's one Live Activity (`YorozuActivityAttributes`) and its jobs, from any source:
-///
-/// - Turns follow `model.awaitingReply` with the tool step count. In the app the conversation shows a turn,
-///   so turns alone start the activity only at `leaving()`, and `returned()` ends it.
-/// - Recording and transcription (voice input, later): `upsert(YorozuJob(kind: .recording, startedAt:),
-///   convId:)` when recording starts, `upsert` the same token as `.transcribing` when it stops, then
-///   `finish(id:state: .done, alert: .transcriptReady)` with the transcript, `.recordingCap` when the length
-///   limit stopped it, or `finish(id:state: .failed, alert: .localFailure)`. They start the activity in the
-///   app and keep it on return; background audio keeps the app, and so the updates, alive while recording.
-/// - The notification service marks turns done or failed and adds approvals (`YorozuJobs.pushed`).
-///
-/// ActivityKit starts an activity only while the app is in front; until then the jobs wait in memory.
-/// Finished jobs linger `YorozuJobs.linger` as tap targets, then go; no jobs, no activity.
-///
-/// With a host listing `liveActivityPush`, the activity takes an ActivityKit push token, and the app reports it with
-/// every change of its jobs (and each turn's conversation) over the encrypted session (`ActivityReport`). The host then
-/// pushes counts-only states through the relay while the app is suspended, and forgets the token when told it ended.
-/// With any other host the activity has no push token, as before.
 @MainActor
 final class YorozuActivities {
     static var enabled: Bool { LiveActivitySetting.enabled(.standard) }
@@ -39,21 +21,15 @@ final class YorozuActivities {
 
     private let model: AppModel
     private var activity: Activity<YorozuActivityAttributes>?
-    /// The jobs while no activity runs; with one, its content state is the truth (the notification service changes it too).
     private var jobs: [YorozuJob] = []
-    /// Running turns by conversation, as last posted.
     private var turns: [String: YorozuJob] = [:]
     private var watcher: Task<Void, Never>?
     private var expiry: Task<Void, Never>?
     private var queue: Task<Void, Never>?
     private var leavingNow = false
-    /// The activity's push token, hex, once ActivityKit handed it over.
     private var pushToken: String?
     private var tokenWatch: Task<Void, Never>?
-    /// Requested with a push token that has not reached the host yet.
     private var awaitingToken = false
-    /// The last report the host got, and whether it may hold a token of ours to forget (at launch: maybe one from
-    /// before, whose activity `start` just ended).
     private var reported: ActivityReport?
     private var hostKnows = true
     private var sessionsSeen = 0
@@ -69,9 +45,6 @@ final class YorozuActivities {
     }
     private var inFront: Bool { UIApplication.shared.applicationState == .active }
 
-    // MARK: Job sources
-
-    /// Adds or replaces a job; `convId` is where its row opens, the title is stored only while previews are on.
     func upsert(_ job: YorozuJob, convId: String? = nil, title: String? = nil) {
         guard available else { return }
         apply(.upsert(job), label: ActivityLabels.Entry(convId: convId, kind: job.kind, title: title))
@@ -83,9 +56,6 @@ final class YorozuActivities {
 
     func remove(id token: String) { apply(.remove(token: token)) }
 
-    // MARK: App lifecycle
-
-    /// The app is leaving the foreground, the last moment ActivityKit lets it start an activity.
     func leaving() {
         syncTurns()
         leavingNow = true
@@ -93,7 +63,6 @@ final class YorozuActivities {
         enqueue { [weak self] in self?.leavingNow = false }
     }
 
-    /// Back in the app: the conversation shows turns and approvals, so only recording and transcription stay.
     func returned() {
         enqueue { [weak self] in
             guard let self else { return }
@@ -107,7 +76,6 @@ final class YorozuActivities {
         }
     }
 
-    /// Before the app suspends: the push token, when ActivityKit hands it over in time, reaches the host.
     func waitUntilReported(limit: Duration) async {
         let deadline = ContinuousClock.now + limit
         await queue?.value
@@ -116,9 +84,6 @@ final class YorozuActivities {
         }
     }
 
-    /// The switch was turned off: the activity ends now, its jobs go and the host is told to forget the push token.
-    /// `turns` is cleared here, not in the queue, because `syncTurns` writes it outside the queue: a turn tracked
-    /// after the switch came back on must not be wiped by a `disable` still waiting in the queue.
     func disable() {
         turns = [:]
         enqueue { [weak self] in
@@ -133,10 +98,7 @@ final class YorozuActivities {
         }
     }
 
-    /// Previews were turned off: drop the stored titles.
     func previewsChanged() { ActivityLabelsStore.update { _ in } }
-
-    // MARK: Turns
 
     private func watch() async {
         while !Task.isCancelled {
@@ -181,8 +143,6 @@ final class YorozuActivities {
 
     private enum Outcome { case done, failed(JobEvent.Alert?) }
 
-    /// How a turn ended: a reply, an error (the push alerts), a send the relay refused (only this device
-    /// knows), or nothing within the window.
     private func outcome(_ convId: String) -> Outcome? {
         guard let last = model.conversations[convId]?.items.last(where: { $0.kind != .tools }) else { return nil }
         switch last.kind {
@@ -193,21 +153,17 @@ final class YorozuActivities {
         }
     }
 
-    /// Tool calls since the owner's last message; a count only, never their names or arguments.
     private func steps(_ convId: String) -> Int {
         let items = model.conversations[convId]?.items ?? []
         let start = items.lastIndex { $0.kind == .user }.map { $0 + 1 } ?? items.startIndex
         return items[start...].filter { $0.kind == .tools }.reduce(0) { $0 + ($1.tools?.count ?? 0) }
     }
 
-    // MARK: The activity
-
     private func enqueue(_ work: @escaping @MainActor () async -> Void) {
         let previous = queue
         queue = Task { await previous?.value; await work() }
     }
 
-    /// The jobs now: the activity's, which the notification service may have changed, else the ones in memory.
     private func current() async -> [YorozuJob] {
         if let activity, activity.activityState == .ended || activity.activityState == .dismissed {
             self.activity = nil
@@ -230,7 +186,6 @@ final class YorozuActivities {
             jobs = next
             scheduleExpiry(next)
             if let activity {
-                // Leaving with nothing running still ends it, so the system dismisses it after the linger.
                 guard next != before || alert != nil || leavingNow else { return }
                 if !(await YorozuActivityAttributes.show(next, on: activity, alert: alert.map(Self.configuration), endWhenIdle: !inFront)) {
                     self.activity = nil
@@ -251,14 +206,10 @@ final class YorozuActivities {
         }
     }
 
-    // MARK: Relay pushes
-
-    /// Running turns by job token, for the host to map its turn events onto rows.
     private var turnTokens: [String: String] {
         Dictionary(turns.map { ($0.value.token, $0.key) }, uniquingKeysWith: { first, _ in first })
     }
 
-    /// The activity's tokens as ActivityKit hands them over (the current one first, then any rotation).
     private func watchToken(_ activity: Activity<YorozuActivityAttributes>) {
         tokenWatch?.cancel()
         tokenWatch = Task { [weak self] in
@@ -273,7 +224,6 @@ final class YorozuActivities {
         }
     }
 
-    /// Sends the host the jobs on screen with the push token, when it differs from the last report.
     private func report(_ jobs: [YorozuJob]) async {
         guard let pushToken, activity != nil else { return }
         let report = ActivityReport(pushToken: pushToken, activity: jobs, turns: turnTokens)
@@ -283,7 +233,6 @@ final class YorozuActivities {
         awaitingToken = false
     }
 
-    /// A new session: the host may have restarted and forgotten the activity, or still hold an ended one.
     private func reportAgain() {
         enqueue { [weak self] in
             guard let self else { return }
@@ -294,7 +243,6 @@ final class YorozuActivities {
         }
     }
 
-    /// The activity ended here: the host stops pushing and the relay forgets the token.
     private func dropToken() async {
         tokenWatch?.cancel()
         tokenWatch = nil
@@ -310,7 +258,6 @@ final class YorozuActivities {
         ActivityLabelsStore.update { $0.prune(keeping: tokens) }
     }
 
-    /// Clears a finished row once it lingered, while the app still runs; `staleDate` covers the rest.
     private func scheduleExpiry(_ jobs: [YorozuJob]) {
         expiry?.cancel()
         guard let at = YorozuJobs.nextExpiry(jobs) else { return }
@@ -333,7 +280,6 @@ final class YorozuActivities {
     }
 }
 
-/// A change or the periodic check, whichever comes first, wakes the watcher once.
 private final class ResumeOnce: Sendable {
     private let continuation: OSAllocatedUnfairLock<CheckedContinuation<Void, Never>?>
     init(_ continuation: CheckedContinuation<Void, Never>) { self.continuation = OSAllocatedUnfairLock(initialState: continuation) }

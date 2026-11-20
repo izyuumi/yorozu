@@ -5,12 +5,6 @@ import { Phone } from './kit/phone'
 import { Thread, Bubble } from './kit/messages'
 import { Collapse } from './kit/motion/Collapse'
 
-// A Yorozu conversation on iPhone, as the app draws it: vermilion bubbles for
-// you, gray cards for the agent, a glass composer. Beats: a question is typed
-// and sent; the read mark lands; the agent runs two tools on the computer; the
-// typing capsule grows into its answer. Plays once in view; the poster is the
-// answered thread.
-
 export type HeroStrings = {
   label: string
   title: string
@@ -56,7 +50,6 @@ function usePrefersDark() {
   return dark
 }
 
-// Two overlapping filled checks: read on the computer
 function ReadMark({ show }: { show: boolean }) {
   const check = 'M8 1.25a6.75 6.75 0 1 1 0 13.5 6.75 6.75 0 0 1 0-13.5Zm3 4.3-.95-.8-3.3 3.95-1.85-1.8-.85.9 2.8 2.75Z'
   return (

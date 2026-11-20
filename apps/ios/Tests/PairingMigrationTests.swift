@@ -54,7 +54,6 @@ struct PairingMigrationTests {
         #expect(PairingMigration.run(storage: storage, state: state) == .migrated)
         #expect(storage.items["pairing-v3"] == nil)
         #expect(!state.legacyFallback)
-        // Even if a legacy item reappears, completed migration cannot read it this process.
         storage.items["pairing"] = nil
         storage.items["pairing-v3"] = old
         #expect(try Pairing.load(storage: storage, state: state) == nil)

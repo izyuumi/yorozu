@@ -9,7 +9,6 @@ test("big boxes preserve bytes and UTF-16 send cap refuses before host", async t
   const host=await fakeHost(); t.after(()=>host.stop());
   const dir=await mkdtemp(join(tmpdir(),"yorozu-big-"));t.after(()=>rm(dir,{recursive:true,force:true}));
   const p=probe(dir);t.after(()=>p.quit());p.send({cmd:"pair",link:await host.link()});await p.wait(e=>e.ev==="conn" && e.state==="Open");
-  // Open fires on the host's peer_info; the Hub broadcasts to us only after handling ours, which the conv_list answer proves.
   await p.wait(e=>e.ev==="list");
   const convId=randomUUID();
   for (const length of [204_800,759_900]) {
@@ -23,7 +22,6 @@ test("big boxes preserve bytes and UTF-16 send cap refuses before host", async t
   assert.equal(host.messages.at(-1)?.text,text);
   const count=host.messages.length;
   p.send({cmd:"send",convId,text:text+"語"});await p.wait(e=>e.ev==="refused" && e.reason==="too_long");
-  // Following valid send fences the rejected command at the host boundary.
   const from=p.events.length;p.send({cmd:"send",convId,text:"fence"});await p.wait(e=>e.ev==="mark" && e.mark==="read",from);
   assert.equal(host.messages.length,count+1);assert.equal(host.messages.at(-1)?.text,"fence");
 });

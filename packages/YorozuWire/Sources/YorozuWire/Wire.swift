@@ -1,7 +1,6 @@
 import CryptoKit
 import Foundation
 
-/// Capability flag for #532 wire migration step 2: send unversioned frames to hosts listing it.
 public enum UnversionedWire {
     public static let capability = "unversioned-wire"
 }

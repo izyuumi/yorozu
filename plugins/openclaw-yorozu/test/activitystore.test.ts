@@ -27,7 +27,6 @@ test("versioned active, pending and redacted terminal records round-trip private
   const records = [record, { ...pending, device: "deviceSynthetic2" }, { device: "deviceSynthetic3", activityId: record.activityId, requestedAtMs: record.requestedAtMs, kLast: record.kLast, terminal: true }];
   await store.acquire();
   await store.load();
-  // LA-2h generation ordering: v3 persists the immutable generation on active, pending and terminal records.
   await assert.doesNotReject(store.save(records), "G7 v3 records must save and round-trip");
   assert.deepEqual(JSON.parse(await readFile(file, "utf8")), { v: 3, records });
   assert.deepEqual(await store.load(), { ok: true, records });
@@ -110,7 +109,6 @@ test("release delegates ownership checks to the lock handle", async (t) => {
   assert.equal(await readFile(`${file}.lock`, "utf8"), replacement);
 });
 
-// G7 tests both load and save: rejecting v3 solely by version cannot satisfy the save boundary.
 for (const [name, requestedAtMs] of [
   ["missing", undefined], ["null", null], ["seconds", 1_800_000_000],
   ["below minimum", 99_999_999_999], ["fractional", 1_800_000_000_000.5],
@@ -122,7 +120,6 @@ for (const [name, requestedAtMs] of [
       const invalid = terminal
         ? { device: record.device, activityId: record.activityId, requestedAtMs, kLast: record.kLast, terminal: true }
         : { ...record, requestedAtMs };
-      // JSON omits undefined, exercising genuinely missing fields on disk and in save.
       const row = JSON.parse(JSON.stringify(invalid));
       await store.acquire();
       await store.load();

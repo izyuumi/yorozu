@@ -125,7 +125,6 @@ async function relayQuiet(h: ReturnType<typeof host>) {
   assert.fail("relay did not become quiet");
 }
 
-/** A device's init frame, signed, with a hello proof over `secret` when given. */
 function init(h: ReturnType<typeof host>, secret?: string, device = { signing: ed25519Keypair(), static: x25519Keypair() }, ts = Date.now()) {
   const proof = secret && helloProof(secret, b64u(device.static.publicKey), b64u(device.signing.publicKey));
   const ik = new NoiseIK("initiator", device.static, h.keys.static.publicKey, prologue(h.keys.room, device.signing.publicKey));
@@ -234,7 +233,6 @@ test("a legacy staticKeyOf returning the key or undefined still allowlists a mat
   assert.deepEqual(h.refused, [b64u(stranger.device.signing.publicKey)]);
 });
 
-// Preventive: no failing baseline. A stale init is dropped before the allowlist check, so it cannot revoke.
 test("a stale init gets no answer and revokes nobody, paired device or stranger, on either path", async () => {
   const h = host(true);
   const paired = { signing: ed25519Keypair(), static: x25519Keypair() };

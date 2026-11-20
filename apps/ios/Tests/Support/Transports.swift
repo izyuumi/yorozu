@@ -12,8 +12,6 @@ actor IdleTransport: ClientTransport {
     func raceAgain() {}
 }
 
-/// Yields what a test scripts; updates yielded before `updates()` is subscribed wait for it.
-/// Records every event sent and answers each send with `sendResult`, false until a test sets it.
 actor ScriptedTransport: ClientTransport {
     private var continuation: AsyncStream<RelayConnection.Update>.Continuation?
     private var waiting: [RelayConnection.Update] = []
@@ -38,7 +36,6 @@ actor ScriptedTransport: ClientTransport {
     func start() {}
     func reconnect() {}
 
-    /// Counts the stop and reports `.offline`, like `RacingConnection.stop()`.
     func stop() {
         stops += 1
         emit(.state(.offline))

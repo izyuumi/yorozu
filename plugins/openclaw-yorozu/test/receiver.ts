@@ -1,6 +1,3 @@
-// The plugin's upload receiver over stdio for ResumeBenchTests: one JSON event per line in, answers out.
-// Usage: node receiver.ts <spoolDir>; stored files go to <spoolDir>/../stored/<attachmentId>.
-// Without an argument (as `node --test` loads it) it does nothing.
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";

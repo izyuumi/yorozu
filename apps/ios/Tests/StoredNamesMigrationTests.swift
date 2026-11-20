@@ -1,7 +1,6 @@
 import Foundation
 import Testing
 
-/// A throwaway defaults suite whose writes stay in its volatile domain, never in ~/Library.
 private final class VolatileDefaults: UserDefaults {
     let suite = "stored-names-tests-\(UUID().uuidString)"
     init() { super.init(suiteName: suite)! }
@@ -101,7 +100,6 @@ struct StoredNamesMigrationTests {
         #expect(!fixture.exists(".\(name.rawValue)-v3-staging"))
         #expect(fixture.contents("\(name.rawValue)/nested/file") == "complete contents")
         #expect(store.read("nested/file", in: name) == Data("complete contents".utf8))
-        // A fresh resolver sees the recorded completion too.
         #expect(fixture.store.isComplete(name))
         #expect(fixture.store.legacyDirectory(name) == nil)
     }
@@ -238,7 +236,7 @@ struct StoredNamesMigrationTests {
         var current = legacy
         current.title = "current"
         cache.save(current)
-        #expect(cache.loadAll() == [current]) // loadAll drains the serial write queue.
+        #expect(cache.loadAll() == [current])
         #expect(fixture.contents("Conversations-v3/\(id).json")?.contains("legacy") == true)
         cache.remove(id)
         #expect(cache.loadAll().isEmpty)

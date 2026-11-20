@@ -4,9 +4,6 @@ import WidgetKit
 #endif
 
 extension WidgetSnapshot {
-    /// The app's view of the conversations: titles, pins and `Conversation.unreadCount`, and the latest
-    /// reply's first line only when `previews` is on. Archived conversations stay out of the rows but
-    /// count toward the total, as on the app badge.
     init(conversations: [Conversation], previews: Bool, accent: String?, live: Bool, seen: [String] = []) {
         let shown = conversations.filter { $0.archived != true }
         let rows = shown.map { conversation in
@@ -32,9 +29,6 @@ extension WidgetSnapshot {
 }
 
 enum WidgetPublisher {
-    /// Writes the snapshot when its bytes changed (the notification service may have counted a reply the
-    /// app has since loaded, so the file, not a copy in memory, is the comparison) and asks WidgetKit to
-    /// redraw. iPhone and iPad only: the Mac app is signed without the App Group.
     static func publish(_ snapshot: WidgetSnapshot) {
         #if os(iOS)
         var stored = snapshot

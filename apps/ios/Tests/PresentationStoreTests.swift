@@ -2,7 +2,6 @@ import Foundation
 import Testing
 import YorozuWire
 
-/// A reply's card in the client's model: taken from a history item, kept across a merge, stored with the conversation.
 @Suite struct PresentationStoreTests {
     private let id = "00000000-0000-4000-8000-000000003001"
     private let card = Presentation(title: "Trip costs", tone: .info, blocks: [
@@ -23,7 +22,6 @@ import YorozuWire
         #expect(history(nil).presentation == nil)
     }
 
-    /// The plugin no longer stores the card (evicted, or the conversation was deleted there): the local one stays.
     @Test func mergeKeepsALocalCardWhenHistoryHasNone() {
         var conversation = Conversation(id: WireEvent.newId(), createdAt: 1, updatedAt: 1)
         conversation.items = [ChatItem(id: id, kind: .agent, text: "Here are the costs.", ts: 20, presentation: card)]
@@ -39,7 +37,6 @@ import YorozuWire
         let newer = Presentation(blocks: [.text("Newer.")])
         conversation.merge([history(newer)])
         #expect(conversation.items.first?.presentation == newer)
-        // A live reply without a card gains the one its history item has.
         conversation.items = [ChatItem(id: id, kind: .agent, text: "Here are the costs.", ts: 20)]
         conversation.merge([history(card)])
         #expect(conversation.items.first?.presentation == card)
@@ -51,7 +48,6 @@ import YorozuWire
         #expect(try JSONDecoder().decode(Conversation.self, from: JSONEncoder().encode(conversation)) == conversation)
     }
 
-    /// What the reply row shows, in order: a card never hides the reply's text, except a card-only reply's fallback.
     @Test func rowShowsTextThenCard() {
         let item = history(card)
         #expect(Presentation.parts(text: item.text, card: item.presentation) == [.text, .card])
@@ -63,7 +59,6 @@ import YorozuWire
         #expect(Presentation.parts(text: item.text, card: nil) == [.text])
     }
 
-    /// A conversation stored before cards existed.
     @Test func storedItemWithoutTheFieldDecodes() throws {
         let json = #"{"id":"\#(id)","kind":"agent","text":"Here are the costs.","ts":20,"seq":2}"#
         let item = try JSONDecoder().decode(ChatItem.self, from: Data(json.utf8))

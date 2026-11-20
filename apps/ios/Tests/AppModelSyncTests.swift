@@ -48,13 +48,11 @@ import YorozuWire
         model.open(ids[1])
         try #require(await sent(requests[0], over: transport))
 
-        // A host error uses the same fail-then-settle path as the 30-second timeout.
         await transport.emit(.event(.error(ErrorInfo(code: "internal", message: "History unavailable"))))
         try #require(await sent(requests[1], over: transport))
         model.open(ids[2])
         await transport.emit(.event(.history(History(convId: ids[0], items: [], more: false, rev: 2))))
         try #require(await harness.settled { model.conversations[ids[0]]?.rev == 2 })
-        // Sends run in separate tasks; allow an incorrect third send to become observable.
         try await Task.sleep(for: .milliseconds(100))
         #expect(await historyRequests(transport) == Array(requests.prefix(2)))
 

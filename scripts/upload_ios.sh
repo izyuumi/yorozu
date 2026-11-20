@@ -10,9 +10,6 @@ VERSION=${VERSION:-$(scripts/version.sh)}
 BASE=$(($(scripts/build-number.sh "$VERSION" 1) - 1))
 ARCHIVE="$PWD/build/ios/YorozuIOS.xcarchive"
 
-# Prints the uploaded build's App Store Connect id once App Store Connect lists it, polling every 30 s for up to
-# LIST_WAIT seconds (default 3600). The next upload numbers its build from that list, so until then a second merge
-# would reuse this build's number; release-ios.yml runs one upload at a time, so waiting here closes that gap.
 wait_listed() {
     url="$API/v1/builds?filter%5Bapp%5D=$APP_ID&filter%5Bversion%5D=$BUNDLE_VERSION&filter%5BpreReleaseVersion.version%5D=$VERSION&limit=1"
     tries=$((${LIST_WAIT:-3600} / 30))
@@ -26,12 +23,6 @@ wait_listed() {
     [ -n "$id" ] && printf '%s' "$id"
 }
 
-# What to Test on the uploaded build, in every locale with a folder in apps/ios/metadata/testflight: the PRs merged
-# since the last stable tag (scripts/release_notes.sh --what-to-test). A locale App Store Connect lacks is created; one
-# it has is set only while empty or still holding this script's text for this build (its first line is one of the
-# intros), so What to Test someone wrote by hand stays, and locales without a folder are left alone. It is the build's
-# own text, so it reaches only the groups that get the build: TestFlight's internal group. Nothing here adds the
-# build to a group or submits it for Beta App Review.
 set_whats_new() {
     notes=$(mktemp -d)
     for dir in apps/ios/metadata/testflight/*/; do
@@ -81,7 +72,6 @@ if [ -z "${BUILD:-}" ]; then
 fi
 BUNDLE_VERSION=$(scripts/build-number.sh "$VERSION" "$BUILD")
 echo "Uploading Yorozu iOS $VERSION ($BUILD), CFBundleVersion $BUNDLE_VERSION"
-# Nothing here gives the build to an external group or to Beta App Review; such a step must pass this switch first.
 scripts/external_testflight.sh 2>&1 || true
 
 mkdir -p build/ios

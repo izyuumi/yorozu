@@ -69,7 +69,6 @@ test("the Node relay's registered carries neither liveActivity nor activityTimes
 });
 
 test("INTENDED CHANGE: at the pending bound a fresh token join waits instead of evicting", async () => {
-  // Roster fix, not equivalence: v0.13.0 evicted the oldest with "revoked", unpairing its app.
   vi.useFakeTimers({ toFake: ["Date"] });
   const macKeys = keypair();
   const mac = await connectMac(relay.port, macKeys);
@@ -88,7 +87,6 @@ test("INTENDED CHANGE: at the pending bound a fresh token join waits instead of 
   const second = devices[1]!;
   vi.setSystemTime(Date.now() + 1_000);
   mac.send({ type: "push", device: oldest.keys.pub, token: "a".repeat(64) });
-  // A lagging announce keeps connected devices pending, so it cannot free pending capacity.
   mac.send({ type: "devices", devices: [] });
   const token = await mintToken(mac);
   const nextKeys = keypair();
@@ -120,7 +118,6 @@ async function pendingRoom() {
   const mac = await connectMac(relay.port, host);
   peers.push(mac);
   const devices = [];
-  // Consume each batch before minting more: at most eight live tokens.
   for (let batch = 0; batch < 2; batch++) {
     const tokens = [];
     for (let i = 0; i < 8; i++) tokens.push(await mintToken(mac));
@@ -184,7 +181,6 @@ test("an announce that drops pending rows frees the bound for a fresh pairing", 
   for (const { phone } of devices.slice(8)) {
     phone.ws.close();
   }
-  // The announce must follow the relay's removal of the disconnected phones.
   await vi.waitFor(() => expect(mac.phones.at(-1)).toBe(8));
   mac.send({ type: "devices", devices: devices.slice(0, 8).map(({ keys }) => keys.pub) });
   const fresh = await connectPhone(relay.port, name, await mintToken(mac));

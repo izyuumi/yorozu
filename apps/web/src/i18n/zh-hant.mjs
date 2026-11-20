@@ -1,4 +1,3 @@
-// 繁體中文（台灣用語）。用詞與 App 的 Localizable.xcstrings 及 App Store 的 zh-Hant 文字一致。
 export default {
   name: 'Yorozu',
   skip: '跳至主要內容',

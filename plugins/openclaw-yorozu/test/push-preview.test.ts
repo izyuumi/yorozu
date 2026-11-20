@@ -6,8 +6,6 @@ import { test } from "node:test";
 
 registerHooks({
   resolve(specifier, context, next) {
-    // The preview helpers in push.ts are pure; the file also imports the OpenClaw
-    // runtime for the title store, which these tests do not call.
     if (specifier === "./runtime.js" || specifier === "./sessions.js") {
       return { url: new URL("./push-preview-stub.js", import.meta.url).href, shortCircuit: true };
     }
@@ -21,16 +19,12 @@ registerHooks({
 const { previewKey, previewPlaintext, sealPreview } = await import("../src/push.ts");
 const { b64u, x25519Keypair } = await import("../src/wire.ts");
 
-// Test-only: sealPreview's cipher, key and output shape with a caller-chosen nonce, so the
-// fixture box is reproducible. Production sealPreview takes no nonce on purpose.
 function sealWithNonce(key: Uint8Array, plaintext: Uint8Array, nonce: Uint8Array): { n: string; c: string } {
   const cipher = createCipheriv("chacha20-poly1305", key, nonce, { authTagLength: 16 });
   const sealed = Buffer.concat([cipher.update(plaintext), cipher.final(), cipher.getAuthTag()]);
   return { n: b64u(nonce), c: b64u(sealed) };
 }
 
-// Sealed here by sealWithNonce; PushPreviewTests opens this exact box with Swift PushPreview.open.
-// Regenerate with UPDATE_FIXTURES=1 only when the preview format changes on purpose.
 const url = new URL("../../../packages/YorozuWire/Tests/YorozuWireTests/Fixtures/push-preview.json", import.meta.url);
 
 test("fixed-nonce seal matches the fixture Swift PushPreview.open reads", () => {
@@ -57,6 +51,5 @@ test("sealPreview draws a fresh nonce by default", () => {
   const b = sealPreview(key, Buffer.from("x"));
   assert.equal(Buffer.from(a.n, "base64url").length, 12);
   assert.notEqual(a.n, b.n);
-  // Production and the test-only helper stay the same box format.
   assert.deepEqual(sealWithNonce(key, Buffer.from("x"), Buffer.from(a.n, "base64url")), a);
 });

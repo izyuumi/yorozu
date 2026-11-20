@@ -1,7 +1,4 @@
 #!/bin/bash
-# vault-preflight (runs on the machine that holds the PAIOS folder). Read-only. Prints one JSON line:
-# folder reachable, local time, and sha256/mtime of the PAIOS rule files, so an agent re-reads them only when changed.
-# Needs PAIOS_ROOT (the folder that contains PAIOS/), or its older name PAIOS_VAULT. Time zone: PAIOS_TZ (default UTC).
 VAULT="${PAIOS_ROOT:-${PAIOS_VAULT:-}}"
 [ -n "$VAULT" ] || { echo "set PAIOS_ROOT to the folder that contains PAIOS/" >&2; exit 1; }
 export TZ="${PAIOS_TZ:-UTC}"

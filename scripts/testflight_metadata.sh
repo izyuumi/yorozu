@@ -1,15 +1,4 @@
 #!/bin/sh
-# The beta app description TestFlight shows testers, in every locale with a folder in apps/ios/metadata/testflight.
-# Run by hand, never in CI: the beta app localizations belong to the app, so every tester sees them, the external
-# Public group's too.
-#
-#   scripts/testflight_metadata.sh           prints what --apply would change; reads App Store Connect, writes nothing
-#   scripts/testflight_metadata.sh --apply   makes those changes
-#
-# A locale App Store Connect lacks is created, and an empty description is set, from <locale>/description.txt. The
-# feedback email, marketing URL and privacy policy URL, where empty, are copied from en-US, so they live in App
-# Store Connect alone. A description that differs from its file is kept and reported, since someone may have
-# written it by hand; locales without a folder are left alone. Running it twice changes nothing the second time.
 set -eu
 cd "$(dirname "$0")/.."
 APPLY=0
@@ -22,7 +11,6 @@ live=$(asc_get "$API/v1/apps/$APP_ID/betaAppLocalizations?limit=50")
 field() { printf '%s' "$live" | jq -r --arg l "$1" --arg f "$2" '.data[] | select(.attributes.locale == $l) | .attributes[$f] // ""'; }
 [ -n "$(field en-US description)" ] || { echo "en-US has no beta app description in App Store Connect; set it first." >&2; exit 1; }
 
-# change <method> <url> <json> <message>
 change() {
     if [ "$APPLY" = 1 ]; then asc_send "$1" "$2" "$3" >/dev/null; echo "$4"; else echo "Would: $4"; fi
 }

@@ -1,13 +1,10 @@
 import AppIntents
 import Foundation
 
-/// Where a widget, a control or a Lock Screen accessory opens the app.
 enum WidgetLink: Equatable, Sendable {
     case conversation(String)
     case new
-    /// A new conversation with the keyboard up.
     case ask
-    /// A new conversation with dictation started.
     case talk
 
     private static let scheme = "yorozu"
@@ -39,8 +36,6 @@ enum WidgetLink: Equatable, Sendable {
     }
 }
 
-/// Hands a link to the app. The intents below open the app when run, so `perform` runs in the app,
-/// where the app delegate installed `handler`; the widget extension never handles one itself.
 @MainActor
 enum WidgetRouter {
     static var handler: ((WidgetLink) -> Void)? {

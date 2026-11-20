@@ -225,7 +225,6 @@ test("an encrypted preview asks the notification service to replace the fallback
   expect(payload.aps.alert["loc-key"]).toBe(NOTIFY_BODY.reply);
 });
 
-// The content state the plugin makes, which the app's Swift test decodes as `YorozuActivityState`.
 const fixture = JSON.parse(
   readFileSync(new URL("../../ios/Tests/Fixtures/activity-content-state.json", import.meta.url), "utf8"),
 ) as unknown;
@@ -236,7 +235,6 @@ test("an activity state keeps only opaque tokens, kinds, states, counts and time
   const job = { token: "AAAAAAAAAAAAAAAA", kind: "turn", state: "running", startedAt: 1 };
   expect(parseActivityState({ jobs: [{ ...job, title: "secret", convId: "x" }], extra: 1 })).toEqual({ jobs: [job] });
   expect(parseActivityState({ jobs: [] })).toEqual({ jobs: [] });
-  // A job with a kind or state this relay does not know is dropped, and the rest are kept.
   expect(parseActivityState({ jobs: [{ ...job, kind: "tool" }, job, { ...job, state: "paused" }] })).toEqual({ jobs: [job] });
   for (const bad of [
     { ...job, token: "short" },

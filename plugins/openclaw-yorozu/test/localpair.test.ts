@@ -57,14 +57,12 @@ class FakeServer extends EventEmitter {
 }
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
-/** Whether `file` is gone within a second (the deletion runs on the file's queue). */
 async function gone(file: string): Promise<boolean> {
   for (let i = 0; i < 100 && existsSync(file); i++) await new Promise((resolve) => setTimeout(resolve, 10));
   return !existsSync(file);
 }
 const mode = async (p: string) => (await fs.stat(p)).mode & 0o777;
 
-/** A host with a direct listener on `addresses`, its pairing secrets and the local pairing file under a temp state dir. */
 async function host(addresses = ["127.0.0.1", "192.168.1.5"]) {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "yorozu-localpair-"));
   const signing = ed25519Keypair();
@@ -125,7 +123,6 @@ async function host(addresses = ["127.0.0.1", "192.168.1.5"]) {
     return ws;
   };
   const message = (ws: FakeSocket, value: unknown) => ws.emit("message", Buffer.from(JSON.stringify(value)), false);
-  /** Probe, then `local_pair`; the replies after the probe answer. */
   const ask = async (address = "127.0.0.1") => {
     const ws = connect(address);
     message(ws, { type: "probe", nonce: b64u(randomBytes(32)) });

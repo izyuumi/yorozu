@@ -106,7 +106,6 @@ for (const legacy of [false, true]) {
 
     const box = decodeFrame(client.seal(Buffer.from("device box")));
     assert.ok(box?.type === "box");
-    // Change only the format; a valid SID, counter and tag must not bypass the session binding.
     const otherFormat = decodeFrame(encodeFrame({ ...box, legacy: !legacy }));
     assert.ok(otherFormat);
     assert.equal(hub.open(otherFormat, link), null);

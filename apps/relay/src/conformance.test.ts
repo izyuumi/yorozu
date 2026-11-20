@@ -65,7 +65,6 @@ export function conformance(relay: Adapter) {
     const macKeys = await keypair();
     const room = await roomId(macKeys.pub);
     const mac = await connectMac(macKeys);
-    // As the plugin does after every `registered`: until it announces, the relay can't call a device unknown.
     mac.send({ type: "devices", devices: [] });
     const { phone, keys } = await connectPhone(room, await mintToken(mac));
     expect(await phone.next()).toMatchObject({ type: "joined", ownerOnline: true });

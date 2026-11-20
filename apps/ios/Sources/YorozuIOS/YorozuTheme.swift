@@ -115,7 +115,6 @@ private struct YorozuAppearance: ViewModifier {
 }
 
 extension AnyTransition {
-    /// Slides down from the top edge, or only fades with Reduce Motion on.
     static func fromTop(reduceMotion: Bool) -> AnyTransition {
         reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity)
     }

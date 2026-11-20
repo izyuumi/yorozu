@@ -1,4 +1,3 @@
-// 한국어. 용어는 앱의 Localizable.xcstrings 및 App Store ko 텍스트와 맞춥니다.
 export default {
   name: 'Yorozu',
   skip: '본문으로 건너뛰기',

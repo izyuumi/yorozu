@@ -3,7 +3,6 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { afterEach, expect, test, vi } from "vitest";
 
-// Vite supplies this transform; Vite itself is not a direct relay dependency.
 declare global {
   interface ImportMeta {
     readonly env: { VITE_COMPAT_CAPTURE?: string; VITE_COMPAT_PRODUCER?: string };
@@ -109,7 +108,6 @@ async function connect(name: string): Promise<Client> {
 }
 
 afterEach(() => {
-  // Client-initiated closes do not emit a client close event in the test pool.
   for (const client of clients.splice(0)) client.close();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -179,7 +177,6 @@ test.skipIf(rollback || import.meta.env.VITE_COMPAT_CAPTURE !== "1" || !import.m
     await macSettled(host);
   }
   await macSettled(host);
-  // Capture persistent storage before cleanup; socket attachments do not survive deploys.
   const entries = await runInDurableObject(room(name), async (_instance, state) => [...await state.storage.list()]);
   const keys = { host: await save(hostKeys), devices: await Promise.all(devices.map(save)) };
   const fixture = { producer: import.meta.env.VITE_COMPAT_PRODUCER, scenario, entries, keys };
@@ -190,7 +187,6 @@ test.skipIf(rollback || import.meta.env.VITE_COMPAT_CAPTURE !== "1" || !import.m
 const fixtures = import.meta.glob("./compat-fixtures/*.json", { eager: true, import: "default" });
 const cases = (scenario: Fixture["scenario"]) => Object.entries(fixtures)
   .map(([file, value]) => ({ file, ...value as Fixture }))
-  // The shipped relay proves rollback by reading newer storage; current replays every producer.
   .filter((fixture) => !rollback || !fixture.producer.startsWith("v0.13.0"))
   .filter((fixture) => fixture.scenario === scenario);
 
@@ -237,7 +233,6 @@ test.each(cases("announced"))("R2: replay announced storage, revoke closes and f
   host.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
   host.send(activityPush(devices[0]!.pub));
   await macSettled(host);
-  // Push delivery runs in waitUntil, after the websocket message has settled.
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(calls).toHaveLength(0);
 });

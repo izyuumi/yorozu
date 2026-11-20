@@ -4,8 +4,6 @@ on:
     types: [closed]
     branches: [main]
 
-# GitHub keeps one pending run per group; ordinary PR Promote runs used to
-# replace a pending Release Mac. This condition must match the job's if.
 concurrency:
   group: ${{ github.event.pull_request.merged && github.event.pull_request.head.ref == 'release' && 'release-mac' || format('promote-noop-{0}', github.run_id) }}
   cancel-in-progress: false
@@ -13,7 +11,6 @@ permissions: {}
 
 jobs:
   promote:
-    # Merging the release PR (scripts/release_pr.sh) makes the beta it names stable.
     if: github.event.pull_request.merged && github.event.pull_request.head.ref == 'release'
     runs-on: xcode-27
     timeout-minutes: 30
@@ -26,8 +23,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
-      # The release PR names the beta by build, source commit and DMG digest; --promote refuses a beta that
-      # no longer matches all three. Block scalar: the ": " in the sed patterns breaks a plain YAML scalar.
       - run: |
           line() { printf '%s\n' "$BODY" | tr -d '\r' | sed -n "s/^$1: *\([^ ]*\).*/\1/p" | tail -1; }
           scripts/release_mac.sh --promote "$(line Release-Build)" "$(line Release-Commit)" "$(line Release-Digest)"

@@ -1,6 +1,3 @@
-// The direct path (capability `direct`, #532 step 3): the plugin's own WebSocket listener on private addresses, and the
-// probe that proves the host key before a device sends its Noise init. Imports only node built-ins and the pure wire and
-// hub files; the WebSocket server is injected, so `node --test` and the relay's end-to-end test run it without OpenClaw.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { isIP } from "node:net";
 import type { NetworkInterfaceInfo } from "node:os";
@@ -11,7 +8,6 @@ export const DIRECT_PORT = 8738;
 export const MAX_PENDING = 8;
 export const PENDING_MS = 10_000;
 export const MAX_FRAME_BYTES = 1024 * 1024;
-/** The client pings every 25 s; a direct socket silent this long is gone. */
 export const IDLE_MS = 90_000;
 const PING = JSON.stringify({ type: "ping" });
 const PONG = JSON.stringify({ type: "pong" });
@@ -26,7 +22,6 @@ function hextets(address: string): number[] {
   return [...front, ...Array<number>(8 - front.length - back.length).fill(0), ...back];
 }
 
-/** Loopback, RFC 1918, ULA and 100.64.0.0/10 only: never a wildcard, link-local, mapped or public address. */
 export function directAddress(address: string): boolean {
   const family = isIP(address);
   if (family === 4) {
@@ -37,7 +32,6 @@ export function directAddress(address: string): boolean {
   return loopbackAddress(address) || ((hextets(address)[0] ?? 0) & 0xfe00) === 0xfc00;
 }
 
-/** 127.0.0.0/8 or `::1`: a listener only processes on this machine reach. */
 export function loopbackAddress(address: string): boolean {
   const family = isIP(address);
   if (family === 4) return octets(address)[0] === 127;
@@ -46,7 +40,6 @@ export function loopbackAddress(address: string): boolean {
   return h.slice(0, 7).every((x) => x === 0) && h[7] === 1;
 }
 
-/** The addresses the listener binds: each allowed local address once. */
 export const bindAddresses = (interfaces: NodeJS.Dict<NetworkInterfaceInfo[]>): string[] => [
   ...new Set(
     Object.values(interfaces)
@@ -59,14 +52,12 @@ export const bindAddresses = (interfaces: NodeJS.Dict<NetworkInterfaceInfo[]>): 
 export const probeText = (room: string, nonce: string): string => `yorozu-direct|${room}|${nonce}`;
 export const validNonce = (nonce: unknown): nonce is string => typeof nonce === "string" && fromB64u(nonce)?.length === 32;
 
-/** The host's answer to `{"type":"probe","nonce"}`: its Ed25519 key and a signature over the room and nonce. */
 export const probeAnswer = (signing: Keypair, room: string, nonce: string): { type: "probe"; pubkey: string; sig: string } => ({
   type: "probe",
   pubkey: b64u(signing.publicKey),
   sig: signFrame(signing.privateKey, probeText(room, nonce)),
 });
 
-/** The client's check before it sends its init: the key is the room's and it signed this nonce. */
 export function verifyProbe(room: string, nonce: string, answer: Record<string, unknown>): boolean {
   if (typeof answer.pubkey !== "string" || typeof answer.sig !== "string") return false;
   const pub = fromB64u(answer.pubkey);
@@ -74,7 +65,6 @@ export function verifyProbe(room: string, nonce: string, answer: Record<string, 
 }
 
 type Listener = (...args: any[]) => void;
-/** What the listener uses of a `ws` socket and server. */
 export type DirectSocket = {
   readonly readyState: number;
   send(data: string): void;
@@ -91,11 +81,8 @@ export type DirectOptions = {
   keys: { signing: Keypair; room: string };
   hub: Pick<Hub, "handshake" | "open" | "handle" | "detach">;
   server: DirectServerFactory;
-  /** Sends one message; the plugin routes it through OpenClaw's effect authority. */
   transmit?: (socket: DirectSocket, raw: string) => void;
   pendingMs?: number;
-  /** `local_pair` (feature flag `local-pair`): writes the local pairing file and returns its path. Asked only on a
-   * loopback listener. */
   localPair?: () => Promise<string>;
   log?: Log;
 };
@@ -109,7 +96,6 @@ const size = (data: unknown): number =>
       : Buffer.isBuffer(data) ? data.length
         : String(data).length;
 
-/** One `ws` server per address on `port`; at most 8 sockets wait for their handshake, each for 10 s. */
 export async function serveDirect(opts: DirectOptions): Promise<DirectListener> {
   const { keys, hub, log } = opts;
   const transmit = opts.transmit ?? ((socket, raw) => socket.send(raw));
@@ -117,7 +103,6 @@ export async function serveDirect(opts: DirectOptions): Promise<DirectListener> 
   let pending = 0;
 
   const accept = (ws: DirectSocket, origin: unknown, host: string): void => {
-    // Accepted socket events lose the plugin instance's async scope, which OpenClaw's runtime store needs.
     const inScope = AsyncLocalStorage.snapshot();
     sockets.set(ws, host);
     let counted = true;
@@ -152,7 +137,6 @@ export async function serveDirect(opts: DirectOptions): Promise<DirectListener> 
       hub.detach(link);
     }));
     ws.on("error", (error: Error) => log?.info(`yorozu: direct socket error: ${error.message}`));
-    // A browser page could reach loopback; the app sends no Origin.
     if (origin !== undefined) return refuse("browser origin");
     if (pending > MAX_PENDING) return refuse("too many pending connections");
 
@@ -178,8 +162,6 @@ export async function serveDirect(opts: DirectOptions): Promise<DirectListener> 
           probed = true;
           return send(JSON.stringify(probeAnswer(keys.signing, keys.room, msg.nonce)));
         }
-        // `local-pair` (#532): a Mac on this machine asks, instead of its init, where the local pairing file is. The
-        // answer is the path only; the link stays in the file, which only this user can read.
         if (msg?.type === "local_pair" && opts.localPair && loopbackAddress(host)) {
           let answer: { type: "local_pair"; path?: string; error?: string };
           try {
@@ -216,7 +198,6 @@ export async function serveDirect(opts: DirectOptions): Promise<DirectListener> 
     }));
   };
 
-  // `ws` closes a message over `maxPayload` with 1009 before the plugin sees it; up to that, oversized ones get 4103.
   const listen = (host: string): Promise<DirectServer | null> =>
     new Promise((resolve) => {
       const server = opts.server({ host, port: opts.port, maxPayload: 2 * MAX_FRAME_BYTES });

@@ -8,7 +8,6 @@ let clientSupportDirectory: URL = {
     #endif
 }()
 
-/// Writes always use the new name; StoredNames resolves reads until migration completes.
 func clientDirectory(_ name: String) -> URL {
     clientSupportDirectory.appending(path: name, directoryHint: .isDirectory)
 }

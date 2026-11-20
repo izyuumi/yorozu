@@ -6,20 +6,11 @@ import YorozuWire
 import UIKit
 #endif
 
-/// Debug builds only: `--preview-scene NAME` (implies `--demo`) plays one scripted take of the App Store app preview
-/// (`apps/preview`) through the real UI and the real send path. Release builds contain none of it (Guideline 2.5.19).
-/// Times are take seconds: the app writes `Caches/preview-ready` once it is active, and
-/// `scripts/app_preview_capture.sh` starts recording `lead` seconds later (the Lock Screen
-/// takes: 6 s more, while the app goes home and the device locks).
 enum PreviewScene: String {
     case hook, lockscreen, approve, talk, list
-    /// The lockscreen take again with Tidy up Downloads already needing you: a locked simulator suspends the app,
-    /// so the preview dissolves from one take to the other instead of the app changing the row while locked.
     case needsYou = "needs-you"
-    /// Not a take: opens a conversation whose reply carries a card (a table and a bar chart), for screenshots.
     case genui
 
-    /// The Lock Screen takes, which start a Live Activity in demo mode.
     var locked: Bool { self == .lockscreen || self == .needsYou }
 
     static let current: PreviewScene? = {
@@ -28,7 +19,6 @@ enum PreviewScene: String {
         return PreviewScene(rawValue: arguments[index + 1])
     }()
 
-    /// `--preview-epoch UNIX`: both Lock Screen takes date their rows from it, so they match across the dissolve.
     private static let epoch: Date = {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "--preview-epoch"), arguments.indices.contains(index + 1),
@@ -39,20 +29,16 @@ enum PreviewScene: String {
     static let lead: Double = 2.5
     static let readyFile = "preview-ready"
     private static var caches: URL? { FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first }
-    /// The composer's mic and send buttons, pressed by the scene.
     static let tapMic = Notification.Name("PreviewScene.tapMic")
     static let tapSend = Notification.Name("PreviewScene.tapSend")
 
     private static let ja = Locale.preferredLanguages.first?.hasPrefix("ja") == true
 
-    /// DemoTransport's pauses (delivered, tool running, tool done, reply), stretched so each beat reads in the take.
     var pauses: [Duration] {
         self == .hook
             ? [.milliseconds(600), .milliseconds(1_000), .milliseconds(1_600), .milliseconds(300)]
             : [.milliseconds(300), .milliseconds(300), .milliseconds(1_200), .milliseconds(200)]
     }
-
-    // MARK: Demo content (fictional)
 
     static let tidyID = "d0000000-0000-4000-8000-000000000005"
     static var tidyTitle: String { ja ? "ダウンロードの整理" : "Tidy up Downloads" }
@@ -62,9 +48,7 @@ enum PreviewScene: String {
     }
 
     static let cardID = "d0000000-0000-4000-8000-000000000007"
-    /// The genui scene's conversation; nil in every other scene.
     static var cardTitle: String? { current == .genui ? "Trip costs" : nil }
-    /// Its history, decoded from the wire's JSON as a page from the plugin is.
     static func card(at ts: Int64) -> [HistoryItem]? {
         guard current == .genui else { return nil }
         let json = """
@@ -89,7 +73,6 @@ enum PreviewScene: String {
 
     private static var ask: String { ja ? "昨夜のバックアップは終わった？" : "Did last night’s backup finish?" }
     private static var goAhead: String { ja ? "お願い" : "Go ahead" }
-    /// What the talk take's recording "says": the capture script speaks it into `preview-voice.wav` with `say`.
     static var transcript: String? {
         current == .talk ? (ja ? "6時に植物に水をやるようリマインドして" : "Remind me to water the plants at 6") : nil
     }
@@ -108,7 +91,6 @@ enum PreviewScene: String {
         return replies.first { $0.keywords.contains { text.contains($0) } }?.text
     }
 
-    /// The talk take's microphone: 16 kHz mono float samples from `Caches/preview-voice.wav`, else silence.
     static func voiceClip() -> [Float] {
         guard let caches,
               let file = try? AVAudioFile(forReading: caches.appending(path: "preview-voice.wav")),
@@ -117,17 +99,13 @@ enum PreviewScene: String {
         return Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
     }
 
-    /// Tells the capture script the app is up: a first launch on a fresh boot takes seconds longer.
     private static func markReady() {
         guard let caches else { return }
         FileManager.default.createFile(atPath: caches.appending(path: readyFile).path(), contents: Data())
     }
 
-    // MARK: The scenes
-
     @MainActor func play(model: AppModel) {
         func tap(_ button: Notification.Name) { NotificationCenter.default.post(name: button, object: nil) }
-        // The throwaway simulator's setting: the mic button only in the talk take.
         UserDefaults.standard.set(self == .talk, forKey: VoiceModel.enabledKey)
         Task { @MainActor in
             #if os(iOS)
@@ -171,11 +149,8 @@ enum PreviewScene: String {
     }
 
     #if os(iOS)
-    /// Two Working rows and a Done one (needs-you: Tidy up Downloads needs you); the app goes home, where the
-    /// activity starts, and the device locks.
     @MainActor private func lockscreen(_ at: (Double) async -> Void) async {
         WidgetStore.defaults?.set(true, forKey: WidgetStore.previewsKey)
-        // The throwaway simulator's setting: the Live Activity is off until turned on.
         UserDefaults.standard.set(true, forKey: LiveActivitySetting.key)
         await at(-0.5)
         while YorozuActivities.shared == nil { try? await Task.sleep(for: .milliseconds(100)) }

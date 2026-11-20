@@ -3,7 +3,6 @@ import Foundation
 import Testing
 @testable import YorozuWire
 
-/// A socket whose host answers each sent message from a script; `close` ends a waiting `receive`.
 final class ScriptedSocket: LocalPairingSocket, @unchecked Sendable {
     private let lock = NSLock()
     private var queue: [String] = []
@@ -63,7 +62,6 @@ final class ScriptedSocket: LocalPairingSocket, @unchecked Sendable {
     }
 }
 
-/// The local Mac pairing exchange (#532 `local-pair`): the probe without a known room, then `local_pair`.
 struct LocalPairingTests {
     let host = Curve25519.Signing.PrivateKey()
     var pubkey: String { host.publicKey.rawRepresentation.base64URLEncodedString() }
@@ -77,7 +75,6 @@ struct LocalPairingTests {
         String(decoding: try! JSONSerialization.data(withJSONObject: object), as: UTF8.self)
     }
 
-    /// A host that signs with `signer` (the room's key unless given) and answers `local_pair` with `reply`.
     func scripted(signer: Curve25519.Signing.PrivateKey? = nil, reply: [String: String]? = ["type": "local_pair", "path": "/state/yorozu/local-pairing"])
         -> ScriptedSocket {
         let signer = signer ?? host
@@ -140,7 +137,6 @@ struct LocalPairingTests {
         let silent = scripted(reply: nil)
         let start = ContinuousClock.now
         await #expect(throws: LocalPairing.Failure.notFound) { try await LocalPairing.ask(silent, timeout: .milliseconds(100)) }
-        // Allow scheduling delays on shared CI runners while still catching a stalled exchange.
         #expect(ContinuousClock.now - start < .seconds(10))
         #expect(silent.closed)
     }

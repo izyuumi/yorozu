@@ -1,31 +1,19 @@
-// Stands in for OpenClaw and for the plugin files that need a running Gateway (genui-hooks.ts maps them here), so
-// the tests run the real conversation.ts, history.ts, sessions.ts and presentations.ts. It holds no tests.
 export const host = {
-  /** sessionKey → entry, sessionId → transcript events, namespace → keyed store rows, and every broadcast event. */
   sessions: new Map(),
   transcripts: new Map(),
   stores: new Map(),
   sent: [],
   reactions: new Map(),
-  /** Overrides a keyed store's `maxEntries`, to reach the cap with a few rows. */
   cap: undefined,
-  /** Plays OpenClaw for one turn: gets the plugin's `deliver` and the run's `start`. */
   run: undefined,
-  /** The agent run starts only when `run` calls `start`, as for a message waiting behind a running turn. */
   queued: false,
-  /** Overrides staging a reply's files: gets the media URLs. */
   stage: undefined,
-  /** Makes `register` reject, hang, wait a tick, or run a custom hook before writing. */
   register: undefined,
-  /** Makes a keyed store's `entries` reject. */
   entries: undefined,
-  /** Records completed writes and dispatch calls when a test supplies an array. */
   calls: undefined,
-  /** Makes `lookup` fail ("reject"), never finish ("hang"), or hang only for cards ("cards-hang"). */
   lookup: undefined,
 };
 
-// The keyed state store as the plugin uses it: bounded, oldest row dropped.
 const openKeyedStore = ({ namespace, maxEntries }) => {
   const rows = host.stores.get(namespace) ?? host.stores.set(namespace, new Map()).get(namespace);
   return {
@@ -59,7 +47,6 @@ const openKeyedStore = ({ namespace, maxEntries }) => {
   };
 };
 
-// openclaw/plugin-sdk/*
 export const resolveTextChunkLimit = (cfg, _channel, _account, { fallbackLimit }) => cfg.limit ?? fallbackLimit;
 export const chunkMarkdownText = (text, limit) => text.match(new RegExp(`[\\s\\S]{1,${limit}}`, "g")) ?? [];
 export const resolveChunkMode = (cfg) => cfg.chunkMode ?? "length";
@@ -82,7 +69,6 @@ export const buildChannelInboundEventContext = (context) => context;
 export const toInboundMediaFactsWithMetadata = async () => [];
 export const getAgentScopedMediaLocalRoots = () => [];
 export const createTypingCallbacks = () => ({});
-// The agent run starts (`onAgentRunStart`) before `host.run`, or, with `host.queued`, when `host.run` calls `start`.
 export const runChannelInboundEvent = async ({ adapter }) => {
   const turn = adapter.resolveTurn();
   host.calls?.push({ kind: "dispatch", messageId: turn.ctxPayload.messageId });
@@ -92,8 +78,6 @@ export const runChannelInboundEvent = async ({ adapter }) => {
   return { dispatched: true, dispatchResult };
 };
 
-// What channel.ts takes from openclaw/plugin-sdk/*: the plugin object as declared, and the presentation SDK as in
-// presentations.test.ts.
 export const DEFAULT_ACCOUNT_ID = "default";
 export const createChatChannelPlugin = (plugin) => plugin;
 export const defineChannelPluginEntry = (entry) => entry;
@@ -108,8 +92,6 @@ export const renderMessagePresentationChartFallbackText = (b) => `${b.title}`;
 export const channelReadyPatch = () => ({});
 export const channelStoppedPatch = () => ({});
 
-// ./runtime.js, ./relay.js, ./push.js, ./retry.js, ./activity.js, ./attachments.js, ./reactions.js, ./reads.js,
-// ./keys.js, ./cron.js, ./updates.js
 export const loadHostKeys = async () => ({ room: "room" });
 export const listCronJobs = async () => [];
 export const announceGatewayState = async () => {};

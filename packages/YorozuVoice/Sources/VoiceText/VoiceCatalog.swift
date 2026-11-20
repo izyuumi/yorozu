@@ -1,6 +1,5 @@
 import Foundation
 
-/// The speech engines voice input can use, in the order Settings › Voice Input › Model lists them.
 public enum VoiceEngineID: String, CaseIterable, Codable, Sendable, Identifiable {
     case apple
     case lfm
@@ -10,7 +9,6 @@ public enum VoiceEngineID: String, CaseIterable, Codable, Sendable, Identifiable
 
     public var id: Self { self }
 
-    /// The product name, the same in every language.
     public var name: String {
         switch self {
         case .apple: "Apple Speech"
@@ -30,7 +28,6 @@ public enum VoiceEngineID: String, CaseIterable, Codable, Sendable, Identifiable
         }
     }
 
-    /// The downloaded model; nil for Apple's, which the system installs per language.
     public var model: VoiceModelSpec? {
         switch self {
         case .apple: nil
@@ -41,7 +38,6 @@ public enum VoiceEngineID: String, CaseIterable, Codable, Sendable, Identifiable
         }
     }
 
-    /// Physical memory the device needs. Devices sold as 6 GB report a little under 6 GiB, 4 GB ones under 4 GiB.
     public var minimumMemory: UInt64 {
         switch self {
         case .apple: 0
@@ -50,7 +46,6 @@ public enum VoiceEngineID: String, CaseIterable, Codable, Sendable, Identifiable
         }
     }
 
-    /// How many spoken languages the model handles; nil for Apple's, which depends on the system.
     public var languageCount: Int? {
         switch self {
         case .apple: nil
@@ -60,7 +55,6 @@ public enum VoiceEngineID: String, CaseIterable, Codable, Sendable, Identifiable
         }
     }
 
-    /// Whether the model is built to transcribe audio as it arrives.
     public var streaming: Bool {
         switch self {
         case .apple, .nemotron: true
@@ -68,7 +62,6 @@ public enum VoiceEngineID: String, CaseIterable, Codable, Sendable, Identifiable
         }
     }
 
-    /// The model's license and where to read it; nil for Apple's, which is part of the system.
     public var license: (name: String, url: URL)? {
         switch self {
         case .apple: nil
@@ -79,12 +72,8 @@ public enum VoiceEngineID: String, CaseIterable, Codable, Sendable, Identifiable
     }
 }
 
-/// One downloadable model: its files pinned by Hugging Face revision and SHA-256, and the Apple-hosted asset
-/// pack iPhone and iPad get it from. `scripts/voice_asset_pack.sh` builds each pack from the same list (a test
-/// keeps the two in sync).
 public struct VoiceModelSpec: Sendable, Equatable {
     public struct File: Sendable, Equatable {
-        /// The path inside the model's folder.
         public let path: String
         public let repo: String
         public let revision: String
@@ -100,17 +89,14 @@ public struct VoiceModelSpec: Sendable, Equatable {
     }
 
     public let packID: String
-    /// The folder the files live in, on disk and inside the pack; empty for LFM, whose files sit at the top.
     public let folder: String
     public let files: [File]
 
     public var totalBytes: Int64 { files.reduce(0) { $0 + $1.bytes } }
-    /// The path a file has inside the asset pack and under the app's model directory.
     public func location(of file: File) -> String { folder.isEmpty ? file.path : folder + "/" + file.path }
 
     static let lfmRevision = "fcfae9027c00a6f3f872c48a841cfeb77e2b5a1c"
 
-    /// LFM3-Audio-2B (GGUF, llama.cpp). Its pack, `VoiceModel`, is already in App Store Connect: keep it as is.
     public static let lfm = VoiceModelSpec(
         packID: "VoiceModel", folder: "",
         files: [
@@ -120,7 +106,6 @@ public struct VoiceModelSpec: Sendable, Equatable {
                 "26601e904245a85bd8f3cf320a629e897cfc01c1d09369e8b4fd951f13024d3e"),
         ])
 
-    /// Whisper large-v3-turbo, Diction Labs' CoreML build (6-bit encoder, 8-bit decoder) for WhisperKit.
     public static let whisperTurbo = VoiceModelSpec(
         packID: "VoiceWhisperTurbo", folder: "whisper-large-v3-turbo",
         files: [
@@ -145,7 +130,6 @@ public struct VoiceModelSpec: Sendable, Equatable {
             File("tokenizer_config.json", "openai/whisper-large-v3-turbo", "41f01f3fe87f28c78e2fbf8b568835947dd65ed9", "tokenizer_config.json", 282_843, "844b642c73a91359722f47b35705f7174686df33d252695d8572cf9ac03a6389"),
         ])
 
-    /// Whisper small, Diction Labs' CoreML build for WhisperKit.
     public static let whisperSmall = VoiceModelSpec(
         packID: "VoiceWhisperSmall", folder: "whisper-small",
         files: [
@@ -170,8 +154,6 @@ public struct VoiceModelSpec: Sendable, Equatable {
             File("tokenizer_config.json", "openai/whisper-small", "973afd24965f72e36ca33b3055d56a652f456b4d", "tokenizer_config.json", 282_683, "2a4c4281cf9f51ac6ccc406fdc711a087afe6530f671fa7b80953edc498275ce"),
         ])
 
-    /// Nemotron 3.5 ASR Streaming 0.6B, FluidInference's CoreML build (multilingual, 2.24 s chunks): the encoder and
-    /// the fused decoder only, since FluidAudio computes the spectrogram itself.
     public static let nemotron = VoiceModelSpec(
         packID: "VoiceNemotron", folder: "nemotron-3.5-asr",
         files: [

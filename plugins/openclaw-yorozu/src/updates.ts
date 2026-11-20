@@ -12,7 +12,6 @@ const CHANNEL_ID = "yorozu";
 const store = () =>
   yorozuRuntime.getRuntime().state.openKeyedStore<string>({ namespace: "gateway", retention: "retained" });
 
-// Why OpenClaw will not update this Gateway by itself, the same conditions its auto-updater checks.
 function autoUpdateBlockers(cfg: OpenClawConfig): string[] {
   const env = process.env;
   const blockers: string[] = [];
@@ -25,15 +24,12 @@ function autoUpdateBlockers(cfg: OpenClawConfig): string[] {
   if (/^(1|true|yes|on)$/i.test(env.OPENCLAW_NO_AUTO_UPDATE?.trim() ?? "")) {
     blockers.push("`OPENCLAW_NO_AUTO_UPDATE` is set in the Gateway's environment. Remove it.");
   }
-  // `openclaw gateway install` puts these into the launchd, systemd or Scheduled Task environment.
   if (env.OPENCLAW_SERVICE_MARKER?.trim() !== "openclaw" || env.OPENCLAW_SERVICE_KIND?.trim() !== "gateway") {
     blockers.push("The Gateway is not running as a service. Install it as one with `openclaw gateway install`.");
   }
   return blockers;
 }
 
-// Posts into the most recent conversation and mirrors the text into its transcript, so a device that
-// connects later finds it in history. Returns false when there is no conversation to post into.
 async function post(cfg: OpenClawConfig, agent: string, accountId: string, text: string): Promise<boolean> {
   const convId = listConversations(agent).conversations.find((c) => !c.archived)?.convId;
   if (!convId) return false;

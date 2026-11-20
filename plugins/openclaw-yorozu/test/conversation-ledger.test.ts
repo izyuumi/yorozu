@@ -9,7 +9,6 @@ import "./genui-hooks.ts";
 import { host, yorozuRuntime } from "./genui-host.js";
 const { openLedger } = await import("../src/runs.ts");
 
-// Use the real retry store through the stand-in runtime. Fail media preparation after attachment_missing.
 const retry = new URL("../src/retry.ts?ledger", import.meta.url).href;
 const stub = new URL("./genui-host.js", import.meta.url).href;
 const inbound = `data:text/javascript,${encodeURIComponent(`

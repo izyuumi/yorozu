@@ -22,7 +22,6 @@ fn open_focused_reply_and_unanswered_resend() {
     m.step(Event::Answer(cursor(2)));
     m.step(Event::SessionLost);
     assert!(m.step(Event::SessionOpened).is_empty());
-    // Sent on open: the session is open and the window is not focused.
     assert_eq!(m.step(Event::Opened(cursor(3))), vec![cursor(3)]);
     assert!(m.step(Event::Opened(cursor(3))).is_empty());
     m.step(Event::Answer(cursor(3)));

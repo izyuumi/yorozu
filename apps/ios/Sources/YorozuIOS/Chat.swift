@@ -17,7 +17,6 @@ struct ChatView: View {
     @State private var dropFailure: String?
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var atBottom = true
-    /// A chat that just got its first content, until it rests at its newest message or the user drags.
     @State private var opening = false
     @State private var phase: ScrollPhase = .idle
     @State private var edge: ChatScrollEdge?
@@ -54,7 +53,6 @@ struct ChatView: View {
                 if typing {
                     TypingIndicator().readableRow().id("typing")
                 }
-                // The end, as a row: what `scrollToEnd()` scrolls to.
                 Color.clear.frame(height: 1).id(Self.endId)
             }
             .scrollTargetLayout()
@@ -68,8 +66,6 @@ struct ChatView: View {
         #endif
         .scrollDismissesKeyboard(.interactively)
         .onScrollGeometryChange(for: ChatScrollGeometry.self) { geometry in
-            // `containerSize` is the bounds less the insets and the offset is -top at the top, so the end sits at
-            // content - container - top (measured on iOS 26 and 27, with the bars' insets).
             ChatScrollGeometry(
                 edge: ChatScrollEdge(offset: geometry.contentOffset.y,
                     maxOffset: geometry.contentSize.height - geometry.containerSize.height - geometry.contentInsets.top,
@@ -85,11 +81,7 @@ struct ChatView: View {
             if new == .interacting { opening = false }
             scheduleSettle()
         }
-        // Only the first layout starts at the bottom; later size changes are left to the follow rule and the settle.
         .defaultScrollAnchor(.bottom, for: .initialOffset)
-        // Opening a chat starts at its newest message. The geometry for the first content can land before this
-        // onChange (atBottom already false), and a scroll issued in the same update as the first content can be
-        // dropped, so the settle keeps following until the chat rests at its end or the user drags.
         .onChange(of: items.last?.id) { old, _ in
             if old == nil { opening = true }
             if old == nil || atBottom || items.last?.kind == .user { scrollToEnd() }
@@ -211,7 +203,6 @@ extension ChatView {
             .onChange(of: VoiceSends.shared.pending[convId]?.count) { scrollToEnd() }
     }
 
-    /// Clears the composer at once; the transcript, after any typed draft, goes out with what was staged.
     private func sendVoice(_ clip: VoiceClip) {
         let (typed, staged, cron, target) = (draft.trimmingCharacters(in: .whitespacesAndNewlines), files, automation, replyingTo)
         draft = ""
@@ -224,7 +215,6 @@ extension ChatView {
         }
     }
 
-    /// On the Mac an opened conversation focuses its composer; elsewhere the keyboard stays down until tapped.
     static func focusKey(_ convId: String, focus: Focus) -> String? {
         #if os(macOS)
         focus != .unfocused ? convId : nil
@@ -257,15 +247,10 @@ extension ChatView {
 
     static let endId = "chat.end"
 
-    /// To the end row, not the scroll position's bottom edge: that ignores the keyboard's inset and trusts estimated lazy
-    /// row heights, so it came to rest past the real end, over empty space, until a drag clamped it (iOS 26 and 27); a row id is
-    /// resolved against the laid-out content.
     private func scrollToEnd() {
         position.scrollTo(id: Self.endId, anchor: .bottom)
     }
 
-    /// At rest, back onto the end when the view is past it, over empty space (the composer or keyboard shrank, a lazy
-    /// row measured shorter), or short of it while following. Never mid-gesture, so a bounce at the bottom is not fought.
     private func settle() {
         guard phase == .idle, let edge else { return }
         if edge.needsSettle(following: atBottom || opening) {
@@ -275,8 +260,6 @@ extension ChatView {
         }
     }
 
-    /// Once the geometry has held still for a moment: the keyboard and the composer move the insets in animations the
-    /// scroll phase does not report, and correcting every frame of one would fight it.
     private func scheduleSettle() {
         settling?.cancel()
         settling = Task {
@@ -286,7 +269,6 @@ extension ChatView {
     }
 }
 
-/// What the chat reads from its scroll view: where it rests against the end, and whether it is near enough to follow.
 private struct ChatScrollGeometry: Equatable {
     var edge: ChatScrollEdge
     var atBottom: Bool
@@ -407,7 +389,6 @@ struct ItemRow: View {
                 AttachmentList(model: model, attachments: files, alignment: .leading)
             }
             chips
-            // Pointer platforms keep the row's space and reveal it on hover; iPhone shows it on the latest reply only.
             #if os(macOS)
             if !item.text.isEmpty { actions.opacity(latest || hovering ? 1 : 0) }
             #else
@@ -483,8 +464,6 @@ private struct ReplyActions: View {
     let react: ReactionChoices?
     @State private var copied = false
 
-    // Icons sit close together in narrow targets as tall as a control; the leading pull lines the first icon up
-    // with the reply text.
     #if os(macOS)
     private let iconWidth: CGFloat = 24
     #else
@@ -679,7 +658,6 @@ private struct Composer: View {
     let attachLimit: Int?
     let focus: ChatView.Focus
     var focusKey: String? = nil
-    /// A widget or control asked for the keyboard or for voice input.
     var request: ComposeRequest? = nil
     var onRequestHandled: () -> Void = {}
     let onFiles: ([URL]) -> Bool
@@ -742,14 +720,12 @@ private struct Composer: View {
             guard let request else { return }
             onRequestHandled()
             guard request.talk else {
-                // The unfocused split pane must not steal the keyboard.
                 if focus != .unfocused { requestedFocus = request.convId }
                 return
             }
             if voiceAvailable, VoiceSetup.shared.ready { await voice.start() } else { settingUpVoice = true }
         }
         .onChange(of: voice.phase) { _, phase in
-            // requestedFocus is one-shot: the text view is rebuilt when the voice bar leaves, and would otherwise refocus.
             if phase != .idle { requestedFocus = nil }
         }
         .alert(String(localized: "Microphone access is off"), isPresented: $voice.micDenied) {
@@ -772,12 +748,9 @@ private struct Composer: View {
         .frame(maxWidth: .infinity)
     }
 
-    /// One line of the row: every control and a single line of text share this height, so they center on one axis.
     private var rowHeight: CGFloat { max(sendCircle, controlTarget) }
-    /// The same space above, below and beside the row's ends, so the send circle sits concentric in the capsule.
     private var inset: CGFloat { max(radius - rowHeight / 2, 0) }
 
-    // Like a flex row aligned to the end: controls stay on the last line while the text grows.
     private var row: some View {
         HStack(alignment: .bottom, spacing: LayoutMetrics.tight) {
             if let attachLimit {

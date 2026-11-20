@@ -1,36 +1,4 @@
 #!/bin/sh
-# Screenshots and creative art for the App Store listing, from apps/ios/metadata/app_store, through App Store
-# Connect's app asset library. Run by hand, never in CI: the media goes live with the version.
-#
-#   scripts/app_store_media.sh [--version <x.y.z>] [--carry-en-us]            prints the plan; only reads App Store Connect
-#   scripts/app_store_media.sh [--version <x.y.z>] [--carry-en-us] --apply    uploads, places and orders
-#
-# Sources, in each App Store Connect locale folder (<locale>/):
-#   screenshots/<device>/*.png|*.jpg   screenshots, shown in file-name order. <device> names the placement group:
-#       iphone-6.9  IPHONE_DYNAMIC_ISLAND_LARGE_PROFILE     iphone-6.5  IPHONE_FACE_ID_LARGE_PROFILE
-#       iphone-6.3  IPHONE_DYNAMIC_ISLAND_MEDIUM_PROFILE    ipad-13     IPAD_13_PROFILE
-#       iphone-duo  IPHONE_DUO_PROFILE
-#   creative/header.png                the product page header (PRODUCT_PAGE_HEADER_ASSET, DEFAULT_PROFILE)
-#   creative/search.png                the search results art (APP_STORE_SEARCH_RESULTS_ASSET, DEFAULT_PROFILE)
-# A localization without its own header or search art gets FALLBACK_HEADER or FALLBACK_SEARCH below.
-#
-# It works on one iOS version: the one being prepared, or --version, and refuses (65) one App Store Connect no longer
-# lets you edit. Every file is checked first against the image specs App Store Connect lists
-# (GET /v1/appAssetLibraryRefData): exact pixel size, alpha channel (via sips), file type and size, and the count
-# limit per placement group. Then, with --apply:
-#   1. upload: each file the library lacks is reserved (POST /v1/appAssetLibraryImages), its bytes PUT to the upload
-#      operations, committed (PATCH uploaded=true) and polled until processed. The library has no checksum field, so
-#      the reference name carries the file's SHA-256 ("... sha256:<16 hex>"), and a file whose checksum is in the
-#      library is not uploaded again; nor is one uploaded some other way with the same byte count and pixel size.
-#   2. place: each image not yet on the version localization gets a placement (POST /v1/appAssetLibraryPlacements).
-#      A header or search art already placed with another image is kept and reported: there is room for one.
-#   3. order: the repo's screenshots first, in file-name order, then the ones already there
-#      (POST /v1/appAssetLibraryPlacementOrderingRequests).
-# A localization with no screenshots for a device shows en-US's; once it has its own it shows only those. The plan
-# says where that happens, and --carry-en-us also places en-US's other screenshots after the localization's own, as
-# far as the limit allows. Nothing is deleted. Running it twice changes nothing the second time.
-# Exit codes: 0 done or nothing blocks the plan, 64 bad arguments, 65 blocked (the reason is printed), 70 App Store
-# Connect refused a write or failed to process an upload; the key handling in scripts/asc_lib.sh exits 1 without a key.
 set -eu
 cd "$(dirname "$0")/.."
 export LC_ALL=C
@@ -53,7 +21,6 @@ done
 [ -z "$VERSION" ] || printf '%s' "$VERSION" | grep -qE '^[0-9]+(\.[0-9]+){0,2}$' \
     || { echo "The version must look like 1.2.3, not '$VERSION'." >&2; exit 64; }
 [ -d "$DIR" ] || { echo "$DIR does not exist." >&2; exit 64; }
-# --apply first runs the plan, and writes nothing unless the plan passes.
 if [ -n "$APPLY" ]; then
     plan=$("$PWD/scripts/app_store_media.sh" ${VERSION:+--version "$VERSION"} ${CARRY:+--carry-en-us} 2>&1) \
         || { rc=$?; printf '%s\n' "$plan"; echo "Stopped; nothing was written." >&2; exit "$rc"; }
@@ -76,7 +43,6 @@ group_for() {
     esac
 }
 
-# The repo's media, one line each: locale, placement type, group, category, path (tab-separated)
 TAB=$(printf '\t')
 : > "$W/items"
 for dir in "$DIR"/*/; do
@@ -95,7 +61,6 @@ done
 [ -r "$FALLBACK_HEADER" ] || block "the fallback header $FALLBACK_HEADER is missing."
 [ -r "$FALLBACK_SEARCH" ] || block "the fallback search art $FALLBACK_SEARCH is missing."
 
-# Facts per file: path, sha256 (16 hex), width, height, alpha, bytes, extension
 command -v sips >/dev/null || { echo "This needs sips (macOS) to read pixel sizes and alpha." >&2; exit 65; }
 facts() {
     grep -q "^$1$TAB" "$W/facts" 2>/dev/null && return
@@ -116,7 +81,6 @@ for f in "$FALLBACK_HEADER" "$FALLBACK_SEARCH"; do [ -r "$f" ] && facts "$f"; do
 . scripts/asc_lib.sh
 exec 3>&1
 
-# get_all <url> <file>: every page of a list, as one JSON array
 get_all() {
     url=$1 n=0
     while [ -n "$url" ]; do
@@ -130,7 +94,6 @@ get_all() {
 
 asc_get "$API/v1/appAssetLibraryRefData" > "$W/ref.json"
 echo "Image specs: $(jq '.data[0].attributes.imageSpecs | length' "$W/ref.json") from App Store Connect (appAssetLibraryRefData)"
-# check <placement type> <group> <path>: "ok" or why the file does not fit
 check() {
     jq -r --arg t "$1" --arg g "$2" --argjson w "$(fact "$3" 3)" --argjson h "$(fact "$3" 4)" \
         --argjson alpha "$([ "$(fact "$3" 5)" = yes ] && echo true || echo false)" --argjson bytes "$(fact "$3" 6)" \
@@ -176,7 +139,6 @@ for loc_dir in "$DIR"/*/; do
     done
 done
 
-# The version
 EDITABLE='["PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED", "METADATA_REJECTED", "INVALID_BINARY"]'
 state() { q "$1" '.attributes.appStoreState // .attributes.appVersionState // ""'; }
 editable() { printf '%s' "$EDITABLE" | jq -e --arg s "$1" 'index($s)' >/dev/null; }
@@ -205,8 +167,6 @@ done
 LIB=$(asc_get "$API/v1/apps/$APP_ID/assetLibrary" | jq -r '.data.id')
 get_all "$API/v1/appAssetLibraries/$LIB/images?limit=200&fields%5BappAssetLibraryImages%5D=fileName,fileSize,imageAsset,referenceName,category,state" "$W/images.json"
 echo "Library: $(jq length "$W/images.json") images"
-# image <path> <category>: the id of a usable library image of that file: its reference name ends with the file's
-# checksum, or, for one uploaded some other way, it has the file's exact byte count and pixel size
 image() {
     grep "^$(fact "$1" 2)$TAB$2$TAB" "$W/uploaded" 2>/dev/null | cut -f3 | head -1 | grep . && return
     jq -r --arg s "sha256:$(fact "$1" 2)" --arg c "$2" --argjson b "$(fact "$1" 6)" --argjson w "$(fact "$1" 3)" \
@@ -220,11 +180,9 @@ image() {
 for loc in $(jq -r '.[].attributes.locale' "$W/locs.json" | sort); do
     get_all "$API/v1/appStoreVersionLocalizations/$(loc_id "$loc")/placements?limit=200&sort=placementGroupPosition&include=image&fields%5BappAssetLibraryPlacements%5D=placementType,placementGroup,state,image&fields%5BappAssetLibraryImages%5D=fileName" "$W/pl-$loc.json"
 done
-# placed <locale> <type> <group>: "placement-id image-id" lines, in order
 placed() { jq -r --arg t "$2" --arg g "$3" '.[] | select(.attributes.placementType == $t and .attributes.placementGroup == $g)
     | "\(.id) \(.relationships.image.data.id // "-")"' "$W/pl-$1.json"; }
 
-# write <message> <method> <url> <json>: prints the response with --apply, else only the plan line
 write() {
     if [ -n "$APPLY" ]; then
         out=$(asc_send "$2" "$3" "$4") || { echo "App Store Connect refused: $1" >&2; exit 70; }
@@ -235,7 +193,6 @@ write() {
     fi
 }
 
-# ensure <path> <category>: prints the image id, uploading the file first if the library lacks it ("" in the plan)
 ensure() {
     sha=$(fact "$1" 2)
     id=$(image "$1" "$2")
@@ -283,7 +240,6 @@ ensure() {
     printf '%s' "$id"
 }
 
-# place <locale> <type> <group> <image id> <what>
 place() {
     write "$1: place $5 as $2 in $3." POST "$API/v1/appAssetLibraryPlacements" "$(jq -nc --arg t "$2" --arg g "$3" \
         --arg img "${4:-new}" --arg l "$(loc_id "$1")" '{data: {type: "appAssetLibraryPlacements",
@@ -292,11 +248,9 @@ place() {
             appStoreVersionLocalization: {data: {type: "appStoreVersionLocalizations", id: $l}}}}}')" >/dev/null
 }
 
-# The plan, per localization
-screenshots() { # <locale> <group>: the repo's files for it, in order
+screenshots() {
     awk -F '\t' -v l="$1" -v g="$2" '$1 == l && $3 == g { print $5 }' "$W/items" | sort
 }
-# others <locale> <group> <own image ids file>: image ids placed there that are not the repo's
 others() { placed "$1" APP_SCREENSHOT "$2" | while read -r _ img; do grep -qx "$img" "$3" || echo "$img"; done; }
 if [ "$BLOCKED" = 1 ]; then
     echo "Plan only; nothing was written, and the blocks above stop it." >&2
@@ -343,7 +297,6 @@ for loc in $(jq -r '.[].attributes.locale' "$W/locs.json" | sort); do
             echo "Blocked: $loc $group would hold $((nfiles + nkept)) screenshots ($nfiles from the repo, $nkept already there); the limit is $max. Remove some in App Store Connect." >&2
             exit 65
         fi
-        # 2: place the repo's files, then any carried ones
         changed=""
         for f in $files; do
             id=$(image "$f" APP_SCREENSHOTS_AND_PREVIEWS)
@@ -354,7 +307,6 @@ for loc in $(jq -r '.[].attributes.locale' "$W/locs.json" | sort); do
             [ -n "$img" ] || continue
             place "$loc" APP_SCREENSHOT "$group" "$img" "en-US's screenshot $img"; changed=1
         done < "$W/carry"
-        # 3: order: the repo's files, the ones that were there, then the carried ones
         if [ -n "$APPLY" ] && [ -n "$changed" ]; then
             get_all "$API/v1/appStoreVersionLocalizations/$(loc_id "$loc")/placements?limit=200&sort=placementGroupPosition&include=image&fields%5BappAssetLibraryPlacements%5D=placementType,placementGroup,state,image&fields%5BappAssetLibraryImages%5D=fileName" "$W/pl-$loc.json"
         fi
@@ -384,7 +336,6 @@ for loc in $(jq -r '.[].attributes.locale' "$W/locs.json" | sort); do
         fi
     done
 
-    # Header and search art: the localization's own, else the fallback
     for kind in header search; do
         if [ "$kind" = header ]; then t=PRODUCT_PAGE_HEADER_ASSET fb=$FALLBACK_HEADER; else t=APP_STORE_SEARCH_RESULTS_ASSET fb=$FALLBACK_SEARCH; fi
         f=$DIR/$loc/creative/$kind.png

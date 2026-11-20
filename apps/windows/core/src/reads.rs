@@ -1,4 +1,3 @@
-//! Pure pending read cursors; acknowledgements are cumulative by conversation.
 use crate::events::ReadCursor;
 #[derive(Default)]
 pub struct Machine {
@@ -15,7 +14,6 @@ pub enum Event {
     Focus(bool),
 }
 impl Machine {
-    /// Forgets the pairing's cursors and session; the window's focus outlives a pairing.
     pub fn reset(&mut self) {
         *self = Self {
             focused: self.focused,

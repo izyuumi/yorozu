@@ -1,17 +1,4 @@
 #!/bin/sh
-# Prints the notes for a build: the pull requests merged into main since the last stable tag v<x.y.z> (never a
-# -beta tag), grouped by their Conventional Commits titles: feat, fix and perf, each with its PR number; other
-# types and dependency bumps are left out. A PR is a merge "Merge pull request #N from …" on main's first-parent
-# line, titled by the merge's body, or a squashed commit ending "(#N)"; a commit pushed straight to main counts by
-# its own subject. scripts/release_notes.overrides can retitle a PR or leave it out, for a PR a later one changed:
-# a line "#<n> <title>" shows <title> (a Conventional Commits title, which may end in its own "(#a, #b)") in place
-# of PR #<n>'s, and "#<n> -" drops PR #<n>.
-#
-#   scripts/release_notes.sh [<commit>]       Markdown: the beta and stable releases, the release PR, CHANGELOG.md
-#   scripts/release_notes.sh --what-to-test <locale> <version> <build> [<commit>]
-#       a build's TestFlight What to Test in one App Store Connect locale, as plain text within its 4,000 bytes:
-#       the intro, note, headings and closing line come from apps/ios/metadata/testflight/<locale>/what_to_test.txt;
-#       the PR titles stay as written
 set -eu
 cd "$(dirname "$0")/.."
 PLAIN=0; intro=; note=; feat=Features; fix=Fixes; perf=Performance; more=

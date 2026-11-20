@@ -15,9 +15,7 @@ final class AppModel {
     private(set) var conversations: [String: Conversation] = [:]
     private(set) var typing: Set<String> = []
     private var outageMemory = OutageMemory()
-    /// The last relay outage (`.offline` or `.hostOffline`), kept while reconnecting until the state is `.ready` again.
     var outage: RelayConnection.State? { outageMemory.outage }
-    /// Conversations whose running turn has sent no reply or tool event for `stallTimeout`.
     private(set) var stalled: Set<String> = []
     private(set) var loadingOlder: Set<String> = []
     var pairingEntry = PairingEntry()
@@ -26,10 +24,8 @@ final class AppModel {
         set { pairingEntry.pendingPairing = newValue }
     }
     var pairingError: String?
-    /// The save error while storage lags the in-memory pairing; `resume` retries the save.
     private var pairingSaveError: String?
     var requestedConversation: String?
-    /// What a widget or control asked the opened conversation's composer to do.
     var composeRequest: ComposeRequest?
     private(set) var foreground: String?
     private(set) var crons: [CronJob]?
@@ -55,7 +51,6 @@ final class AppModel {
     @ObservationIgnored private let makeTransport: Transport
     @ObservationIgnored private let pendingShares: () -> [(share: ShareInbox.Share, folder: URL)]
     @ObservationIgnored private let authorizeNotifications: NotificationAuthorizer
-    /// Mirrors its `loadingOlder` into the observed property, so queue churn alone redraws nothing.
     @ObservationIgnored private var queue = RequestQueue() {
         didSet { if loadingOlder != queue.loadingOlder { loadingOlder = queue.loadingOlder } }
     }
@@ -63,17 +58,13 @@ final class AppModel {
     @ObservationIgnored private var unplacedReads: [String: ReadCursor] = [:]
     @ObservationIgnored private var badge: Int?
     private(set) var hostInfo: PeerInfo?
-    /// The path the session runs on (#532), and when it last switched to a different one; nil while disconnected.
     private(set) var route: DirectRoute?
     private(set) var routeChangedAt: Date?
-    /// Observable copies of `LocalNetwork.allowed`, `.explained` and `.denied`, which live in user defaults (the racer reads them there).
     private(set) var localNetworkAllowed = LocalNetwork.allowed
     private(set) var localNetworkExplained = LocalNetwork.explained
     private(set) var localNetworkDenied = LocalNetwork.denied
-    /// While pairing (#532 step 5): the relay couldn't be reached, and the code's hints name LAN addresses.
     private(set) var pairingRelayUnreachable = false
     private(set) var pairingLANHints = false
-    /// Counts opened sessions, so the Live Activity can report itself again to a host that may have restarted.
     private(set) var sessionsOpened = 0
     let transfers = Transfers()
     @ObservationIgnored private var outboxPumping = false
@@ -88,7 +79,6 @@ final class AppModel {
 
     @ObservationIgnored private var connectionGeneration = 0
     @ObservationIgnored private var pairingUnread = false
-    /// Live, or the memory-only demo; `saved` is nil when the demo started at launch, before any live state loaded.
     private var runtime = Runtime.live
     private enum Runtime { case live, demo(saved: LiveSnapshot?) }
     private struct LiveSnapshot {
@@ -146,7 +136,6 @@ final class AppModel {
         bootLive()
     }
 
-    /// A normal launch's live start; leaving a demo that began at launch runs it too.
     private func bootLive() {
         PairingMigration.run(storage: storage, state: migration)
         loadPairing()
@@ -180,7 +169,6 @@ final class AppModel {
                 lanHints: pairingLANHints, explained: localNetworkExplained, denied: localNetworkDenied)
     }
 
-    /// The explainer's Continue and Settings' toggle: LAN candidates and Bonjour, after the system's prompt on iOS.
     func allowLocalNetwork() async {
         LocalNetwork.allowed = true
         localNetworkAllowed = true
@@ -189,7 +177,6 @@ final class AppModel {
         localNetworkChanged()
     }
 
-    /// The explainer's Not Now: it doesn't come back; Settings › Host can still turn it on.
     func explainLocalNetwork() {
         LocalNetwork.explained = true
         localNetworkExplained = true
@@ -201,10 +188,8 @@ final class AppModel {
         localNetworkChanged()
     }
 
-    /// The racer's own probes update the stored denial too.
     func readLocalNetwork() { localNetworkDenied = LocalNetwork.denied }
 
-    /// Back from Settings: an owner who turned Local Network on there gets LAN without a relaunch.
     func recheckLocalNetwork() async {
         readLocalNetwork()
         guard LocalNetwork.allowed, LocalNetwork.denied else { return }
@@ -258,7 +243,6 @@ final class AppModel {
             return
         }
         pairingEntry.text = ""
-        // The code's direct hints go where the host's later ones go (#532 step 5): the racer reads them there.
         if let hints, let room = payload.roomId { DirectHintStore().save(hints, room: room) }
         pairingRelayUnreachable = false
         pairing = new
@@ -267,12 +251,10 @@ final class AppModel {
         connect()
     }
 
-    /// Handles Cancel in the “Pair with this host?” alert.
     func dismissPendingPairing() {
         pairingEntry.cancel()
     }
 
-    /// Handles Cancel in the “Pairing…” section.
     func cancelPairing() {
         pairingEntry.cancel()
         if connecting { unpair() }
@@ -413,8 +395,6 @@ final class AppModel {
         listen(to: connection)
     }
 
-    /// The relay races the plugin's direct listener (#532): loopback on the Mac, the plugin's hints and Bonjour; with no
-    /// usable candidate the race is relay-only. The racer keeps the `direct_hints` it receives.
     static func race(pairing: Pairing, local: PeerInfo) throws -> any ClientTransport {
         try RacingConnection(pairing: pairing.pairing, identity: pairing.identity, relayKnows: pairing.relayKnows, local: local,
             unversionedWire: pairing.unversionedWire == true)
@@ -466,7 +446,6 @@ final class AppModel {
         Task { await connection.reconnect() }
     }
 
-    /// #532 item 8: the race starts on the way back to the foreground, before the scene is active; `resume` then joins it.
     func prewarm() {
         lifecycle.becomeInactive()
         guard !isDemo else { return }
@@ -670,7 +649,6 @@ final class AppModel {
             if pairingSaveError != nil, pairingError == pairingSaveError { pairingError = nil }
             pairingSaveError = nil
         } catch {
-            // Kept in memory: a pairing whose first session completed is not dropped over a failed write.
             Self.connectionLog.error("pairing save failed: \(String(describing: error), privacy: .public)")
             pairingSaveError = String(localized: "Couldn’t save the pairing: \(error.localizedDescription)")
             pairingError = pairingSaveError
@@ -695,16 +673,13 @@ final class AppModel {
     var mediaMaxBytes: Int { hostInfo?.mediaMaxBytes ?? Attachment.defaultMaxBytes }
     var repliesAvailable: Bool { !isDemo && (hostInfo.map { $0.capabilities.contains(ReplyTo.capability) } ?? true) }
     var reactionsAvailable: Bool { !isDemo && hostInfo?.capabilities.contains(Reaction.capability) == true }
-    /// The host can keep the Live Activity current through counts-only relay pushes.
     var liveActivityPushAvailable: Bool { !isDemo && hostInfo?.capabilities.contains(ActivityReport.capability) == true }
 
-    /// Tells the host about the Live Activity over the encrypted session; true when it went out.
     func report(_ report: ActivityReport) async -> Bool {
         guard let connection, liveActivityPushAvailable else { return false }
         return await connection.send(.liveActivity(report))
     }
 
-    /// One reaction per person: picking the one the message already has removes it.
     func react(_ emoji: String, to item: ChatItem, in convId: String) {
         guard let connection, reactionsAvailable, WireEvent.isId(convId), WireEvent.isId(item.id) else { return }
         let reaction = Reaction(convId: convId, messageId: item.id, emoji: emoji, remove: item.reactions?.user == emoji)
@@ -1004,7 +979,6 @@ final class AppModel {
             if page.after != nil && page.more {
                 enqueue(.historyRequest(HistoryRequest(convId: page.convId, after: conversation.newestSeq)), first: true)
             } else if page.rev > 0 || !page.items.isEmpty {
-                // An empty page with rev 0 means the host has no session yet; a rev would let the list prune the thread.
                 conversation.rev = page.rev
             }
         }
@@ -1026,7 +1000,6 @@ final class AppModel {
         store(conversation)
     }
 
-    /// Deletes a message still waiting in the outbox (clock mark), before it reaches the relay.
     func discard(_ messageId: String) {
         guard var conversation = conversations.values.first(where: { $0.items.contains { $0.id == messageId } }),
               let index = conversation.items.firstIndex(where: { $0.id == messageId && $0.kind == .user && $0.status == .queued }) else { return }
@@ -1121,8 +1094,6 @@ final class AppModel {
         ShareInbox.publish(.init(conversations: Array(rows), maxBytes: mediaMaxBytes))
     }
 
-    /// Conversations whose turn has no answer yet: the agent is typing, or the owner's last message went
-    /// out in the last `awaitingWindow` with nothing after it.
     var awaitingReply: [String] {
         let since = Self.now - Self.awaitingWindow
         return conversations.values.filter { conversation in
@@ -1134,22 +1105,18 @@ final class AppModel {
 
     private static let awaitingWindow: Int64 = 10 * 60 * 1000
 
-    /// The widgets' snapshot (`WidgetSnapshot`); nothing in demo mode or before pairing.
     func publishWidgets() {
         guard !isDemo, pairing != nil else { return }
         WidgetPublisher.publish(WidgetSnapshot(conversations: Array(conversations.values), previews: WidgetStore.previews,
             accent: UserDefaults.standard.string(forKey: Accent.key), live: active))
     }
 
-    /// An explicit new conversation: allocates an id and requests text (not voice) composer focus.
     func newConversationId() -> String {
         let id = WireEvent.newId()
         composeRequest = ComposeRequest(convId: id, talk: false)
         return id
     }
 
-    /// Opens what a widget, a control or a Lock Screen accessory asked for. Without a pairing the app just comes forward.
-    /// Demo mode opens only new conversations: it writes no snapshot, so no link names one of its conversations.
     func open(_ link: WidgetLink) {
         guard isDemo || pairing != nil else { return }
         switch link {
@@ -1316,7 +1283,6 @@ final class AppModel {
         }
     }
 
-    /// Restarts the stall clock of a running turn; typing keepalives alone don't count as progress.
     private func progressed(_ convId: String) {
         guard typing.contains(convId) else { return }
         stallTimers[convId]?.cancel()
@@ -1347,7 +1313,6 @@ extension RelayConnection.State {
 
 struct ComposeRequest: Equatable {
     let convId: String
-    /// Start voice input; otherwise focus the text field.
     let talk: Bool
 }
 

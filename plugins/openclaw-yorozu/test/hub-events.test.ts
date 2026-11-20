@@ -9,7 +9,6 @@ const { ATTACHMENTS, DIRECT, encodeEvent, LIMITS, REACTIONS, REPLIES } = await i
 const otherId = "33333333-3333-4333-8333-333333333333";
 const can = (...capabilities: string[]): PeerInfo => ({ ...peer, capabilities });
 const helloWith = (...capabilities: string[]): Event => ({ kind: "peer_info", data: can(...capabilities) });
-/** The downgraded event as the client reads it: JSON drops the keys `downgrade` sets to undefined. */
 const sent = (event: Event, to: PeerInfo): unknown => JSON.parse(encodeEvent(downgrade(event, to)).toString("utf8"));
 const note = (name: string) => `(Attachment: ${name}; update Yorozu to open it.)`;
 

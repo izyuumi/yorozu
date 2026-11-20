@@ -1,10 +1,4 @@
 #!/bin/sh
-# Builds one of the Apple-hosted asset packs iPhone and iPad download voice models from:
-#   scripts/voice_asset_pack.sh <pack ID> <output directory>   e.g. VoiceWhisperTurbo ./out -> ./out/VoiceWhisperTurbo/VoiceWhisperTurbo.aar
-# Pack IDs: VoiceModel (LFM3-Audio-2B, already uploaded: leave it), VoiceWhisperTurbo, VoiceWhisperSmall, VoiceNemotron.
-# The file list below (pack, path in the pack, bytes, SHA-256, pinned source) mirrors VoiceCatalog.swift in
-# packages/YorozuVoice; VoiceTextTests fails when they differ. Upload the result with
-# xcrun altool --upload-asset-pack (docs/release.md); a pack is not available in the app until App Store Connect has it.
 set -eu
 PACK=${1:?usage: scripts/voice_asset_pack.sh <pack ID> <output directory>}
 OUT=${2:?usage: scripts/voice_asset_pack.sh <pack ID> <output directory>}
@@ -76,7 +70,6 @@ VoiceNemotron nemotron-3.5-asr/metadata.json 3005 070ae181941003ff3e7d7ff8e5c5d4
 VoiceNemotron nemotron-3.5-asr/tokenizer.json 284969 fb70c8fcb6472cda2bdb799b156a8941e72762344a7c636d3b1275f1d53c4a6b https://huggingface.co/FluidInference/Nemotron-3.5-ASR-Streaming-Multilingual-0.6b-CoreML/resolve/1a41b75758b0337ff67db7d5408280aaaf23074e/multilingual/2240ms/tokenizer.json
 FILES
 [ "$FOUND" = 1 ] || { echo "Unknown pack: $PACK" >&2; exit 1; }
-# The model's license travels with its weights (OpenMDW-1.1 requires it for Nemotron).
 case "$PACK" in
     VoiceWhisperTurbo) cp "$LICENSES/Whisper-MIT.txt" files/whisper-large-v3-turbo/LICENSE.txt ;;
     VoiceWhisperSmall) cp "$LICENSES/Whisper-MIT.txt" files/whisper-small/LICENSE.txt ;;

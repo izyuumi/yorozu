@@ -37,11 +37,8 @@ public struct QrPayload: Codable, Equatable, Sendable {
     public var token: String
     public var roomId: String?
     public var secret: String?
-    /// The direct listener's addresses (#532 step 5), so a device can pair while the relay is down; the app moves them
-    /// into `DirectHintStore` when it saves the pairing.
     public var hints: DirectHints?
 
-    /// The link carries at most this many LAN and Tailscale addresses, so the QR stays readable.
     public static let maxLAN = 4
     public static let maxTailscale = 2
 
@@ -126,7 +123,6 @@ public struct QrPayload: Codable, Equatable, Sendable {
         }
         let items = components.queryItems ?? []
         let query = Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
-        // A link without `v` is the current wire's: the plugin stops sending `v=3` once every client reads it so.
         guard let v = query["v"].map({ ["1": 1, "3": 3][$0] }) ?? 3, let relayUrl = query["relay"], isAcceptableRelayUrl(relayUrl) else {
             throw malformed()
         }
@@ -141,7 +137,6 @@ public struct QrPayload: Codable, Equatable, Sendable {
         )
     }
 
-    /// `port`, `lan=<addr>/<prefix>,…` and `ts=<addr>,…`; the lists only when not empty.
     private static func hintItems(_ hints: DirectHints) -> [URLQueryItem] {
         let lan = hints.lan.prefix(maxLAN).map { "\($0.address)/\($0.prefix)" }
         let ts = hints.tailscale.prefix(maxTailscale).map(\.address)
@@ -150,8 +145,6 @@ public struct QrPayload: Codable, Equatable, Sendable {
             + (ts.isEmpty ? [] : [URLQueryItem(name: "ts", value: ts.joined(separator: ","))])
     }
 
-    /// The link's hints, nil without a valid port; invalid entries are dropped as `DirectHints` drops them, and the
-    /// lists are capped as the plugin caps them.
     static func hints(_ query: [String: String]) -> DirectHints? {
         guard let port = query["port"].flatMap({ Int($0) }), (1...65535).contains(port) else { return nil }
         func entries(_ name: String) -> [String] { (query[name] ?? "").split(separator: ",").map(String.init) }

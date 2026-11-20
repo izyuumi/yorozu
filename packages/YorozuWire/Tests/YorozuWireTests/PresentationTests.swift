@@ -2,14 +2,11 @@ import Foundation
 import Testing
 @testable import YorozuWire
 
-/// Cards (capability `presentation`): the plugin's exact output from the shared fixture, and the tolerant reader's
-/// rules for what it can't check.
 struct PresentationTests {
     private func fixture(_ name: String) throws -> WireEvent { try GenUIFixture.event(name) }
 
     private let ids = #""convId":"00000000-0000-4000-8000-000000003000","messageId":"00000000-0000-4000-8000-000000003001""#
 
-    /// A reply with `text` "Hello" and the given JSON as its `presentation`.
     private func reply(presentation json: String) throws -> Reply {
         let event = try JSONDecoder().decode(WireEvent.self,
             from: Data(#"{"kind":"reply","data":{\#(ids),"text":"Hello","ts":1,"presentation":\#(json)}}"#.utf8))
@@ -58,7 +55,6 @@ struct PresentationTests {
         #expect(reply.presentation != nil)
     }
 
-    /// New app, old plugin: no field, no card, no error.
     @Test func replyWithoutPresentationDecodesWithoutACard() throws {
         guard case .reply(let reply) = try fixture("replyOldApp") else {
             Issue.record("not a reply")
@@ -94,9 +90,7 @@ struct PresentationTests {
     }
 
     @Test(arguments: [
-        // A row shorter than the headers.
         #"{"type":"table","caption":"T","headers":["A","B"],"rows":[["x",1],["y"]],"alt":"alt"}"#,
-        // What JSON makes of a number that isn't finite.
         #"{"type":"table","caption":"T","headers":["A"],"rows":[[null]],"alt":"alt"}"#,
         #"{"type":"table","caption":"T","headers":["A"],"rows":[[true]],"alt":"alt"}"#,
         #"{"type":"table","caption":"T","headers":[],"rows":[],"alt":"alt"}"#,
@@ -104,7 +98,6 @@ struct PresentationTests {
         #"{"type":"chart","chartType":"line","title":"C","categories":["A"],"series":[{"name":"S","values":[null]}],"alt":"alt"}"#,
         #"{"type":"chart","chartType":"pie","title":"C","segments":[{"label":"A","value":-1}],"alt":"alt"}"#,
         #"{"type":"chart","chartType":"pie","title":"C","segments":[],"alt":"alt"}"#,
-        // A pie slice of nothing, as the plugin rejects it.
         #"{"type":"chart","chartType":"pie","title":"C","segments":[{"label":"A","value":2},{"label":"B","value":0}],"alt":"alt"}"#,
         #"{"type":"chart","chartType":"radar","title":"C","alt":"alt"}"#,
         #"{"type":"text","alt":"alt"}"#,
@@ -130,7 +123,6 @@ struct PresentationTests {
         #expect(Presentation.Chart(chartType: .pie, segments: [.init(label: "A", value: 0.001)]).valid)
     }
 
-    /// A table cell shows the digits the plugin's `alt` writes (JavaScript's `String(n)`): no grouping, full precision.
     @Test(arguments: [
         ("2026", "2026"), ("-2026", "-2026"), ("120", "120"), ("0", "0"), ("-0", "0"), ("2.5", "2.5"),
         ("0.1234567", "0.1234567"), ("0.30000000000000004", "0.30000000000000004"),
@@ -160,7 +152,6 @@ struct PresentationTests {
         #expect(table.rowHeader == nil)
     }
 
-    /// Nothing to draw: the bubble shows the reply's text.
     @Test(arguments: [
         #"{"title":"Only a title","blocks":[]}"#,
         #"{"blocks":[{"type":"divider","alt":""}]}"#,
@@ -172,7 +163,6 @@ struct PresentationTests {
         #expect(try #require(reply.presentation).renders == false)
     }
 
-    /// A presentation that isn't a card, or holds a number no Double does, is dropped; the reply decodes with the rest.
     @Test(arguments: ["7", #""card""#, "[]", "{}", #"{"blocks":"none"}"#,
         #"{"blocks":[{"type":"table","caption":"T","headers":["A"],"rows":[[1e999]],"alt":"alt"}]}"#])
     func malformedPresentationIsDroppedAndTheReplyDecodes(json: String) throws {
@@ -209,7 +199,6 @@ struct PresentationTests {
         #expect(page.items.first?.presentation == nil)
     }
 
-    /// What the app stores with a conversation decodes back to the same card.
     @Test func cardRoundTripsThroughCodable() throws {
         guard case .reply(let reply) = try fixture("reply") else {
             Issue.record("not a reply")

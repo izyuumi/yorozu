@@ -2,7 +2,6 @@ import Foundation
 import Testing
 import YorozuWire
 
-/// The outage banner follows why the transport went offline, not whether the app is in front (#677, CO1).
 @MainActor
 @Suite struct AppModelOutageTests {
     private let harness: ModelHarness
@@ -26,17 +25,17 @@ import YorozuWire
 
     @Test func anOfflineWhileInactiveIsAnOutage() async throws {
         let (model, transport) = try await opened()
-        model.setActive(true) // RootView initial onChange: .active.
-        model.setActive(false) // RootView initial-enabled onChange: .inactive from .active.
+        model.setActive(true)
+        model.setActive(false)
         await transport.emit(.state(.offline))
         #expect(await settled { model.outage == .offline })
     }
 
     @Test func anOfflineDuringTheBackgroundDrainIsAnOutage() async throws {
         let (model, transport) = try await opened()
-        model.setActive(true) // RootView initial onChange: .active.
-        model.setActive(false) // RootView initial-enabled onChange: .inactive from .active.
-        _ = model.enterBackground() // RootView onChange: .background; the drain runs before suspend(visit:).
+        model.setActive(true)
+        model.setActive(false)
+        _ = model.enterBackground()
         await transport.emit(.state(.offline))
         #expect(await settled { model.outage == .offline })
     }
@@ -49,14 +48,14 @@ import YorozuWire
 
     @Test func aQuickReturnNeverStopsTheTransport() async throws {
         let (model, transport) = try await opened()
-        model.setActive(true) // RootView initial onChange: .active.
-        model.setActive(false) // RootView initial-enabled onChange: .inactive from .active.
-        let visit = model.enterBackground() // RootView onChange: .background; hold the drain before suspend(visit:).
-        model.prewarm() // RootView onChange: .inactive from .background.
-        model.setActive(false) // RootView initial-enabled onChange: .inactive from .background.
-        model.resume() // RootView onChange: .active.
-        model.setActive(true) // RootView initial-enabled onChange: .active.
-        model.suspend(visit: visit) // RootView .background handler: held drain finishes after the return to .active.
+        model.setActive(true)
+        model.setActive(false)
+        let visit = model.enterBackground()
+        model.prewarm()
+        model.setActive(false)
+        model.resume()
+        model.setActive(true)
+        model.suspend(visit: visit)
 
         try await Task.sleep(for: .milliseconds(600))
         #expect(await transport.stops == 0)
@@ -65,9 +64,9 @@ import YorozuWire
 
     @Test func anOutageAfterTheOwnStopAndAReturnIsRecorded() async throws {
         let (model, transport) = try await ownStop()
-        model.prewarm() // RootView onChange: .inactive from .background.
-        model.resume() // RootView onChange: .active.
-        model.setActive(true) // RootView initial-enabled onChange: .active.
+        model.prewarm()
+        model.resume()
+        model.setActive(true)
         await transport.emit(.state(.connecting))
         await transport.emit(.state(.offline))
         #expect(await settled { model.outage == .offline })
@@ -76,13 +75,12 @@ import YorozuWire
         #expect(await settled { model.outage == nil })
     }
 
-    /// A model whose transport the app stopped on suspend, with the stop's `.offline` applied.
     private func ownStop() async throws -> (AppModel, ScriptedTransport) {
         let (model, transport) = try await opened()
-        model.setActive(true) // RootView initial onChange: .active.
-        model.setActive(false) // RootView initial-enabled onChange: .inactive from .active.
-        let visit = model.enterBackground() // RootView onChange: .background.
-        model.suspend(visit: visit) // RootView .background handler: the drain finishes in the same visit.
+        model.setActive(true)
+        model.setActive(false)
+        let visit = model.enterBackground()
+        model.suspend(visit: visit)
         try #require(await stops(transport, reach: 1))
         try #require(await settled { model.state == .offline })
         return (model, transport)

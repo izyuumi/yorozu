@@ -2,7 +2,6 @@
 set -eu
 cd "$(dirname "$0")/.."
 REPO=${REPO:-izyuumi/yorozu}
-# The one beta release: v<version>-beta, which each build replaces (before this, v<version>-beta.<build>).
 beta_tag() {
     gh release list --repo "$REPO" --limit 100 --json tagName,isPrerelease -q '.[] | select(.isPrerelease) | .tagName' \
         | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-beta(\.[0-9]+)?$' | head -1 || true
@@ -11,8 +10,6 @@ beta_build() {
     gh release download "$1" --repo "$REPO" --pattern candidate.json --output - 2>/dev/null \
         | jq -r '.build | tonumber % 1000' || true
 }
-# Deletes a beta release. The tag ruleset leaves *-beta tags alone, so v<version>-beta goes too; an older
-# v<version>-beta.<n> tag is immutable, so only its release goes.
 drop_beta() {
     case "$1" in
         *-beta) gh release delete "$1" --repo "$REPO" --cleanup-tag --yes ;;
@@ -21,8 +18,6 @@ drop_beta() {
 }
 
 if [ "${1:-}" = "--promote" ]; then
-    # The release PR names the beta it promotes by build, source commit and DMG digest (scripts/release_pr.sh);
-    # promote.yml passes all three. The beta must still be exactly that release, or nothing is published.
     N=${2:-}; WANT_SHA=${3:-}; WANT_DIGEST=${4:-}
     usage="Usage: scripts/release_mac.sh --promote <build> <source sha> <sha256:dmg digest>, from the release PR's Release-Build, Release-Commit and Release-Digest lines"
     case "$N" in ''|*[!0-9]*) echo "$usage" >&2; exit 64 ;; esac
@@ -38,7 +33,6 @@ if [ "${1:-}" = "--promote" ]; then
     FILES=$(mktemp -d)
     gh release view "$BETA" --repo "$REPO" --json tagName,targetCommitish,assets > "$FILES.release.json"
     gh release download "$BETA" --repo "$REPO" --dir "$FILES"
-    # Every way the beta can differ from the one the release PR names, all reported, before anything is published.
     bad=
     mismatch() { bad=1; echo "::error::$BETA no longer matches the release PR: $1 is ${2:-missing}, the PR names $3."; }
     have=$(jq -r '.build // empty' "$FILES/candidate.json" 2>/dev/null || true)
@@ -72,7 +66,6 @@ PUBLISH=0; [ "${1:-}" = "--publish" ] && PUBLISH=1
 VERSION=${VERSION:-$(scripts/version.sh)}
 BETA=$(beta_tag)
 if [ -z "${BUILD:-}" ]; then
-    # The beta's build plus one, or past the highest older v<version>-beta.<n> tag, so Sparkle still sees it rise.
     case "$BETA" in "v$VERSION-beta" | "v$VERSION-beta."*) previous=$(beta_build "$BETA") ;; *) previous= ;; esac
     git fetch -q --tags origin 2>/dev/null || true
     tagged=$(git tag -l "v$VERSION-beta.*" | sed 's/.*-beta\.//' | grep -E '^[0-9]+$' | sort -n | tail -1 || true)

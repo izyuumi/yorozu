@@ -47,7 +47,6 @@ struct VoiceCatalogTests {
         #expect(Set(models.map(\.folder)).count == models.count)
     }
 
-    /// scripts/voice_asset_pack.sh builds the packs from its own copy of the file list.
     @Test func packScriptMatchesTheCatalogue() throws {
         let script = URL(filePath: #filePath).deletingLastPathComponent()
             .appending(path: "../../../../scripts/voice_asset_pack.sh").standardized

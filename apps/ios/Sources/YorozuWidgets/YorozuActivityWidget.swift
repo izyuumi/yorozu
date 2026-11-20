@@ -2,9 +2,6 @@ import ActivityKit
 import SwiftUI
 import WidgetKit
 
-/// The app's one Live Activity: one line per job, at most three, then "+N more", each opening its conversation.
-/// Only needs-you takes the accent. Stale, timers hide and a line says when it last updated. Labels come from
-/// the device's `ActivityLabels`, never from the activity's state; titles only while previews are on.
 struct YorozuActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: YorozuActivityAttributes.self) { context in
@@ -44,15 +41,11 @@ enum ActivityStyle {
     static let rowHeight: CGFloat = 36
     static let icon: CGFloat = 15
     static let gap: CGFloat = 10
-    /// Wide enough for "1:02:14", so a timer never stretches its row.
     static let timer: CGFloat = 64
     static let compactTimer: CGFloat = 48
-    /// The compact island's "needs you" glyph, large enough to read at a glance.
     static let compactIcon: CGFloat = 17
-    /// Hours and minutes without AM/PM: "9:41".
     static let time = Date.FormatStyle().hour(.defaultDigits(amPM: .omitted)).minute(.twoDigits)
 
-    /// The title of a job whose conversation title may not show.
     static func generic(_ kind: YorozuJob.Kind) -> String {
         switch kind {
         case .turn, .needsYou: String(localized: "Conversation")
@@ -66,7 +59,6 @@ enum ActivityStyle {
     }
 }
 
-/// The Yorozu mark, as on the Lock Screen launchers.
 struct ActivityMark: View {
     var body: some View {
         Image("YorozuMark")
@@ -77,7 +69,6 @@ struct ActivityMark: View {
     }
 }
 
-/// The compact trailing item; stale, a single job's timer gives way to a plain working glyph.
 struct CompactValue: View {
     let compact: YorozuJobs.Compact
     let stale: Bool
@@ -108,7 +99,6 @@ struct CompactValue: View {
     }
 }
 
-/// Up to three rows, then one caption: "+N more" and, stale, when it last updated.
 struct JobList: View {
     let state: YorozuActivityState
     let stale: Bool
@@ -138,8 +128,6 @@ struct JobList: View {
     }
 }
 
-/// One line: the state icon, the conversation title or a generic one, and one trailing value.
-/// A token without a label opens the app.
 struct JobRow: View {
     let job: YorozuJob
     let entry: ActivityLabels.Entry?
@@ -164,7 +152,6 @@ struct JobRow: View {
     }
 }
 
-/// Grey for every state but needs-you, which takes the accent.
 struct JobIcon: View {
     let job: YorozuJob
 
@@ -183,7 +170,6 @@ struct JobIcon: View {
     }
 }
 
-/// Review, a live timer (hidden when stale), the finish time, or Failed.
 struct JobValue: View {
     let job: YorozuJob
     let stale: Bool

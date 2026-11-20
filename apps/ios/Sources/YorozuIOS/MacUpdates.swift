@@ -33,7 +33,6 @@ enum MacUpdates {
 
     static func betaChanged() { controller?.updater.checkForUpdatesInBackground() }
 
-    /// The last check's outcome, for the About tab.
     @Observable final class Status {
         var lastCheck: Date?
         var message: String?
@@ -67,7 +66,6 @@ enum MacUpdates {
 
         func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: (any Error)?) {
             let date = updater.lastUpdateCheckDate
-            // 1001 is Sparkle's SUNoUpdateError, already reported above.
             let failure = (error as NSError?).flatMap { $0.code == 1001 ? nil : $0.localizedDescription }
             MainActor.assumeIsolated {
                 MacUpdates.status.lastCheck = date

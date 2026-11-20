@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# Checks an App Store app preview file against App Store Connect's spec (apps/preview/README.md) with ffprobe,
-# prints the values and exits non-zero on any failure.
-# Usage: scripts/app_preview_check.sh FILE
 set -euo pipefail
 
 file=${1:?usage: scripts/app_preview_check.sh FILE}
@@ -26,7 +23,7 @@ duration=$(probe -show_entries format=duration)
 size=$(probe -show_entries format=size)
 
 failures=0
-check() { # name value ok
+check() {
   if [[ $3 == 1 ]]; then printf 'ok    %-14s %s\n' "$1" "$2"; else printf 'FAIL  %-14s %s\n' "$1" "$2"; failures=$((failures + 1)); fi
 }
 is() { [[ $1 == "$2" ]] && echo 1 || echo 0; }

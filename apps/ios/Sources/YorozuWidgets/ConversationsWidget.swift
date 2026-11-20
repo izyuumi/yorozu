@@ -16,7 +16,6 @@ struct ConversationsWidget: Widget {
 
 struct ConversationsView: View {
     let entry: ConversationsEntry
-    /// Set only to draw a family outside WidgetKit (screenshots); otherwise the system's.
     var size: WidgetFamily?
     @Environment(\.widgetFamily) private var systemFamily
     private var family: WidgetFamily { size ?? systemFamily }
@@ -75,7 +74,6 @@ struct ConversationsView: View {
     }
 }
 
-/// "Yorozu", the unread count, and the Ask and + buttons.
 private struct WidgetHeader: View {
     let unread: Int
     let tint: Color
@@ -183,7 +181,6 @@ private struct SmallRow: View {
     }
 }
 
-/// Unpaired, demo mode, or never opened: the widget can only send the owner to the app.
 struct OpenAppView: View {
     let message: String
 

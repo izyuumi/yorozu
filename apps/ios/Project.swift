@@ -1,7 +1,6 @@
 import Foundation
 import ProjectDescription
 
-// The release scripts pass the real version (`scripts/version.sh`) and build to xcodebuild.
 let version = "0.0.0"
 
 func bundleVersion(build: Int) -> String {
@@ -11,13 +10,8 @@ func bundleVersion(build: Int) -> String {
 }
 
 let notificationKeychainGroup = "$(AppIdentifierPrefix)to.yumi.yorozu.notifications"
-// The pairing lives in the app's default Keychain group (the first entry below, which equals the app's
-// identifier, so items saved before the entitlement existed are there too). The share extension lists the
-// same group first to read it. Reordering or renaming it would hide existing pairings and unpair devices.
 let pairingKeychainGroup = "$(AppIdentifierPrefix)to.yumi.yorozu.ios"
 let appGroup = "group.to.yumi.yorozu"
-// llama.cpp's xcframework (voice input) has no iOS Simulator slice: `TUIST_VOICE_INPUT=0 tuist generate` leaves
-// it out, for simulator builds.
 let voiceInput = Environment.voiceInput.getBoolean(default: true)
 let testHomeName = "YorozuTests-\(UUID().uuidString)"
 func signing(_ extra: SettingsDictionary = [:]) -> Settings {
@@ -64,12 +58,9 @@ let project = Project(
                 "NSPhotoLibraryAddUsageDescription": "Yorozu saves pictures to your library when you ask it to.",
                 "NSMicrophoneUsageDescription": "Yorozu turns what you say into a message, on this device, when you use voice input.",
                 "UIBackgroundModes": ["remote-notification"],
-                // The plugin's direct listener on the LAN (#532); browsed only once the owner allowed Local Network.
                 "NSBonjourServices": ["_yorozu._tcp"],
                 "NSLocalNetworkUsageDescription": "Yorozu connects directly to your host on the same network, for faster messages.",
-                // One Live Activity, opt-in (Settings › Live Activities): started in the app, updated by the app and, with a host that supports it, counts-only relay pushes.
                 "NSSupportsLiveActivities": true,
-                // The voice model is an Apple-hosted asset pack on iPhone and iPad (YorozuAssets).
                 "BAAppGroupID": .string(appGroup),
                 "BAHasManagedAssetPacks": true,
                 "BAUsesAppleHosting": true,
@@ -132,7 +123,6 @@ let project = Project(
                 .target(name: "YorozuWidgets", condition: .when([.ios])),
             ] + (voiceInput ? [.package(product: "llama")] : []),
             settings: signing([
-                // Keep module-qualified references stable while the app product and executable use Yorozu.
                 "PRODUCT_MODULE_NAME": "YorozuIOS",
                 "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
                 "PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]": "to.yumi.yorozu",
@@ -158,11 +148,9 @@ let project = Project(
             sources: [
                 "Sources/YorozuNotificationService/**",
                 "Sources/Shared/**",
-                // L1: the extension must not compile or link ActivityKit.
                 .glob("Sources/WidgetShared/Model/**", excluding: ["Sources/WidgetShared/Model/YorozuActivityAttributes.swift"]),
             ],
             resources: ["Resources/Localizable.xcstrings"],
-            // The App Group holds the widgets' snapshot, which a reply's notification updates.
             entitlements: .dictionary([
                 "keychain-access-groups": [.string(notificationKeychainGroup)],
                 "com.apple.security.application-groups": [.string(appGroup)],
@@ -220,8 +208,6 @@ let project = Project(
             entitlements: .dictionary(["com.apple.security.application-groups": [.string(appGroup)]]),
             settings: signing()
         ),
-        // Home and Lock Screen widgets, Control Center controls and the Live Activity's views. Reads only the
-        // App Group snapshot; never pairs, connects or runs the agent.
         .target(
             name: "YorozuWidgets",
             destinations: [.iPhone, .iPad],
@@ -239,7 +225,6 @@ let project = Project(
             entitlements: .dictionary(["com.apple.security.application-groups": [.string(appGroup)]]),
             settings: signing()
         ),
-        // Snapshot, Live Activity, client lifecycle and voice session tests on the Mac without hosting the app.
         .target(
             name: "YorozuTests",
             destinations: [.mac],

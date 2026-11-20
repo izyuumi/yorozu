@@ -1,4 +1,3 @@
-// The MCP surface: tools, doc resources and the setup prompt, all answered from the bundled content.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import * as z from "zod";

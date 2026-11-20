@@ -1,7 +1,6 @@
 import SwiftUI
 import VoiceText
 
-/// Settings › Voice Input: the opt-in switch, the model, its download, the language and the dictionary.
 struct VoiceInputSection: View {
     @AppStorage(VoiceModel.enabledKey) private var enabled = false
     @AppStorage(VoiceModel.languageKey) private var language = VoiceLanguage.automatic
@@ -136,7 +135,6 @@ struct VoiceInputSection: View {
     }
 }
 
-/// Settings › Voice Input › Model: every engine this build has, with what it costs and why one can't run.
 struct VoiceModelList: View {
     @AppStorage(VoiceModel.enabledKey) private var enabled = false
     @AppStorage(VoiceModel.engineKey) private var chosen: VoiceEngineID?
@@ -242,7 +240,6 @@ struct VoiceModelList: View {
     }
 }
 
-/// Settings › Voice Input › Dictionary: words voice input should know, each optionally with what it mishears.
 struct VoiceDictionaryList: View {
     @AppStorage(VoiceModel.dictionaryKey) private var stored = ""
     @State private var editing: VoiceDictionary.Entry?
@@ -347,8 +344,6 @@ private struct VoiceDictionaryEditor: View {
     }
 }
 
-/// A row opening a page of its own: pushed on iPhone and iPad, a sheet in the Mac's settings window, which
-/// has no navigation stack.
 private struct VoiceSubpage<Destination: View>: View {
     let title: String
     let value: String
@@ -400,7 +395,6 @@ private struct VoiceSubpage<Destination: View>: View {
 func voiceSize(_ bytes: Int64) -> String { bytes.formatted(.byteCount(style: .file)) }
 
 extension VoiceDictionary {
-    /// The owner's dictionary, kept as JSON in this device's settings only.
     static var stored: VoiceDictionary { VoiceDictionary(json: UserDefaults.standard.string(forKey: VoiceModel.dictionaryKey) ?? "") }
 
     init(json: String) {

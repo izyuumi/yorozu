@@ -137,7 +137,6 @@ test("Bonjour rotates every address, answers only the current tag, and cancels r
     now = (epoch + 1) * 3_600_000;
     assert.ok(rotate);
     rotate();
-    // Drain the async send callbacks and rotation's next timer registration.
     await new Promise((resolve) => setImmediate(resolve));
     const newTag = bonjourTag(key, epoch + 1);
     assert.equal(packets.length, 4);

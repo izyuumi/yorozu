@@ -1,4 +1,3 @@
-/* Chat owns its scrolling; shell notices and connection status remain visible. */
 main:has(.chat) { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; padding: 1rem 2rem; overflow: hidden; min-height: 0; gap: .5rem; }
 .chat { display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; max-width: 60rem; align-self: center; }
 .chat button, .chat textarea { font: inherit; }

@@ -251,7 +251,6 @@ test("end() during an in-flight handle leaves no live entry", async (t) => {
   h.hub.end(h.deviceKey);
   resume.resolve();
   await handling;
-  // A receive queue can still hold an already-opened frame after the await resumes.
   await h.hub.handle(queued);
   t.diagnostic(`captured entry after end: foreground=${queued.entry.foreground}, active=${queued.entry.active}`);
   assert.equal(h.hub.served.has(h.deviceKey), false, "resuming a handle must not resurrect an ended session");

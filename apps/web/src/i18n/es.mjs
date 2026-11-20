@@ -1,4 +1,3 @@
-// Español (tú). Los términos siguen Localizable.xcstrings y el texto de la app en el App Store.
 export default {
   name: 'Yorozu',
   skip: 'Saltar al contenido',

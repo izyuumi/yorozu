@@ -38,7 +38,6 @@ final class ShareViewController: UIViewController {
     private let attachmentId = WireEvent.newId()
     private var task: Task<Void, Never>?
 
-    /// Sends from here when this device is paired, else hands the share to the app as before.
     func send(done: @escaping () -> Void) {
         PairingMigration.run()
         guard let pairing = try? Pairing.load(), pairing.paired else { return later(done: done) }

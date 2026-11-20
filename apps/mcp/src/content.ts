@@ -1,4 +1,3 @@
-// The bundle scripts/generate.ts writes from the repository. The server reads only this file at runtime.
 import bundle from "./content.json" with { type: "json" };
 
 export type Platform = "ios" | "macos";
@@ -26,7 +25,6 @@ export interface AppSetting {
   location: string;
   description: string;
   type: "boolean" | "integer" | "string" | "enum";
-  /** null: unset until the owner picks one. */
   default: string | number | boolean | null;
   options?: string[];
   source: string[];

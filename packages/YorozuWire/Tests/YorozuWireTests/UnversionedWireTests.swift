@@ -35,7 +35,6 @@ struct UnversionedWireTests {
             .handshakeResponse(sid: Data(repeating: 3, count: 8), message: Data(repeating: 4, count: 48), format: format),
             .transport(sid: Data(repeating: 5, count: 8), counter: 42, ciphertext: Data(repeating: 6, count: 16), format: format),
         ]
-        // Fixed legacy encodings, independent of the frame encoder.
         let legacyHex = ["0301" + String(repeating: "01", count: 32) + String(repeating: "02", count: 96),
             "0302" + String(repeating: "03", count: 8) + String(repeating: "04", count: 48),
             "0303" + String(repeating: "05", count: 8) + "2a00000000000000" + String(repeating: "06", count: 16)]

@@ -1,4 +1,3 @@
-// The fake host and Noise IK device the hub's tests share. It holds no tests: `node --test` loads it and finds none.
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { registerHooks } from "node:module";
@@ -26,7 +25,6 @@ export const messageId = "22222222-2222-4222-8222-222222222222";
 export const answer: Event = { kind: "conv_list", data: { conversations: [] } };
 export const newDevice = () => ({ signing: ed25519Keypair(), static: x25519Keypair() });
 
-// Same fake Link and Noise IK setup as pairing.test.ts and apps/relay/src/direct.test.ts.
 export function host(options: Partial<Pick<HubOptions, "onPeer" | "dispatch" | "directHints" | "claim">> = {}) {
   const keys = { static: x25519Keypair(), room: roomId(ed25519Keypair().publicKey) };
   const device = newDevice();
@@ -59,7 +57,6 @@ export function host(options: Partial<Pick<HubOptions, "onPeer" | "dispatch" | "
     ik.readMessage(response.message);
     const session = ik.split(message.subarray(0, 8));
 
-    /** Everything sent so far, as the JSON on the wire: what a client reads, including kinds `parseEvent` takes from no device. */
     function wire(): unknown[] {
       return sent.splice(0).map((payload) => {
         const frame = decodeFrame(payload);

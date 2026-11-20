@@ -34,9 +34,6 @@ const PAGE_BYTES = 192 * 1024;
 const ITEM_CHARS = 60_000;
 const LIST_MAX = 2000;
 const CACHE_MAX = 8;
-// `cards`: the card key of each agent message's last chunk, by item id. `turns`: the key prefix of a turn's other
-// cards (`turnCards`), by the `seq` of the turn's last items. `turnOf`: that prefix by the `seq` of each of the
-// turn's items. `replies`: by prefix, the turn's agent messages and their chunk count, full text and card key.
 type TurnReply = { eventId: string; seq: number; chunks: number; text: string; key: string };
 type Built = {
   items: HistoryItem[];
@@ -110,7 +107,6 @@ export async function historyPage(
   const picked: HistoryItem[][] = [];
   let bytes = 0;
   let more = false;
-  // A card store that fails or does not answer in time still allows a page of transcript items.
   let storeDown = false;
   const read = async <T>(get: () => Promise<T>): Promise<T | undefined> => {
     if (storeDown) return undefined;
@@ -125,11 +121,6 @@ export async function historyPage(
   };
   const listed = built.cards.size || built.turns.size ? ((await read(() => cardKeys(convId))) ?? []) : [];
   const has = new Set(listed);
-  // A turn's turn-keyed cards, read once per page. A card whose reply's text is that of one of the turn's agent
-  // messages without a card of its own (core mirrors an outbound send into the transcript) replaces every chunk
-  // of that message at its seq. Any other comes back after the turn's other items. Both use the live chunks and ids.
-  // A card-only reply has no transcript text (core mirrors nothing for empty text): store failure, timeout or
-  // eviction loses its whole bubble from history, not just its card.
   const turnCardsRead = new Map<string, Promise<{ replace: Map<string, HistoryItem[]>; extra: HistoryItem[] }>>();
   const endOf = new Map([...built.turns].map(([seq, turn]) => [turn, seq]));
   const turnCardsOf = (turn: string) => {
@@ -164,7 +155,6 @@ export async function historyPage(
     }
     return found;
   };
-  // The group with its stored cards, which count toward the page's size; nothing when the page is full.
   const take = async (bare: HistoryItem[]) => {
     let group = bare;
     if (listed.length) {
@@ -259,8 +249,6 @@ export function itemText(cfg: OpenClawConfig, agent: string, convId: string, id:
 const chunkId = (sessionId: string, eventId: string, k: number) =>
   k === 0 && isId(eventId) ? eventId : derivedId(sessionId, eventId, `${k}`);
 
-/** The ids of the turn's first unused transcript assistant message with text. With `text`, only one whose text is
- * that text (`sameText`): a card goes only on the message that says what its reply says. */
 export function liveReplyIds(
   agent: string,
   sessionKey: string,
@@ -292,7 +280,6 @@ export function liveReplyIds(
   return undefined;
 }
 
-/** The conversation's current session, which with the user's message names a turn (`turnCardKey`). */
 export function liveSessionId(agent: string, sessionKey: string): string | undefined {
   try {
     return getSessionEntry({ agentId: agent, sessionKey })?.sessionId || undefined;
@@ -331,15 +318,12 @@ function userFiles(message: Fields): Attachment[] {
 
 const withoutMedia = (text: string): string => text.replace(MEDIA_LINE, "").replace(/\n{3,}/g, "\n\n").trim();
 
-/** Whether a reply's text is a transcript message's text, as history shows it (`MEDIA:` lines out), whitespace aside:
- * a reply's chunks joined may lack the whitespace the chunker cut at. Empty text matches nothing. */
 export function sameText(transcript: string, reply: string): boolean {
   const flat = (text: string) => withoutMedia(text).replace(/\s+/g, "");
   const said = flat(transcript);
   return !!said && said === flat(reply);
 }
 
-/** A stored turn-keyed card's chunks, or nothing when the record is not a list of chunks. */
 function chunksOf(reply: unknown): NonNullable<StoredCard["reply"]> | undefined {
   if (!Array.isArray(reply) || !reply.length) return undefined;
   const ok = reply.every((chunk) => isId(obj(chunk)?.messageId) && typeof obj(chunk)?.text === "string" && Number.isSafeInteger(obj(chunk)?.ts));
@@ -387,8 +371,6 @@ function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): 
   let tools: Extract<HistoryItem, { kind: "tools" }> | undefined;
   let lastUser: string | undefined;
   const pending = new Map<string, { status: ToolStatus }>();
-  // A turn runs from the owner's message to the next user-role message or reset, as `liveReplyIds` reads it. A
-  // message id seen twice (a retried run) names its last turn only, so a card comes back once.
   const turnEnds = new Map<string, number>();
   const turnOf = new Map<number, string>();
   const replies = new Map<string, TurnReply[]>();

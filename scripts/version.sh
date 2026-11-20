@@ -1,7 +1,4 @@
 #!/bin/sh
-# Prints the version the next build ships as, by SemVer from the Conventional Commits since the last stable tag:
-# a breaking change (`type!:` or a `BREAKING CHANGE:` footer) bumps major (minor below 1.0), a `feat` minor,
-# anything else patch.
 set -eu
 cd "$(dirname "$0")/.."
 TAG=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' HEAD 2>/dev/null || true)

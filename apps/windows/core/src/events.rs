@@ -239,7 +239,6 @@ pub struct ConvList {
         deserialize_with = "conversations"
     )]
     pub conversations: Option<Vec<crate::model::Conversation>>,
-    /// Rows the answer carried before invalid ones were dropped; the 2,000-row cap counts these.
     #[serde(skip)]
     pub raw: usize,
 }

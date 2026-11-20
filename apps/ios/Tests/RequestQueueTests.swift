@@ -120,7 +120,6 @@ import YorozuWire
         #expect(queue.inFlight == next)
         #expect(queue.take() == nil)
 
-        // The request has an `after` cursor, but older hosts need not echo it.
         let answer = WireEvent.history(History(convId: "conv-b", items: [], more: false, rev: 1))
         let finishedByAnswer = queue.finish(answering: answer)
         #expect(finishedByAnswer)

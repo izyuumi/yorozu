@@ -1,6 +1,3 @@
-// What went on the wire before cards existed. The literals below were produced by the code before capability
-// `presentation`, and this file uses nothing that code lacks, so it passes against it unchanged: a reply or a
-// history page without a card must stay byte-identical.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import "./genui-hooks.ts";
@@ -67,7 +64,7 @@ test("a history page without a card is byte-identical to before", async () => {
     { type: "message", id: "e1", message: { role: "user", content: "What did the trip cost?", timestamp: 1_700_000_000_000, __openclaw: { transport: { messageId: userId } } } },
     { type: "message", id: agentId, message: { role: "assistant", content: [{ type: "text", text: "Total: 200" }], timestamp: 1_700_000_001_000 } },
   ]);
-  replies(); // the live reply noted its quote under the agent message's id
+  replies();
   const page = (quote: string) =>
     `{"kind":"history","data":{"convId":"${convId}","items":[{"kind":"user","id":"${userId}","seq":0,"ts":1700000000000,"text":"What did the trip cost?"},{"kind":"agent","id":"${agentId}","seq":1,"ts":1700000001000,"text":"Total: 200"${quote}}],"more":false,"rev":2}}`;
   const quoted = page(`,"replyTo":{"messageId":"${quoteId}","text":"How much?"}`);

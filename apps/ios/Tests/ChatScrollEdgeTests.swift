@@ -2,7 +2,6 @@ import CoreGraphics
 import Testing
 
 @Suite struct ChatScrollEdgeTests {
-    /// A long chat under a 100 pt top inset: the top rests at -100, the end at 5000.
     private func edge(_ offset: CGFloat) -> ChatScrollEdge {
         ChatScrollEdge(offset: offset, maxOffset: 5000, minOffset: -100)
     }
@@ -24,10 +23,8 @@ import Testing
 
     @Test(arguments: [true, false])
     func contentShorterThanTheContainerNeverSettles(following: Bool) {
-        // 300 pt of content in a 700 pt container under a 100 pt inset: at rest at the top, the "end" is above it.
         #expect(!ChatScrollEdge(offset: -100, maxOffset: -500, minOffset: -100).needsSettle(following: following))
         #expect(!ChatScrollEdge(offset: 0, maxOffset: -400).needsSettle(following: following))
-        // Content exactly filling the container cannot scroll either.
         #expect(!ChatScrollEdge(offset: -100, maxOffset: -100, minOffset: -100).needsSettle(following: following))
     }
 

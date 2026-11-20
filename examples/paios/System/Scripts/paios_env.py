@@ -19,4 +19,4 @@ def root_path(*parts):
         return None
     return os.path.join(v, "PAIOS", *parts)
 
-vault_path = root_path  # older name, kept for existing callers
+vault_path = root_path

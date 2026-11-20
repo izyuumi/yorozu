@@ -106,7 +106,6 @@ type Conn = {
 } & (
   | { role: null; key: null }
   | { role: "phone"; key: string }
-  // Read only when migrating attachments serialized before explicit roster state.
   | { role: "mac"; key: string; announced?: boolean }
 );
 
@@ -135,12 +134,10 @@ type PushRecord = {
 
 const tokenPrefix = "t:";
 
-/** A device's Live Activity push token, registered by the host; the activity's content never stays here. */
 const activityPrefix = "activity:";
 
 type ActivityRecord = { token: string; sandbox?: boolean };
 
-/** The room's last connection from any member: 30 days after it the room is wiped, and its host rebuilds it. */
 const seenKey = "seen";
 
 const announcedKey = "announced";
@@ -149,7 +146,6 @@ const vouchedKey = "vouched";
 
 export class Room implements DurableObject {
   private tail: Promise<unknown> = Promise.resolve();
-  /** Activity pushes in the order the host sent them, apart from the frame queue so APNs never delays a frame. */
   private activityTail: Promise<unknown> = Promise.resolve();
   private keys = new Map<string, Promise<CryptoKey>>();
   private backgroundPending = new Set<string>();
@@ -189,7 +185,6 @@ export class Room implements DurableObject {
     }
     if (conn?.role === "phone") this.notifyPhones(ws);
     if (!conn?.role) return Promise.resolve();
-    // A connection lasts until it closes: the alarm only sees sockets still open.
     const done = this.tail
       .then(() => this.touch(Date.now()))
       .catch((error: unknown) => log("error", { role: conn.role, error: String(error) }));
@@ -197,7 +192,6 @@ export class Room implements DurableObject {
     return done;
   }
 
-  /** A member connected: the room counts as seen now. */
   private async touch(now: number): Promise<void> {
     await this.state.storage.put(seenKey, now);
     await this.alarmBy(now + ROOM_IDLE_TTL_MS);
@@ -225,23 +219,15 @@ export class Room implements DurableObject {
   }
 
   alarm(): Promise<void> {
-    // Queued behind message handling, so a register or join in flight lands before anything is deleted.
     const done = this.tail.then(() => this.sweep(Date.now()));
     this.tail = done.catch(() => {});
     return done;
   }
 
-  /**
-   * Retention: a room nobody connected to for 30 days is wiped. It is only a cache: the host's next register and
-   * `devices` announce rebuild it, and its devices rejoin with the keys they already hold.
-   * Returns the next retention deadline (Infinity for an empty room).
-   */
   private async retain(now: number): Promise<number> {
     const storage = this.state.storage;
-    // An older relay left a `gone` marker in each room it wiped; nothing reads it now.
     await storage.delete("gone");
     let seen = await storage.get<number>(seenKey);
-    // An open socket is a connection still going; a room from before retention starts its clock now.
     const live = this.state.getWebSockets()
       .some((ws) => ws.readyState === WebSocket.OPEN && (ws.deserializeAttachment() as Conn | null)?.role);
     if (live || (seen === undefined && (await storage.get("owner")) !== undefined)) {
@@ -250,7 +236,6 @@ export class Room implements DurableObject {
     }
     if (seen === undefined) return Infinity;
     if (now < seen + ROOM_IDLE_TTL_MS) return seen + ROOM_IDLE_TTL_MS;
-    // deleteAll() also clears the alarm; the sweep below sets it again if an unauthenticated socket needs one.
     await storage.deleteAll();
     log("room-wiped");
     return Infinity;
@@ -432,7 +417,6 @@ export class Room implements DurableObject {
     const storage = this.state.storage;
     const saved = await storage.get<string[]>(vouchedKey);
     if (saved !== undefined) return new Set(saved);
-    // Keep p: timestamps backward-readable. Legacy rows are vouched under host authority, otherwise pending.
     const legacy = await this.roster() === "host"
       ? [...(await storage.list<number>({ prefix: devicePrefix })).keys()].map((key) => key.slice(devicePrefix.length))
       : [];
@@ -443,7 +427,6 @@ export class Room implements DurableObject {
   private async remember(pubkey: string, now: number): Promise<boolean> {
     const vouched = await this.vouched();
     const known = await this.state.storage.list<number>({ prefix: devicePrefix });
-    // Rows outside the latest announce are pending; only a fresh row consumes pending capacity.
     if (!known.has(devicePrefix + pubkey)
       && [...known.keys()].filter((key) => !vouched.has(key.slice(devicePrefix.length))).length >= MAX_DEVICES) {
       return false;
@@ -456,7 +439,6 @@ export class Room implements DurableObject {
     const storage = this.state.storage;
     const roster = await storage.get<Roster>(rosterKey);
     if (roster !== undefined) return roster;
-    // Migrate old rooms once; a missing attachment field meant this host had not announced.
     const host = this.mac()?.deserializeAttachment() as Conn | undefined;
     const migrated: Roster = (await storage.get(announcedKey)) !== undefined
       && (!host || (host.role === "mac" && host.announced === true)) ? "host" : "unconfirmed";
@@ -618,7 +600,6 @@ export class Room implements DurableObject {
     const current = await this.state.storage.get<ActivityRecord>(key);
     if (current?.token === token) return;
     if ((await this.state.storage.get<number>(devicePrefix + device)) === undefined) return;
-    // An activity token lives in the same APNs environment as the device's own token.
     const sandbox = (await this.state.storage.get<PushRecord>(pushPrefix + device))?.sandbox;
     await this.state.storage.put(key, { token, ...(sandbox ? { sandbox } : {}) } satisfies ActivityRecord);
   }
@@ -688,9 +669,7 @@ export class Room implements DurableObject {
         if (!(await this.verify(conn.nonce, nonceSig, pubkey))) {
           return this.drop(ws, CLOSE_BAD_SIGNATURE, "bad challenge");
         }
-        // The room id is this key's hash, so a wiped room accepts its host again like a new one.
         if (owner === null) await storage.put("owner", pubkey);
-        // Preserve legacy provenance before this socket resets roster authority.
         await this.vouched();
         await storage.put(rosterKey, "unconfirmed" satisfies Roster);
         await this.touch(now);
@@ -896,7 +875,7 @@ export class Room implements DurableObject {
       }
 
       default:
-        return; // An unknown type is ignored (it still costs a rate-limit token).
+        return;
     }
   }
 }

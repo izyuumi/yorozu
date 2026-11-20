@@ -21,7 +21,6 @@ struct SceneLifecycle: Equatable {
 
     mutating func becomeActive() {
         guard phase != .foreground else { return }
-        // A return also invalidates background-wake snapshots.
         generation += 1
         phase = .foreground
     }

@@ -1,7 +1,6 @@
 import SwiftUI
 import WidgetKit
 
-/// Lock Screen accessories: the unread count, or the latest reply's conversation with it.
 struct UnreadAccessoryWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "to.yumi.yorozu.unread", provider: UnreadProvider()) { entry in
@@ -16,7 +15,6 @@ struct UnreadAccessoryWidget: Widget {
 
 struct UnreadAccessoryView: View {
     let entry: ConversationsEntry
-    /// Set only to draw a family outside WidgetKit (screenshots); otherwise the system's.
     var size: WidgetFamily?
     @Environment(\.widgetFamily) private var systemFamily
     private var family: WidgetFamily { size ?? systemFamily }

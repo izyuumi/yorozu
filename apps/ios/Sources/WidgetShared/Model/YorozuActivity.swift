@@ -1,8 +1,5 @@
 import Foundation
 
-/// One row of the app's single Live Activity. Keyed by an opaque random token, never by a conversation:
-/// what the row is about lives only in the device's `ActivityLabels`, so a pushed state carries no
-/// conversation, title, text or tool name.
 struct YorozuJob: Codable, Hashable, Sendable, Identifiable {
     enum Kind: String, Codable, Hashable, Sendable { case turn, recording, transcribing, needsYou }
     enum State: String, Codable, Hashable, Sendable { case running, done, failed }
@@ -10,7 +7,6 @@ struct YorozuJob: Codable, Hashable, Sendable, Identifiable {
     var token: String
     var kind: Kind
     var state: State
-    /// Tool steps of a turn; a count only.
     var steps: Int?
     var startedAt: Date
     var finishedAt: Date?
@@ -30,30 +26,24 @@ struct YorozuJob: Codable, Hashable, Sendable, Identifiable {
 
     private static let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
 
-    /// 16 random url-safe characters.
     static func newToken() -> String {
         String((0..<16).map { _ in alphabet.randomElement()! })
     }
 }
 
-/// The Live Activity's whole content state. A push would replace it outright.
 struct YorozuActivityState: Codable, Hashable, Sendable {
     var jobs: [YorozuJob]
-    /// When the app built this state; the relay's pushes carry none.
     var updatedAt: Date? = nil
 
-    /// `updatedAt`, else the latest start or finish among the jobs.
     var lastUpdate: Date? { updatedAt ?? jobs.map(YorozuJobs.recency).max() }
 }
 
-/// A change from any job source: the app, later a push.
 enum JobChange: Hashable, Sendable {
     case upsert(YorozuJob)
     case finish(token: String, state: YorozuJob.State)
     case remove(token: String)
 }
 
-/// Events that touch a job. Only the ones no push already announces alert.
 enum JobEvent: Hashable, Sendable {
     case reply, approval, failurePushed, transcriptReady, recordingCap, localFailure
 
@@ -69,18 +59,13 @@ enum JobEvent: Hashable, Sendable {
     }
 }
 
-/// The pure job math behind the Live Activity, keyed by token.
 enum YorozuJobs {
     static let limit = 8
-    /// A finished job stays this long as a tap target.
     static let linger: TimeInterval = 120
-    /// A running activity without an update for this long shows as stale.
     static let staleAfter: TimeInterval = 15 * 60
 
-    /// The Dynamic Island's one compact trailing item.
     enum Compact: Hashable, Sendable { case needsYou, timer(Date), count(Int), done }
 
-    /// "!" when anything needs you, else the timer of the one running job, else how many run, else done.
     static func compact(_ jobs: [YorozuJob]) -> Compact {
         let running = jobs.filter { !$0.finished }
         if running.contains(where: { $0.kind == .needsYou }) { return .needsYou }
@@ -91,7 +76,6 @@ enum YorozuJobs {
         }
     }
 
-    /// Upserts by token; a finished state stamps `finishedAt` once, a running one clears it. Idempotent.
     static func merge(_ current: [YorozuJob], _ change: JobChange, now: Date) -> [YorozuJob] {
         var jobs = current
         switch change {
@@ -120,7 +104,6 @@ enum YorozuJobs {
 
     static func recency(_ job: YorozuJob) -> Date { job.finishedAt ?? job.startedAt }
 
-    /// Needs you, failed, working, then done; newest first within each.
     static func sorted(_ jobs: [YorozuJob]) -> [YorozuJob] {
         jobs.sorted { a, b in
             if rank(a) != rank(b) { return rank(a) < rank(b) }
@@ -129,23 +112,19 @@ enum YorozuJobs {
         }
     }
 
-    /// At most `max`, dropping from the end of `sorted`: the oldest done first, needs-you last.
     static func capped(_ jobs: [YorozuJob], max: Int = limit) -> [YorozuJob] {
         Array(sorted(jobs).prefix(max))
     }
 
-    /// Finished jobs leave once they lingered `linger`.
     static func pruned(_ jobs: [YorozuJob], now: Date) -> [YorozuJob] {
         jobs.filter { job in job.finishedAt.map { now < $0.addingTimeInterval(linger) } ?? true }
     }
 
-    /// The change applied, expired jobs gone, sorted and capped: what the activity shows next.
     static func apply(_ current: [YorozuJob], _ change: JobChange?, now: Date) -> [YorozuJob] {
         let merged = change.map { merge(current, $0, now: now) } ?? current
         return capped(pruned(merged, now: now))
     }
 
-    /// A queued job change and its device-only label.
     static func queued(_ change: JobChange?, label: ActivityLabels.Entry? = nil,
                        previews: @escaping () -> Bool = { WidgetStore.previews }, at url: URL? = ActivityLabelsStore.url)
         -> ([YorozuJob], Date) -> [YorozuJob] {
@@ -165,12 +144,10 @@ enum YorozuJobs {
 
     static func shouldEnd(_ jobs: [YorozuJob]) -> Bool { jobs.isEmpty }
 
-    /// When the next finished job expires, if any.
     static func nextExpiry(_ jobs: [YorozuJob]) -> Date? {
         jobs.compactMap { $0.finishedAt?.addingTimeInterval(linger) }.min()
     }
 
-    /// With nothing running, the activity can end and let the system dismiss it when the last row expires.
     static func dismissal(_ jobs: [YorozuJob]) -> Date? {
         guard !jobs.isEmpty, jobs.allSatisfy(\.finished) else { return nil }
         return jobs.compactMap { $0.finishedAt?.addingTimeInterval(linger) }.max()
@@ -180,21 +157,17 @@ enum YorozuJobs {
         dismissal(jobs) ?? now.addingTimeInterval(staleAfter)
     }
 
-    /// Recording and transcription are not on screen in the app, so they keep the activity while it is in front.
     static func keepsActivityInApp(_ jobs: [YorozuJob]) -> Bool {
         jobs.contains { !$0.finished && ($0.kind == .recording || $0.kind == .transcribing) }
     }
 }
 
-/// What each job token is about, kept only on the device next to the widget snapshot: the conversation
-/// to open and, only while message previews are on, its title.
 struct ActivityLabels: Codable, Equatable, Sendable {
     struct Entry: Codable, Equatable, Sendable {
         var convId: String?
         var kind: YorozuJob.Kind
         var title: String?
 
-        /// The title, only while previews are on when the view draws.
         func label(previews: Bool) -> String? { previews ? title.flatMap { $0.isEmpty ? nil : $0 } : nil }
     }
 
@@ -204,7 +177,6 @@ struct ActivityLabels: Codable, Equatable, Sendable {
         entries[token] = Entry(convId: convId, kind: kind, title: previews ? title : nil)
     }
 
-    /// Tokens for a conversation's jobs of one kind, in a stable order.
     func tokens(for convId: String, kind: YorozuJob.Kind) -> [String] {
         entries.filter { $0.value.convId == convId && $0.value.kind == kind }.keys.sorted()
     }
@@ -215,14 +187,12 @@ struct ActivityLabels: Codable, Equatable, Sendable {
         entries = entries.filter { tokens.contains($0.key) }
     }
 
-    /// With previews off, no title stays stored.
     mutating func redact(previews: Bool) {
         guard !previews else { return }
         for token in entries.keys { entries[token]?.title = nil }
     }
 }
 
-/// The labels file in the App Group container, beside the widget snapshot and protected the same way.
 enum ActivityLabelsStore {
     static let fileName = "ActivityLabels.json"
 
@@ -235,7 +205,6 @@ enum ActivityLabelsStore {
         return (try? JSONDecoder().decode(ActivityLabels.self, from: data)) ?? ActivityLabels()
     }
 
-    /// Redacts to `previews`, then writes atomically when the bytes differ.
     @discardableResult
     static func write(_ labels: ActivityLabels, previews: Bool = WidgetStore.previews, to url: URL? = url) -> Bool {
         var labels = labels

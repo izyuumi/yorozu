@@ -31,7 +31,6 @@ function prefix(info: NetworkInterfaceInfo): number | undefined {
   return /^1*0*$/.test(mask) ? mask.indexOf("0") === -1 ? bits : mask.indexOf("0") : undefined;
 }
 
-/** Introduced by feature flag `direct` (#532); only addresses successfully bound by the listener are advertised. */
 export function directHints(interfaces: Interfaces, port: number, magicDNS?: string): DirectHints {
   const lan = new Map<string, { address: string; prefix: number }>();
   const tailscale = new Set<string>();
@@ -61,7 +60,6 @@ export async function resolveMagicDNS(address: string, reverse = dns.reverse, ti
   finally { clearTimeout(timer); }
 }
 
-/** Serial polling keeps rebinding and DNS results in interface order; stop waits for an in-flight refresh. */
 export async function watchDirect(opts: {
   listener: DirectListener; port: number; source?: () => Interfaces; intervalMs?: number;
   reverse?: typeof dns.reverse; changed: (hints: DirectHints | undefined) => void | Promise<void>; log?: Log;

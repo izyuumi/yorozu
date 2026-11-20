@@ -2,7 +2,6 @@ import Foundation
 import Testing
 
 extension VoiceSessionTests {
-    /// The recording limit, at a quarter second of the preview's clip.
     @MainActor
     @Suite struct RecordingCap {
         @Test func theRecorderStopsAtItsLimit() async throws {

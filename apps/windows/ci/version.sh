@@ -1,12 +1,4 @@
 #!/usr/bin/env bash
-# Reads, writes and checks the Windows app's version, which matches the Mac and iOS apps'.
-# It lives in four places: app/package.json, app/src-tauri/tauri.conf.json, Cargo.toml
-# ([workspace.package]) and Cargo.lock (the workspace members).
-#   version.sh get            the version, if all places agree
-#   version.sh set <x.y.z>    writes it everywhere, changing only the version lines
-#   version.sh check <x.y.z>  fails unless every place holds it
-#   version.sh stable         the latest stable release tag, without the v
-#   version.sh shared         what scripts/version.sh gives Mac and iOS builds of this commit
 set -euo pipefail
 
 root=${YOROZU_WINDOWS_DIR:-"$(cd "$(dirname "$0")/.." && pwd)"}
@@ -18,8 +10,6 @@ usage() {
   exit 2
 }
 
-# Each awk program finds the one version line of its place; with v set it rewrites that line's
-# quoted value (keeping any trailing bytes, such as a CR), otherwise it prints the value.
 json_awk='
   !done && /^  "version": "[^"]*"/ {
     done = 1
@@ -45,13 +35,10 @@ lock_awk='
   /^\[\[package\]\]/ { found = 0 }
   v != "" { print }'
 
-# read_place <file> <awk program> [package]
 read_place() {
   awk -v v= -v n="${3-}" "$2" "$root/$1"
 }
 
-# write_place <file> <awk program> <version> [package]: awk writes a temp file (awk has no portable
-# in-place edit), and cat copies it into the original, which keeps the original's mode.
 write_place() {
   local tmp
   tmp=$(mktemp)
@@ -63,7 +50,6 @@ write_place() {
   rm -f "$tmp"
 }
 
-# Prints "<file>\t<value>" for every place; an absent version is empty.
 all_places() {
   printf '%s\t%s\n' app/package.json "$(read_place app/package.json "$json_awk")"
   printf '%s\t%s\n' app/src-tauri/tauri.conf.json "$(read_place app/src-tauri/tauri.conf.json "$json_awk")"
@@ -106,7 +92,6 @@ case $cmd in
   set)
     [ $# -eq 2 ] || usage
     valid "$2"
-    # Every place needs a version line to rewrite; otherwise stop before writing anything.
     missing=$(awk -F'\t' '$2 == ""' <<<"$(all_places)")
     if [ -n "$missing" ]; then
       echo "version.sh: no version line in:" >&2

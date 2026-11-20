@@ -1,18 +1,4 @@
 #!/bin/sh
-# Submits an iOS version to App Store review through the App Store Connect API. Run by hand, never in CI: a submitted
-# version is released by Apple once approved, by its release type.
-#
-#   scripts/app_store_submit.sh <version> <build> [--release-type MANUAL|AFTER_APPROVAL] [--create] [--attach] [--submit]
-#
-# Without a write flag it reads App Store Connect and prints the plan; it writes nothing. Each write needs its flag:
-#   --create   creates the iOS version <version> if it is missing, else reuses it, and sets its release type
-#   --attach   attaches build <build>, only if it is VALID, not expired and was uploaded for <version>
-#   --submit   creates or reuses the open review submission, adds the version to it once, then submits it
-# The release type defaults to that of the newest version on sale. It also reports the app's content rights
-# declaration and the build's export compliance, against ITSAppUsesNonExemptEncryption in apps/ios/Project.swift.
-# Every step reads the state again before it writes, so running it twice changes nothing the second time.
-# Exit codes: 0 done or nothing blocks the plan, 64 bad arguments, 65 blocked (the reason is printed), 70 App Store
-# Connect refused a write; the key handling in scripts/asc_lib.sh exits 1 without a key.
 set -eu
 cd "$(dirname "$0")/.."
 usage() { echo "usage: $0 <version> <build> [--release-type MANUAL|AFTER_APPROVAL] [--create] [--attach] [--submit]" >&2; exit 64; }
@@ -48,7 +34,6 @@ BLOCKED=0
 block() { echo "Blocked: $*"; BLOCKED=1; }
 q() { printf '%s' "$1" | jq -r "$2"; }
 
-# write <flag> <method> <url> <json> <message>: prints the response for the caller, or nothing in the plan
 write() {
     if [ -n "$1" ]; then
         out=$(asc_send "$2" "$3" "$4") || { echo "App Store Connect refused: $5" >&2; exit 70; }
@@ -68,7 +53,6 @@ pick() { printf '%s' "$1" | jq -c --argjson s "$2" '[.data[] | select(.attribute
 
 echo "App $APP_ID, iOS $VERSION build $BUILD"
 
-# Everything is read first; nothing is written if anything blocks.
 all=$(versions)
 live=$(q "$all" '[.data[] | select(.attributes.appStoreState == "READY_FOR_SALE"
     or .attributes.appVersionState == "READY_FOR_DISTRIBUTION")]
@@ -169,7 +153,6 @@ if [ "$BLOCKED" = 1 ]; then
     exit 65
 fi
 
-# 1 and 2: create the version, or set its release type
 if [ -z "$VERSION_ID" ]; then
     created=$(write "$CREATE" POST "$API/v1/appStoreVersions" "$(jq -nc --arg v "$VERSION" --arg r "$RELEASE_TYPE" --arg app "$APP_ID" \
         '{data: {type: "appStoreVersions", attributes: {platform: "IOS", versionString: $v, releaseType: $r},
@@ -184,7 +167,6 @@ else
         "set the release type of $VERSION to $RELEASE_TYPE." >/dev/null
 fi
 
-# 3: attach the build
 if [ "$attached" = "$BUILD_ID" ]; then
     echo "Build: $BUILD is already attached to $VERSION."
 elif ! editable "$VERSION_STATE"; then
@@ -199,7 +181,6 @@ else
     fi
 fi
 
-# 5: the review submission
 if [ -z "$SUBMITTED" ]; then
     SUB_ID=""
     if [ -n "$open" ]; then

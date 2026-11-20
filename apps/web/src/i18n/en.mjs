@@ -1,4 +1,3 @@
-// English, the source text. "@/page/" links point at that page in the reader's language.
 export default {
   name: 'Yorozu',
   skip: 'Skip to content',

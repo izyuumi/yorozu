@@ -2,9 +2,6 @@ import Foundation
 import YorozuWire
 
 extension ActivityReport {
-    /// The activity's jobs as the wire carries them, times in epoch milliseconds, and the conversation of each running
-    /// turn among them (`turns`: job token → convId). Recording and transcription go along unchanged: the host keeps them
-    /// as they are in every push, so a push never wipes a job only this device knows.
     init(pushToken: String?, activity jobs: [YorozuJob], turns: [String: String]) {
         let running = Set(jobs.filter { $0.kind == .turn && !$0.finished }.map(\.token))
         self.init(pushToken: pushToken, jobs: jobs.map(Job.init),

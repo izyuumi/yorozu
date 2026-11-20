@@ -30,7 +30,6 @@ test('_headers serves both files as UTF-8 plain text', async () => {
 
 test('every link points at a built page, a worker or redirect route, a repo file or a known URL', async () => {
   const worker = await read('worker.mjs');
-  // The worker's own routes: `path === '/mcp'` checks and the `[...].includes(path)` list (/mac and the betas)
   const routes = [...worker.matchAll(/path === '([^']+)'/g), ...worker.match(/\[([^\]]+)\]\.includes\(path\)/)[1].matchAll(/'([^']+)'/g)]
     .map(([, route]) => route);
   const redirects = Object.fromEntries((await read('public/_redirects')).split('\n').map(line => line.split(' ')));

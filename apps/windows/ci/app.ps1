@@ -1,11 +1,8 @@
-# Builds, tests and installs the Windows app (spec section 10.3). Run on Windows:
-#   pwsh apps/windows/ci/app.ps1
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 Set-Location (Join-Path $PSScriptRoot '..')
 
-# Runs a native command and fails the script when it exits non-zero.
 function Invoke-Native([scriptblock]$Command) {
     & $Command
     if ($LASTEXITCODE -ne 0) {
@@ -13,10 +10,6 @@ function Invoke-Native([scriptblock]$Command) {
     }
 }
 
-# The version the built app must carry. In CI the stamp step exports YOROZU_VERSION (scripts/version.sh
-# output), independent of the files it wrote; a local run takes it from tauri.conf.json. Either way
-# tauri.conf.json and package.json must hold it (ci/version.sh keeps the four version files in step).
-# The installer name, the product version and the smoke checks all use it.
 $tauriVersion = (Get-Content -Raw 'app\src-tauri\tauri.conf.json' | ConvertFrom-Json).version
 $packageVersion = (Get-Content -Raw 'app\package.json' | ConvertFrom-Json).version
 $version = if ($env:YOROZU_VERSION) { $env:YOROZU_VERSION } else { $tauriVersion }
@@ -27,7 +20,6 @@ foreach ($place in @(@('app\src-tauri\tauri.conf.json', $tauriVersion), @('app\p
 }
 Write-Host "version $version"
 
-# Starts the app with --smoke and requires exit code 0 and "ready <version>" in the file.
 function Test-Smoke([string]$Exe, [string]$File) {
     Remove-Item $File -ErrorAction SilentlyContinue
     $p = Start-Process $Exe -ArgumentList '--smoke', "`"$File`"" -Wait -PassThru
@@ -50,7 +42,6 @@ Invoke-Native { pnpm build }
 Pop-Location
 
 Write-Host '== 2. tests'
-# The probe is a test-only binary with the plaintext store; core.sh builds and runs it.
 Invoke-Native { cargo test --workspace --exclude yorozu-probe }
 
 Write-Host '== 3. no plaintext key store in the app'
@@ -63,7 +54,6 @@ if ($tree.Contains('insecure-plaintext-store')) {
 }
 
 Write-Host '== 4. installer'
-# CI's cache restores apps/windows/target, so remove any old bundle: only this build's installer may pass.
 Remove-Item -LiteralPath 'target\release\bundle' -Recurse -Force -ErrorAction SilentlyContinue
 Push-Location app
 Invoke-Native { pnpm tauri build }

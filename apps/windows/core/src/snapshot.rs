@@ -1,5 +1,3 @@
-//! What the web view renders (spec section 3). The core owns the state; the UI only draws it.
-
 use serde::Serialize;
 
 #[derive(Serialize, Clone, Debug)]
@@ -14,9 +12,7 @@ pub struct Snapshot {
     pub notice: Option<Notice>,
     pub list: Vec<ConvSummary>,
     pub open: Option<OpenConv>,
-    /// Not in the spec's Snapshot: the footer shows the version and the build sha.
     pub version: String,
-    /// The first 7 characters of the commit CI built, or `dev` for a local build.
     pub build: String,
 }
 
@@ -36,8 +32,6 @@ pub enum PairingView {
     },
 }
 
-/// The last notice, kept here so one sent before the web view listens isn't lost.
-/// `seq` tells a new notice from the one before it.
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Notice {
@@ -74,7 +68,6 @@ pub struct Item {
 }
 
 impl Snapshot {
-    /// The state before any pairing: nothing paired, nothing listed, nothing open.
     pub fn initial(version: &str, build: &str) -> Self {
         Self {
             pairing: PairingView::Unpaired,

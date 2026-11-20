@@ -1,10 +1,6 @@
 // swift-tools-version: 6.2
 import PackageDescription
 
-// On-device speech to text beside LFM3-Audio (packages/Llama): the model catalogue, the voice dictionary and
-// the engine choice (VoiceText, no dependencies), and the Whisper and Nemotron runtimes plus Apple's
-// SpeechAnalyzer behind one interface (SpeechEngines). FluidAudio's TTS, diarizer and text-normalization
-// traits are off: Yorozu only transcribes.
 let package = Package(
     name: "YorozuVoice",
     platforms: [.macOS(.v15), .iOS(.v18)],

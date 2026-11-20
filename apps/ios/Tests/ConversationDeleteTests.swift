@@ -17,7 +17,6 @@ import YorozuWire
         ])
     }
 
-    /// A ready model over the seeded chats, and its transport answering each send with `sendResult`.
     private func ready(sendResult: Bool = true) async throws -> (AppModel, ScriptedTransport) {
         let model = try await harness.openFirstSession()
         let transport = try #require(harness.scripted)
@@ -35,7 +34,6 @@ import YorozuWire
         }
     }
 
-    /// `patch()` sends from a task of its own, so the recorded send is awaited.
     private func patchSent(_ transport: ScriptedTransport) async -> Bool {
         for _ in 0..<100 {
             if await !patches(transport).isEmpty { return true }
@@ -44,7 +42,6 @@ import YorozuWire
         return false
     }
 
-    /// Long enough for a send that should not happen, or a removal that should not follow, to show up.
     private func pause() async { try? await Task.sleep(for: .milliseconds(100)) }
 
     @Test func deleteOnAnActiveChatIsRefused() async throws {

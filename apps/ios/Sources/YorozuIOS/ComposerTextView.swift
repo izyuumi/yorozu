@@ -15,7 +15,6 @@ struct ComposerTextView: NSViewRepresentable {
     var onImages: ([Data]) -> Bool = { _ in false }
     var onPasteData: (Data, String, String) -> Bool = { _, _, _ in false }
     var cursor: ComposerCursor?
-    /// Takes keyboard focus once for each new value, so an opened conversation is ready to type into.
     var focusKey: String?
 
     @Environment(\.textZoom) private var zoom
@@ -103,8 +102,6 @@ struct ComposerTextView: NSViewRepresentable {
     }
 }
 
-/// A plain container: the text view inside is the field, and without this accessibility clients meet
-/// "Message" twice, once on the scroll area and again on the text area.
 final class ComposerScrollView: NSScrollView {
     override func isAccessibilityElement() -> Bool { false }
 }
@@ -131,7 +128,6 @@ final class ComposerNSTextView: NSTextView {
         guard event.keyCode == 36 || event.keyCode == 76, !hasMarkedText() else { return super.keyDown(with: event) }
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function, .capsLock])
         if modifiers == .command { return submit() }
-        // Return sends a one-line message unless the owner opted into ⌘Return; Shift-Return always adds a line.
         if modifiers.isEmpty, !UserDefaults.standard.bool(forKey: CommandReturnSends.key), !string.contains("\n") { return submit() }
         insertNewline(nil)
     }
@@ -224,7 +220,6 @@ struct ComposerTextView: UIViewRepresentable {
             context.coordinator.focusedKey = focusKey
             DispatchQueue.main.async {
                 guard !view.becomeFirstResponder() else { return }
-                // One retry if the first call ran before the view was in the window; no loop.
                 guard view.window == nil else { return }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                     guard context.coordinator.focusedKey == focusKey, view.window != nil else { return }

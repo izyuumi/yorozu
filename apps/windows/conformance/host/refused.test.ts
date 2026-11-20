@@ -15,7 +15,6 @@ test("wrong proof revoked; spent token fails after one nonce recovery", { timeou
   const dir2 = await mkdtemp(join(tmpdir(), "yorozu-spent-")); t.after(() => rm(dir2, { recursive: true, force: true }));
   const p2 = probe(dir2); t.after(() => p2.quit()); p2.send({ cmd: "pair", link: used });
   const close = await p2.wait(e => e.ev === "close"); assert.deepEqual(close, { ev: "close", code: 4001, reason: "unknown token" });
-  // The one nonce recovery (C13a): the relay knows no such device, so the second close ends the pairing.
   assert.deepEqual(await p2.wait(e => e.ev === "close" && e.reason !== "unknown token"), { ev: "close", code: 4001, reason: "unknown device" });
   assert.equal((await p2.wait(e => e.notice)).notice, "This pairing link has expired or was already used. Make a new one with `openclaw yorozu pair`.");
 });

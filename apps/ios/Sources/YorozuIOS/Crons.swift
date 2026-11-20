@@ -29,7 +29,7 @@ struct HomeView: View {
             #if os(iOS)
             route.openRequested(convId)
             #else
-            route.open(convId) // the Mac keeps its columns as they are
+            route.open(convId)
             #endif
             model.requestedConversation = nil
         }

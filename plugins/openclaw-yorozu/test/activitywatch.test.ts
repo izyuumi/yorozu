@@ -32,7 +32,6 @@ type OwnerRun = { steps: number; startedAt: number };
 const fixtureOwners = () => new Map<string, OwnerRun>([
   [CONV, { steps: 1, startedAt: T0 }], [OTHER, { steps: 1, startedAt: T0 }],
 ]);
-// Existing seeded fixtures represent live host messages; watch-only restarts retain their owner.
 const ownersByStore = new WeakMap<object, Map<string, OwnerRun>>();
 function fixtureWatch<T>(options: ConstructorParameters<typeof ActivityWatch<T>>[0], owners = ownersByStore.get(options.store) ?? fixtureOwners()) {
   ownersByStore.set(options.store, owners);
@@ -92,7 +91,6 @@ for (const registered of [false, true]) {
     const f = fixture();
     if (registered) f.register(false);
     f.watch.report(DEVICE, report());
-    // Enabling later must not reveal a watch saved by the ignored report.
     f.register();
     f.watch.turn(CONV, { kind: "done" });
     assert.deepEqual(f.sent, []);
@@ -125,7 +123,6 @@ test("done sends exactly the real plan without timestamp; end removes the watch"
   assert.deepEqual(JSON.parse(f.sent[0]!), expected);
   assert.equal(f.sent[0], JSON.stringify(expected));
   assert.equal(Object.hasOwn(JSON.parse(f.sent[0]!), "timestamp"), false);
-  // A surviving watch would tidy the finished row away and send another end.
   f.clock.now += 1_000_000;
   f.watch.turn(CONV, { kind: "gone" });
   assert.equal(f.sent.length, 1);
@@ -226,7 +223,6 @@ test("relay close retains capability and accepts reports, but pushes require a r
   f.down();
   f.register(false);
   assert.equal(f.watch.liveActivity, false);
-  // Existing watches still push: the capability gate applies only to reports.
   f.watch.turn(CONV, { kind: "step", steps: 3 });
   assert.equal(f.timers.size, 1);
   f.fire();
@@ -373,7 +369,6 @@ test("same-token re-report raises the seed when requestedAtMs is newer", async (
   f.watch.report(DEVICE, { ...seededReport(), requestedAtMs: 1_800_000_010_500 });
   f.watch.turn(CONV, { kind: "done" });
   await settle();
-  // LA-2h generation ordering: same id cannot change its generation.
   assert.deepEqual(pushes(f).map((msg) => msg.timestamp), [1_800_000_002, 1_800_000_003]);
 });
 
@@ -383,7 +378,6 @@ test("live_activity envelope rejects invalid requestedAtMs through normal valida
   assert.deepEqual(parseEvent(event(1_800_000_000)), { kind: "invalid", name: "live_activity" });
 });
 
-// Durable tests use only synthetic records; every send checks its persistence receipt.
 function memoryStore() {
   let records: import("../src/activitystore.ts").ActivityRecord[] = [];
   const saves: typeof records[] = [];
@@ -501,7 +495,6 @@ for (const replacement of ["new token", "no token"] as const) {
     f.watch.relayRegistered({ liveActivity: true, activityTimestamp: true });
     f.store.release();
     await settle();
-    // LA-2h generation ordering: rejected rotation leaves original reservation/token; forget retains tombstone.
     assert.deepEqual(pushes(f), replacement === "new token" ? [{
       type: "activityPush", device: DEVICE, event: "update", priority: 5,
       state: { jobs: [{ token: TOKEN, kind: "turn", state: "running", steps: 2, startedAt: 821692800 }] },
@@ -509,7 +502,6 @@ for (const replacement of ["new token", "no token"] as const) {
     }] : []);
     f.watch.turn(CONV, { kind: "step", steps: 3 });
     await settle();
-    // LA-2h generation ordering: rejected rotation leaves original reservation/token; forget retains tombstone.
     if (replacement === "new token") {
       assert.equal(f.timers.size, 1);
       f.clock.now += STEP_INTERVAL_MS;
@@ -519,7 +511,6 @@ for (const replacement of ["new token", "no token"] as const) {
       await settle();
     }
     assert.deepEqual(pushes(f).map((msg) => msg.timestamp), replacement === "new token" ? [1_800_000_002, 1_800_000_003] : []);
-    // LA-2h generation ordering: rejected rotation leaves original reservation/token; forget retains tombstone.
     const messages = f.sent.map((raw) => JSON.parse(raw));
     const newTokenIndex = messages.findIndex((msg) => msg.type === "activityToken" && msg.token === seededReport().pushToken);
     if (replacement === "new token") {
@@ -539,8 +530,6 @@ test("registration replays every active seeded token before an in-flight push", 
   f.watch.report("deviceSynthetic2", seededReport());
   f.watch.report("deviceSynthetic3", seededReport());
   await settle();
-  // Third activity ends; its token must never be replayed.
-  // LA-2g round 1 rule 4: use a fresh token for live OTHER; an admitted token cannot be rebound.
   f.watch.report("deviceSynthetic3", { ...seededReport(), jobs: [{ ...report().jobs[0]!, token: "BBBBBBBBBBBBBBBB" }], turns: { BBBBBBBBBBBBBBBB: OTHER } });
   f.watch.turn(OTHER, { kind: "done" });
   await settle();
@@ -613,7 +602,6 @@ test("persisted end survives restart and token clearing without re-seeding", asy
   await settle();
   assert.equal(pushes(a)[0].timestamp, 1_800_000_002);
   const loaded = await a.store.load();
-  // LA-2h generation ordering: terminal records retain requestedAtMs.
   assert.deepEqual(loaded, { ok: true, records: [{ device: DEVICE, activityId: CONV, requestedAtMs: seededReport().requestedAtMs, kLast: 1_800_000_002, terminal: true }] });
   const b = await running(a.store);
   b.watch.report(DEVICE, { jobs: [], turns: {} });
@@ -631,7 +619,6 @@ test("legacy report preserves terminal tombstone and cannot revive the same acti
   f.watch.turn(CONV, { kind: "done" });
   await settle();
   assert.equal(pushes(f)[0].event, "end");
-  // LA-2h generation ordering: terminal records have exactly five fields.
   const tombstone = { ok: true, records: [{ device: DEVICE, activityId: CONV, requestedAtMs: seededReport().requestedAtMs, kLast: 1_800_000_002, terminal: true }] };
   assert.deepEqual(await f.store.load(), tombstone);
   f.sent.length = 0;
@@ -681,7 +668,6 @@ test("different-device reservations preserve both counters in the shared file", 
   assert.deepEqual(pushes(b).map((msg) => [msg.device, msg.timestamp]).sort(), [[DEVICE, 1_800_000_003], ["deviceSynthetic2", 1_800_000_003]]);
 });
 
-// Real disk boundary, with failures wrapped around the production save (including post-rename failure).
 const { ActivityStore } = await import("../src/activitystore.ts");
 const { mkdtemp, readFile, rm, chmod } = await import("node:fs/promises");
 const { default: os } = await import("node:os");
@@ -737,7 +723,6 @@ async function diskFixture(t: import("node:test").TestContext) {
     await rm(dir, { recursive: true, force: true });
   });
   async function idle() {
-    // Observe completed I/O and allow queued per-device reservations to enter the store.
     let previous = -1;
     do {
       previous = [...stores].reduce((sum, s) => sum + s.attempts, 0);
@@ -779,23 +764,19 @@ test("pending clears relay token, retains bindings and resumes after its last k"
   await f.idle();
   f.watch.report(DEVICE, { activityId: CONV, requestedAtMs: T0, jobs: [], turns: {} });
   await f.idle();
-  // LA-2h generation ordering: mismatched pending generation cannot clear the token.
   assert.deepEqual(JSON.parse(f.sent.at(-1)!), {
     type: "activityPush", device: DEVICE, event: "update", priority: 5,
     state: { jobs: [{ token: TOKEN, kind: "turn", state: "running", steps: 2, startedAt: 821692800 }] },
     staleDate: 1_800_000_900, timestamp: 1_800_000_002,
   });
-  // Mode H row ownership decision (Yorozu, 2026-11-08): pending retains bindings, host rows and sent state.
   assert.deepEqual(await f.rows(), [{ device: DEVICE, activityId: CONV, requestedAtMs: seededReport().requestedAtMs, kLast: 1_800_000_002, terminal: false, token: seededReport().pushToken, bindings: seededReport().turns, rows: [{ ...seededReport().jobs[0]!, steps: 2 }], sent: [{ ...seededReport().jobs[0]!, steps: 2 }] }]);
   f.clock.now += STEP_INTERVAL_MS;
   f.watch.turn(CONV, { kind: "step", steps: 3 });
   await f.idle();
-  // LA-2h generation ordering: original token remains active after rejected pending report.
   assert.equal(pushes(f).length, 2);
   f.watch.report(DEVICE, { ...seededReport(), jobs: [{ ...seededReport().jobs[0]!, steps: 3 }] });
   await f.idle();
   assert.equal(pushes(f)[1].timestamp, 1_800_000_003);
-  // Pending state also retains the conversation mapping despite the empty pending report.
   f.watch.turn(CONV, { kind: "done" });
   await f.idle();
   assert.equal(pushes(f)[2].timestamp, 1_800_000_004);
@@ -827,7 +808,6 @@ test("real tombstone redacts token, survives revoke and restart; only A2 replace
   f.watch.report(DEVICE, seededReport());
   f.watch.turn(CONV, { kind: "done" });
   await f.idle();
-  // LA-2h generation ordering: terminal records have exactly five fields.
   const tombstone = { device: DEVICE, activityId: CONV, requestedAtMs: seededReport().requestedAtMs, kLast: 1_800_000_002, terminal: true };
   assert.deepEqual(await f.rows(), [tombstone]);
   f.watch.forget(DEVICE, false);
@@ -847,7 +827,6 @@ test("real tombstone redacts token, survives revoke and restart; only A2 replace
   f.owners.set(CONV, { steps: 1, startedAt: T0 });
   restarted.report(DEVICE, { ...seededReport(), activityId: OTHER, pushToken: undefined });
   await f.idle();
-  // LA-2h generation ordering: equal-generation A2 cannot replace terminal A1.
   assert.deepEqual(await f.rows(), [tombstone]);
 });
 
@@ -916,7 +895,6 @@ for (const pending of [false, true]) {
     f.watch.report(DEVICE, { ...seededReport(), pushToken: pending ? undefined : "cd".repeat(32) });
     f.store.unblock!();
     await f.idle();
-    // Mode H row ownership decision (Yorozu, 2026-11-08): undelivered host steps survive rotation and pending.
     assert.deepEqual(pushes(f).filter((m) => m.timestamp === 1_800_000_002), []);
     assert.equal((await f.rows())[0].kLast, pending ? 1_800_000_002 : 1_800_000_003);
     if (pending) { f.watch.report(DEVICE, seededReport()); await f.idle(); }
@@ -943,7 +921,6 @@ test("real corrupt store remains unavailable and is never overwritten", async (t
   assert.equal(await readFile(f.file, "utf8"), '{"v":99,"records":[]}');
 });
 
-// Frozen: the stale continuation sets registered=true and pushes while the relay is down.
 test("(q) relayDown invalidates an awaited relayRegistered", async (t) => {
   const store = memoryStore();
   let attempts = 0;
@@ -969,7 +946,6 @@ test("(q) relayDown invalidates an awaited relayRegistered", async (t) => {
   assert.equal(Object.hasOwn(pushes({ sent })[0], "timestamp"), false);
 });
 
-// SDK-compatible lock injection; no OpenClaw dependency for restore unit tests.
 async function testFileLock(file: string, _options: unknown) {
   const { open, unlink } = await import("node:fs/promises");
   const handle = await open(`${file}.lock`, "wx", 0o600);
@@ -1001,7 +977,7 @@ test("v2 restore replays token first and pushes k+1 with the bound row without r
   first.turn(CONV, { kind: "step", steps: 2 });
   for (let i = 0; i < 100 && pushes(f).length === 0; i++) await delay(5);
   assert.equal(pushes(f).length, 1);
-  await first.stop(); // Drain real file saves before constructing the new watch.
+  await first.stop();
   assert.equal(pushes(f)[0].timestamp, 1_800_000_002);
   f.sent.length = 0;
   const second = await f.start();
@@ -1021,11 +997,9 @@ test("v2 end persists only a redacted tombstone", async (t) => {
   const watch = await f.start();
   watch.report(DEVICE, seededReport());
   watch.turn(CONV, { kind: "done" });
-  // Wait for send before stop, since stop deliberately suppresses pending sends.
   for (let i = 0; i < 100 && pushes(f).length === 0; i++) await new Promise((resolve) => setTimeout(resolve, 5));
   assert.equal(pushes(f).length, 1);
   await watch.stop();
-  // LA-2h generation ordering: terminal records retain their generation.
   assert.deepEqual(JSON.parse(await readFile(f.file, "utf8")).records,
     [{ device: DEVICE, activityId: CONV, requestedAtMs: seededReport().requestedAtMs, kLast: 1_800_000_002, terminal: true }]);
 });
@@ -1034,13 +1008,11 @@ test("v2 storage never persists legacy report rows", async (t) => {
   const f = await restoreFixture(t);
   const watch = await f.start();
   watch.report(DEVICE, seededReport());
-  // Drain seed persistence, then switch to legacy (which must remove durable rows).
   await watch.stop();
   const next = await f.start();
   next.report(DEVICE, report());
   next.turn(CONV, { kind: "step", steps: 2 });
   await next.stop();
-  // LA-2h generation ordering: legacy replacement leaves an ordering tombstone.
   assert.deepEqual(JSON.parse(await readFile(f.file, "utf8")).records, [{ device: DEVICE, activityId: CONV, requestedAtMs: seededReport().requestedAtMs, kLast: 1_800_000_001, terminal: true }]);
 });
 
@@ -1057,7 +1029,6 @@ test("save warning includes operation and error code but no device or token", as
   await f.watch.stop();
 });
 
-// Mode H: exercise row ownership through real saves, including the save receipt at send time.
 async function modeHFixture(t: import("node:test").TestContext) {
   const f = await diskFixture(t);
   await f.watch.stop();
@@ -1257,7 +1228,6 @@ for (const restart of [false, true]) {
   });
 }
 
-// These maps are injected owner observations, never app-report reducers.
 async function ownerFixture(t: import("node:test").TestContext) {
   const disk = await diskFixture(t);
   await disk.watch.stop();
@@ -1297,7 +1267,6 @@ const turnRow = (token = TOKEN, steps = 1): ActivityReport["jobs"][number] => ({
 const keeper = { token: "RRRRRRRRRRRRRRRR", kind: "recording", state: "running", startedAt: T0 } as const;
 
 for (const count of [65, 1025]) {
-  // red: behavioural
   test(`U1 ${count} ended tokens never resurrect, including on disk restart`, async (t) => {
     const f = await ownerFixture(t);
     for (let i = 0; i < count; i++) {
@@ -1326,13 +1295,11 @@ for (const count of [65, 1025]) {
   });
 }
 
-// red: behavioural
 test("U2 capacity stores no unseen token, warns once, still ends admitted rows", async (t) => {
   const f = await ownerFixture(t);
-  // End 1023 tokens, then admit the final slot. Reports remain small enough for wire limits.
   for (let i = 0; i < 1023; i++) {
     f.reportRows(f.watch, [keeper, turnRow(tokenAt(i))], { [tokenAt(i)]: convAt(i) });
-    await f.idle(); // No owner: each token becomes ended.
+    await f.idle();
   }
   f.live(CONV);
   f.reportRows(f.watch, [keeper, turnRow()], { [TOKEN]: CONV });
@@ -1355,7 +1322,6 @@ test("U2 capacity stores no unseen token, warns once, still ends admitted rows",
 });
 
 for (const state of ["running", "done"] as const) {
-  // red: behavioural
   test(`U3 owner overrides app ${state}, steps and startedAt forever`, async (t) => {
     const f = await ownerFixture(t);
     f.live(CONV, 2, T0 - 10_000);
@@ -1368,7 +1334,6 @@ for (const state of ["running", "done"] as const) {
   });
 }
 
-// red: behavioural
 test("U3 absent owner tombstones unseen token; later run and reused token stay hidden", async (t) => {
   const f = await ownerFixture(t);
   f.reportRows(f.watch, [keeper, turnRow()], { [TOKEN]: CONV });
@@ -1383,7 +1348,6 @@ test("U3 absent owner tombstones unseen token; later run and reused token stay h
 });
 
 for (const state of ["done", "failed"] as const) {
-  // red: behavioural
   test(`U4 unbound ${state} omitted; needsYou follows latest membership`, async (t) => {
     const f = await ownerFixture(t);
     f.live();
@@ -1397,7 +1361,6 @@ for (const state of ["done", "failed"] as const) {
   });
 }
 
-// red: behavioural
 test("U5 relayDown done persists without k, survives restart and stale re-report", async (t) => {
   const f = await ownerFixture(t);
   f.live();
@@ -1412,7 +1375,6 @@ test("U5 relayDown done persists without k, survives restart and stale re-report
   assert.equal(saved.kLast, k);
   assert.ok((saved.ended ?? []).includes(TOKEN));
   assert.ok(!saved.rows.some((r: { token: string; state: string }) => r.token === TOKEN && r.state === "running"));
-  // LA-2g round 1 rule 1: save the host done row, including its steps and finish time, before the stale app report.
   const doneRow = saved.rows.find((r: { token: string }) => r.token === TOKEN);
   assert.deepEqual(doneRow, { ...turnRow(), state: "done", finishedAt: f.clock.now });
   f.sent.length = 0;
@@ -1423,19 +1385,16 @@ test("U5 relayDown done persists without k, survives restart and stale re-report
   await f.watch.relayRegistered({ liveActivity: true, activityTimestamp: true });
   await f.idle();
   assert.ok(pushes(f).length <= 1);
-  // LA-2g round 1 rule 1: any pushed TOKEN stays host-done; content dates are seconds since 2001-01-01.
   assert.ok(pushes(f).every((p) => p.timestamp > k));
   for (const p of pushes(f)) {
     for (const row of p.state.jobs.filter((r: { token: string }) => r.token === TOKEN)) {
       assert.deepEqual(row, { ...doneRow, startedAt: (doneRow.startedAt - 978_307_200_000) / 1000, finishedAt: (doneRow.finishedAt - 978_307_200_000) / 1000 });
     }
   }
-  // LA-2g round 1 rule 1: reportRows advances only 15 s after done (< 120 s linger), so sorted disk rows retain keeper then host-done.
   assert.deepEqual((await f.rows())[0].rows, [keeper, doneRow]);
 });
 
 for (const live of [false, true]) {
-  // red: behavioural
   test(`U6/U7 restart ${live ? "in process keeps owner steps" : "empty owner reconciles before any push"}`, async (t) => {
     const f = await ownerFixture(t);
     f.live();
@@ -1443,7 +1402,7 @@ for (const live of [false, true]) {
     await f.idle();
     await f.watch.stop();
     const k = (await f.rows())[0].kLast;
-    if (live) f.live(CONV, 4); else f.owners.clear(); // No watch event delivered.
+    if (live) f.live(CONV, 4); else f.owners.clear();
     f.sent.length = 0;
     f.watch = await f.start(false);
     await f.idle();
@@ -1466,7 +1425,6 @@ for (const live of [false, true]) {
 }
 
 for (const finished of [false, true]) {
-  // red: behavioural
   test(`U8 report omits ${finished ? "finished lingering" : "running"} row permanently`, async (t) => {
     const f = await ownerFixture(t);
     f.live();
@@ -1491,15 +1449,14 @@ for (const finished of [false, true]) {
 }
 
 for (const first of ["done", "failed"] as const) {
-  // red: behavioural
   test(`U9 overlapping A ${first}, B gone uses owner then terminal history`, async (t) => {
     const f = await ownerFixture(t);
     f.live(CONV, 1);
     f.reportRows(f.watch, [keeper, turnRow()], { [TOKEN]: CONV });
     await f.idle();
-    f.live(CONV, 4, T0 + 100); // B is newest; A still live until following event.
+    f.live(CONV, 4, T0 + 100);
     f.clock.now += STEP_INTERVAL_MS;
-    f.watch.turn(CONV, { kind: first }); // A exits; B remains owner.
+    f.watch.turn(CONV, { kind: first });
     await f.idle();
     assert.equal(pushes(f).at(-1).state.jobs.find((j: { token: string }) => j.token === TOKEN).state, "running");
     assert.equal(pushes(f).at(-1).state.jobs.find((j: { token: string }) => j.token === TOKEN).steps, 4);
@@ -1513,7 +1470,6 @@ for (const first of ["done", "failed"] as const) {
   });
 }
 
-// red: behavioural
 test("U10 message before report admits; report before message stays hidden", async (t) => {
   const f = await ownerFixture(t);
   f.live(CONV, 2);
@@ -1527,7 +1483,6 @@ test("U10 message before report admits; report before message stays hidden", asy
   assert.ok(!pushes(f).at(-1).state.jobs.some((j: { token: string }) => j.token === hOther.token));
 });
 
-// red: API-adapted (liveTurn option). Runtime compatibility control stays green on frozen2f.
 test("legacy identical literal push sequence with empty liveTurn option", async () => {
   const sent: string[] = [];
   const watch = new ActivityWatch({ store: memoryStore(), liveTurn: () => undefined,
@@ -1544,7 +1499,6 @@ test("legacy identical literal push sequence with empty liveTurn option", async 
   await watch.stop();
 });
 
-// red: behavioural
 test("U9 final failed run uses owner steps and records finishedAt", async (t) => {
   const f = await ownerFixture(t);
   f.live(CONV, 2);
@@ -1613,7 +1567,7 @@ for (const replied of [false, true]) {
     f.reportRows(f.watch, [keeper, turnRow()], { [TOKEN]: CONV });
     await f.idle();
     if (replied) { f.watch.turn(CONV, { kind: "done" }); await f.idle(); }
-    f.owners.delete(CONV); // Owner disappears without a watch event.
+    f.owners.delete(CONV);
     f.reportRows(f.watch, [keeper, turnRow()], { [TOKEN]: CONV });
     await f.idle();
     const row = (await f.rows())[0];
@@ -1656,7 +1610,6 @@ test("R3 reconnect pushes offline terminal once at kLast + 1 and unchanged recon
   assert.deepEqual(pushes(f)[0].state.jobs, [{
     token: TOKEN, kind: "turn", state: "done", steps: 3, startedAt: 821692800, finishedAt: 821692815,
   }]);
-  // LA-2h generation ordering: terminal records retain their generation.
   assert.deepEqual((await f.rows())[0], { device: DEVICE, activityId: CONV, requestedAtMs: seededReport().requestedAtMs, kLast: k + 1, terminal: true });
   await f.watch.relayRegistered({ liveActivity: true, activityTimestamp: true });
   await f.idle();
@@ -1889,7 +1842,6 @@ test("G2 kLast is a reservation, never the generation replacement gate", async (
   assert.equal((await f.rows())[0].requestedAtMs, T0 + 1_000, "generation must persist independently of kLast");
 });
 
-// END counterpart of "same activity rotation invalidates an old-token reservation in flight".
 test("LA-2i M1 [behaviour] held END uses rotated token and keeps terminal reservation", async (t) => {
   const f = await diskFixture(t);
   f.watch.report(DEVICE, seededReport());
@@ -2069,7 +2021,6 @@ test("LA-2i M2-seeded [behaviour] tokenGone retains content and resumes above du
   await settle();
   assert.equal(f.timers.size, 1);
   const before = structuredClone(f.store.saves.at(-1)![0]!);
-  // Token loss must persist the held snapshot too.
   before.rows = [{ ...seededReport().jobs[0]!, steps: 3 }];
   delete before.token;
   f.sent.length = 0;
@@ -2088,15 +2039,6 @@ test("LA-2i M2-seeded [behaviour] tokenGone retains content and resumes above du
   assert.equal(f.store.saves.at(-1)![0]!.requestedAtMs, before.requestedAtMs);
 });
 
-// LA-2k: the relay slot as apps/relay/src/worker.ts keeps it. Every device has a p: row here.
-// activityPush reads the slot on arrival (dropped if empty) and is queued; at the start of the
-// queued send it goes to the token read on arrival only if the slot still holds it.
-// Model: an idle relay queue with zero-latency APNs; each queued send starts before the next
-// host message is applied. On the real relay (one activityTail chain per room), a send waits
-// for the previous send's APNs round trip. With two or more replaced devices, or a push already
-// in flight at reconnect, a later END can see the newer token and be dropped (never misdelivered).
-// That residual needs a relay change and is not modelled here.
-// After delivery an END clears the slot only if it still holds the sent token.
 type Delivery = { device: string; event: string; timestamp?: number; token?: string };
 function slotRelay() {
   const slots = new Map<string, string>();
@@ -2135,7 +2077,6 @@ const TB = "cd".repeat(32);
 const TC = "ef".repeat(32);
 const D2 = "deviceSynthetic2";
 const both = { liveActivity: true, activityTimestamp: true };
-// A newer activity on the same device: seed 1_800_000_011.
 const aNew = (pushToken = TB, bound = { jobs: seededReport().jobs, turns: seededReport().turns }): ActivityReport =>
   ({ ...seededReport(), ...bound, activityId: OTHER, requestedAtMs: 1_800_000_010_500, pushToken });
 const onOther = { jobs: [hNew], turns: { [hNew.token]: OTHER } };
@@ -2161,7 +2102,6 @@ async function seeded(relay = slotRelay()) {
   await drain();
   return f;
 }
-// Holds the next save that writes DEVICE's tombstone (the END reservation), not the turn's record update.
 function holdEnd(f: { store: ReturnType<typeof memoryStore> }) {
   const save = f.store.save;
   f.store.save = async function (rows) {
@@ -2169,7 +2109,6 @@ function holdEnd(f: { store: ReturnType<typeof memoryStore> }) {
     return save.call(this, rows);
   };
 }
-// An END whose tombstone save is held while the relay goes down: saved, not sent.
 async function unsentEnd(f: Awaited<ReturnType<typeof seeded>>) {
   holdEnd(f);
   f.watch.turn(CONV, { kind: "done" });
@@ -2333,8 +2272,6 @@ test("LA-2k 2-e [behaviour] stop drops unsent ENDs, also across a lock-blocked r
   }
 });
 
-// The flush at registration empties the entry before A_new can reserve, so A_new's END takes a fresh
-// entry; a later END for the device replaces any entry still there (memo v5 §4.2).
 test("LA-2k 2-f [behaviour] unsent END of a newer activity is sent with its own token", async () => {
   const f = await seeded();
   await unsentEnd(f);
@@ -2357,7 +2294,6 @@ test("LA-2k 2-f [behaviour] unsent END of a newer activity is sent with its own 
   assert.equal(f.relay.slots.get(DEVICE), undefined);
 });
 
-// Pins the frozen2j early return after the END save; keeping that END in unsentEnd is a follow-up.
 test("LA-2k 2-g [known gap] newer activity during the END save drops the END", async () => {
   const f = await seeded();
   holdEnd(f);
@@ -2402,7 +2338,6 @@ test("LA-2k 3-b [behaviour] crash between report send and save: restart binds pu
   assert.deepEqual(f.relay.delivered.at(-1), { device: DEVICE, event: "update", timestamp: 1_800_000_002, token: TA });
 });
 
-// J1: the disk holds A_old (TA) for DEVICE; the watch is registered and before load in one of two states.
 const DROPPED = "yorozu: Live Activity report dropped before state load";
 async function beforeLoad(state: "in flight" | "lock failed", pairedDevices?: () => Promise<string[]>) {
   const seed = await seeded();
@@ -2414,7 +2349,6 @@ async function beforeLoad(state: "in flight" | "lock failed", pairedDevices?: ()
   const gate = new Promise<void>((resolve) => { open = resolve; });
   store.acquire = async () => {
     if (++acquires === 1 && state === "in flight") await gate;
-    // A failed attempt at start and at the first registration's retry.
     return state === "in flight" || acquires > 2;
   };
   const f = slotFixture(store, relay, pairedDevices);

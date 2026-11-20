@@ -9,11 +9,6 @@ import Network
 import System
 #endif
 
-/// One downloadable voice model (`VoiceCatalog.swift` in packages/YorozuVoice pins its files). iPhone and iPad
-/// get each as an Apple-hosted asset pack (`scripts/voice_asset_pack.sh` builds them), so no third party sees
-/// the download; the Mac downloads it from Hugging Face into Application Support, resumable, excluded from
-/// backup, checked against the pinned hashes. LFM3-Audio's files sit at the top of the folder, as they always
-/// have; every other model has a subfolder of its own, on disk and inside its pack.
 @MainActor @Observable
 final class VoiceModel {
     nonisolated static let enabledKey = "voiceInput"
@@ -21,12 +16,10 @@ final class VoiceModel {
     nonisolated static let engineKey = "voiceInputEngine"
     nonisolated static let dictionaryKey = "voiceDictionary"
 
-    /// The downloadable models, by engine; Apple's has none.
     static let all: [VoiceEngineID: VoiceModel] = Dictionary(uniqueKeysWithValues: VoiceEngineID.allCases.compactMap { engine in
         engine.model.map { (engine, VoiceModel(engine: engine, spec: $0)) }
     })
 
-    /// iPhone and iPad need iOS 26 for Apple-hosted asset packs.
     static var appleHosting: Bool {
         #if os(iOS)
         if #available(iOS 26, *) { return true }
@@ -38,7 +31,6 @@ final class VoiceModel {
 
     enum State: Equatable {
         case absent, downloading, ready
-        /// The model's asset pack is not in App Store Connect yet.
         case unavailable
         case failed(String)
     }
@@ -49,7 +41,6 @@ final class VoiceModel {
     let spec: VoiceModelSpec
     private(set) var state: State = .absent
     private(set) var received: Int64 = 0
-    /// The download is held back because the only network is cellular, a hotspot or in Low Data Mode.
     private(set) var waitingForWiFi = false
     private var download: Task<Void, Never>?
     private var cellular = false
@@ -58,10 +49,8 @@ final class VoiceModel {
     var totalBytes: Int64 { spec.totalBytes }
     var hasFiles: Bool { received > 0 }
 
-    /// Where a file of the model is once downloaded.
     func url(of file: VoiceModelSpec.File) -> URL { final(file) }
 
-    /// The folder the model's runtime loads: the one holding its top-level files.
     var folderURL: URL {
         guard let top = spec.files.first(where: { !$0.path.contains("/") }) else { return directory.appending(path: spec.folder) }
         return final(top).deletingLastPathComponent()
@@ -74,8 +63,6 @@ final class VoiceModel {
         if spec.files.allSatisfy({ size(of: final($0)) == $0.bytes }) { state = .ready }
     }
 
-    /// Starts or resumes the download; does nothing while one runs or once the model is ready. It waits for
-    /// Wi-Fi unless `cellular` allows expensive and Low Data Mode networks for this download.
     func start(cellular: Bool = false) {
         if cellular, !self.cellular { pause() }
         guard state != .ready, download == nil else { return }
@@ -84,7 +71,6 @@ final class VoiceModel {
         download = Task { await run() }
     }
 
-    /// Stops the download and keeps what has arrived, to resume later.
     func pause() {
         download?.cancel()
         download = nil
@@ -109,7 +95,6 @@ final class VoiceModel {
         state = .absent
     }
 
-    /// On iPhone and iPad, marks the model unavailable when App Store Connect has no pack for it yet.
     func checkAvailability() async {
         #if os(iOS)
         guard #available(iOS 26, *), state == .absent || state == .unavailable, download == nil else { return }
@@ -193,7 +178,6 @@ final class VoiceModel {
     }
 
     #if os(iOS)
-    /// Waits for Wi-Fi unless cellular was allowed, then has the system download the pack from Apple.
     @available(iOS 26, *)
     private func fetchPack() async throws {
         if !cellular {
@@ -250,7 +234,6 @@ final class VoiceModel {
     }
 }
 
-/// Streams one HTTP response into a partial file, appending from `offset` when the server honours the range.
 private final class PartWriter: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let handle: FileHandle
     private var written: Int64
@@ -272,7 +255,6 @@ private final class PartWriter: NSObject, URLSessionDataDelegate, @unchecked Sen
     }
 
     func run(_ request: URLRequest) async throws {
-        // Without consent the download holds on cellular, hotspots and Low Data Mode and resumes on Wi-Fi.
         let configuration = URLSessionConfiguration.default
         configuration.allowsExpensiveNetworkAccess = cellular
         configuration.allowsConstrainedNetworkAccess = cellular

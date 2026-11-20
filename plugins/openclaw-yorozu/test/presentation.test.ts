@@ -10,7 +10,6 @@ import {
 const fixture = JSON.parse(readFileSync(new URL("fixtures/presentation-sdk-2026.9.8.json", import.meta.url), "utf8")) as {
   cases: { name: string; input: { blocks: Record<string, unknown>[] }; normalized: { blocks: Record<string, unknown>[] } | null }[];
 };
-// Preflight applies the SDK's string trim rule before calling the pinned normalizer.
 function trimmed(raw: unknown): unknown {
   if (typeof raw === "string") return raw.trim();
   if (Array.isArray(raw)) return raw.map(trimmed);

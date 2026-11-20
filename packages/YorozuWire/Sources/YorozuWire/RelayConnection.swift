@@ -26,11 +26,9 @@ public actor RelayConnection {
         case relayJoined
         case sessionOpen(PeerInfo)
         case route(DirectRoute)
-        /// While pairing, the relay leg failed or closed before `joined` (#532 step 5): at most once per race.
         case relayUnreachable
     }
 
-    /// A relay, or the plugin's direct listener (#532): a probe instead of `join`, no relay buffer, flow control or push.
     enum Path: Sendable { case relay, direct }
 
     enum Standing: Equatable, Sendable {
@@ -112,10 +110,8 @@ public actor RelayConnection {
     private var pongDeadline: Task<Void, Never>?
     private var pushToken: String?
     private var joined = false
-    /// "<path> <host[:port]>" for the log: never the query, which holds the room id.
     nonisolated let host: String
     nonisolated let label: String
-    /// A direct candidate's URL for the race's winner store; never the relay URL, whose query holds the room id.
     nonisolated let key: String
     private var dialed = ContinuousClock.now
     private var socketOpen = false
@@ -124,7 +120,6 @@ public actor RelayConnection {
     static let pongTimeout: Duration = .seconds(10)
     static let handshakeTimeout: Duration = .seconds(15)
 
-    /// `unversionedWire` is true only if the host listed `UnversionedWire.capability` in its last `peer_info`.
     public init(pairing: QrPayload, identity: PhoneIdentity, relayKnows: Bool, local: PeerInfo, unversionedWire: Bool = false,
         urlSession: URLSession = .shared) throws {
         self.init(path: .relay, dial: try RelayConnection.relayURL(pairing), pairing: pairing, identity: identity, relayKnows: relayKnows,
@@ -163,7 +158,6 @@ public actor RelayConnection {
         return dial
     }
 
-    /// Hands the decision to send the init to a race (`RacingConnection`): `ready` is called when the leg could.
     func gate(_ ready: @escaping @Sendable () -> Void) {
         self.ready = ready
     }
@@ -187,8 +181,6 @@ public actor RelayConnection {
         connect()
     }
 
-    /// The app's reconnect joins a dial under 10 s old that is still connecting or has opened (at launch, `start` and the
-    /// scene becoming active come together); otherwise, and while waiting out a retry or offline, it dials at once.
     public func reconnect() {
         guard running else { return start() }
         attempt = 0
@@ -259,7 +251,6 @@ public actor RelayConnection {
                 let message = try await task.receive()
                 guard gen == generation else { return }
                 if !socketOpen {
-                    // URLSession reports no open without a delegate; the first message proves it.
                     socketOpen = true
                     connectionLog.info("\(self.label, privacy: .public): socket open after \((ContinuousClock.now - self.dialed).ms, privacy: .public) ms")
                 }
@@ -301,7 +292,6 @@ public actor RelayConnection {
     private func closed(reason: String) {
         drop()
         guard running else { return }
-        // A direct leg does not redial: its race decides what comes next.
         if path == .direct {
             running = false
             return set(.offline)
@@ -318,7 +308,6 @@ public actor RelayConnection {
         }
     }
 
-    /// A direct-paired device retries until the plugin's allowlist reaches the relay; token expiry cannot unpair it.
     static func afterClose(reason: String, standing: Standing) -> CloseOutcome {
         switch reason {
         case "revoked": return .terminal(.unpaired)
@@ -377,8 +366,6 @@ public actor RelayConnection {
         guard let socket,
               let message = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any],
               let type = message["type"] as? String else { return }
-        // A direct listener is nobody until its probe answer proves the room's key, and never a relay: it gets no join
-        // signature over a nonce of its choosing.
         if path == .direct {
             guard hostOnline || type == "probe" else { return }
             guard !["nonce", "joined", "owner"].contains(type) else { return }
@@ -510,10 +497,8 @@ public actor RelayConnection {
             default: return
             }
             connectionLog.error("\(self.label, privacy: .public): handshake timed out")
-            // Nothing buffers on the direct path: a handshake that got no answer fails the leg.
             if self.path == .direct { return self.closed(reason: "") }
             self.wireFormat = self.wireFormat.afterHandshakeTimeout(onRelay: true, awaitingResponse: awaitingResponse)
-            // Format fallback continues the same granted attempt.
             self.beginHandshake(on: socket)
         }
         handshake = .initSent(hs, deadline: deadline)

@@ -21,7 +21,6 @@ fn thresholds_decimal_and_disabled() {
         serde_json::to_string(&ack).unwrap(),
         r#"{"type":"flowAck","bytes":"262144"}"#
     );
-    // ^(0|[1-9][0-9]*)$: canonical decimal, checked without a regex dependency.
     assert!(
         ack.bytes == "0"
             || (!ack.bytes.starts_with('0') && ack.bytes.bytes().all(|c| c.is_ascii_digit()))

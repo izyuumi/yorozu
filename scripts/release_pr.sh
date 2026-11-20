@@ -1,7 +1,4 @@
 #!/bin/sh
-# Opens or updates the release PR (branch `release`, like release-please): CHANGELOG.md gains the notes for
-# <version>, and the body names the beta that merging it makes stable (promote.yml) by build, source commit and
-# DMG digest; promote refuses a beta that no longer matches all three.
 set -eu
 cd "$(dirname "$0")/.."
 REPO=${REPO:-izyuumi/yorozu}
@@ -15,7 +12,6 @@ FILE=$(mktemp)
 printf '# Changelog\n\n## %s\n\n%s\n\n%s' "$VERSION" "$(printf '%s' "${NOTES:-No notable changes.}" | sed 's/^## /### /')" "$OLD" > "$FILE"
 gh api -X PATCH "repos/$REPO/git/refs/heads/release" -f sha="$SHA" -F force=true >/dev/null 2>&1 \
     || gh api "repos/$REPO/git/refs" -f ref=refs/heads/release -f sha="$SHA" >/dev/null
-# The contents API commits as GitHub, so the commit is signed as the main ruleset requires.
 blob=$(gh api "repos/$REPO/contents/CHANGELOG.md?ref=release" -q .sha 2>/dev/null || true)
 gh api -X PUT "repos/$REPO/contents/CHANGELOG.md" -f message="chore: release $VERSION" -f branch=release \
     -f content="$(base64 < "$FILE" | tr -d '\n')" ${blob:+-f sha="$blob"} >/dev/null
@@ -32,7 +28,6 @@ if [ -n "$PR" ]; then
 else
     gh pr create --repo "$REPO" --head release --base main --title "chore: release $VERSION" --body "$BODY" >/dev/null
 fi
-# The bot-authored PR's checks wait for approval; approve them so the required checks run.
 for _ in 1 2 3 4 5 6; do
     sleep 10
     runs=$(gh run list --repo "$REPO" --workflow checks.yml --branch release --event pull_request --status action_required \

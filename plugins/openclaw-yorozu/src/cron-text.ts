@@ -1,4 +1,3 @@
-/** The fields of an OpenClaw cron schedule that the text reads; this file imports nothing from OpenClaw. */
 export type ScheduleLike = { kind: string; everyMs?: number; expr?: string; tz?: string };
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -35,7 +34,6 @@ function duration(ms: number): string {
   return `${ms} ms`;
 }
 
-/** The ranges are those of `CronSchedule.cron` in the app, which shows this text when it declines a schedule. */
 function describeCron(expr: string): string {
   const fields = expr.split(/\s+/);
   if (fields.length !== 5) return `Cron ${expr}`;

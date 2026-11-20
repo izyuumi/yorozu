@@ -27,7 +27,6 @@ export default defineConfig({
   test: {
     projects: [
       {
-        // direct.test.ts imports the plugin's pure files, whose tsconfig extends an OpenClaw checkout CI does not have.
         oxc: { tsconfig: false },
         test: { name: "node", include: ["src/index.test.ts", "src/protocol.test.ts", "src/direct.test.ts", "src/compat-source.test.ts"] },
       },

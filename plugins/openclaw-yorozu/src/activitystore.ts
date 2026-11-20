@@ -5,7 +5,6 @@ import path from "node:path";
 import { cleanJobs, ENDED_LIMIT, LIMIT, validEnded, validJob, validTurns, type WireJob } from "./liveactivity.js";
 
 export type ActivityRecord = { device: string; activityId: string; requestedAtMs: number; token?: string; kLast: number; terminal: boolean; bindings?: Record<string, string>; rows?: WireJob[]; sent?: WireJob[]; ended?: string[]; replied?: string[] };
-// Structural SDK signature keeps standalone modules free of runtime SDK imports.
 type FileLock = (file: string, options: { stale: number; retries: { retries: number; factor: number; minTimeout: number; maxTimeout: number }; staleRecovery: "remove-if-definitely-stale" }) => Promise<{ release(): Promise<void> }>;
 export type ActivityStorage = Pick<ActivityStore, "acquire" | "release" | "load" | "save" | "lockReason">;
 type LoadResult = { ok: true; records: ActivityRecord[] } | { ok: false; reason: string };
@@ -51,7 +50,6 @@ export class ActivityStore {
       try {
         const owner = JSON.parse(await readFile(`${this.file}.lock`, "utf8"));
         if (!owner || !Number.isSafeInteger(owner.pid) || owner.pid <= 0) throw new Error("invalid owner");
-        // The SDK has already refused recovery; no PID probing or sidecar mutation here.
         this.lockReason = owner.starttime == null
           ? "Live Activity lock owner start time unknown; failing closed"
           : `another live host holds the Live Activity state (pid ${owner.pid})`;
@@ -77,7 +75,6 @@ export class ActivityStore {
     }
     try {
       const data = JSON.parse(bytes);
-      // Older formats lack the durable generation; refuse rather than overwrite them.
       if (!data || Array.isArray(data) || data.v !== 3 || Object.keys(data).length !== 2 ||
         !Array.isArray(data.records) || !data.records.every(validRecord) ||
         new Set(data.records.map((row: ActivityRecord) => row.device)).size !== data.records.length) {

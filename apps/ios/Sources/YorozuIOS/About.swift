@@ -15,7 +15,6 @@ enum AboutLinks {
     }
 }
 
-/// Settings > About on iPhone and iPad.
 struct AboutSections: View {
     let model: AppModel
 
@@ -33,7 +32,6 @@ struct AboutSections: View {
 }
 
 #if os(macOS)
-/// The Mac's About tab: the app, its links and diagnostics, and Sparkle's update settings.
 struct MacAboutTab: View {
     let model: AppModel
     private let iconSize: CGFloat = 128

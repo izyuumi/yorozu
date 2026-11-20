@@ -1,6 +1,3 @@
-// Builds src/content.json from the repository: README and docs, the app's settings keys, the Info.plist usage
-// strings and entitlements, the troubleshooting tables and CHANGELOG.md. `--check` fails when the committed
-// bundle differs from what the sources produce now, except for release notes alone. Run from anywhere: paths resolve from this file.
 import { existsSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -23,13 +20,10 @@ function quoted(file: string, text: string): string {
   return file;
 }
 
-// --- Docs ---------------------------------------------------------------------------------------------------
-
 function slug(heading: string): string {
   return heading.toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, "").trim().replace(/\s/g, "-");
 }
 
-/** Splits markdown into sections at headings outside fenced code. Text before the first heading is dropped. */
 function sections(markdown: string): Section[] {
   const result: Section[] = [];
   let fenced = false;
@@ -43,7 +37,6 @@ function sections(markdown: string): Section[] {
   return result;
 }
 
-/** A heading's own text plus its subsections', up to the next heading at its level or above. */
 function sectionTree(doc: Doc, heading: string): string {
   const start = doc.sections.findIndex((s) => s.heading === heading);
   if (start < 0) fail(`${doc.path} has no heading "${heading}"`);
@@ -70,12 +63,9 @@ function docs(): Doc[] {
   });
 }
 
-// --- Settings -----------------------------------------------------------------------------------------------
-
 interface SwiftFacts {
   constants: Map<string, string>;
   cases: Map<string, string[]>;
-  /** Raw values that differ from the case name, by `Type.case`. */
   raw: Map<string, string>;
   storage: { ref: string; defaultExpr: string; file: string }[];
 }
@@ -109,7 +99,6 @@ function swiftFacts(files: { path: string; text: string }[]): SwiftFacts {
         facts.cases.set(type, [...(facts.cases.get(type) ?? []), ...names]);
       }
       const storage = /@AppStorage\((\w+\.\w+)(?:,\s*store:\s*[\w.]+)?\)\s+(?:private\s+)?var\s+\w+\s*(?:=\s*(.+?)|:\s*(\w+)\?)\s*$/.exec(line);
-      // An optional setting (`var x: Kind?`) has no default: unset until the owner picks one.
       if (storage) facts.storage.push({ ref: storage[1], defaultExpr: storage[2] ?? `${storage[3]}.`, file: path });
     }
   }
@@ -117,7 +106,6 @@ function swiftFacts(files: { path: string; text: string }[]): SwiftFacts {
 }
 
 function appSettings(): AppSetting[] {
-  // The voice package declares the types some settings store.
   const files = [...swiftFiles("apps/ios/Sources"), ...swiftFiles("packages/YorozuVoice/Sources")].map((path) => ({ path, text: read(path) }));
   const facts = swiftFacts(files);
   const curated: Record<string, Omit<AppSetting, "key" | "type" | "default" | "options" | "source">> = json("content/settings.json").app;
@@ -149,7 +137,6 @@ function appSettings(): AppSetting[] {
   return [...found.values()].sort((a, b) => a.key.localeCompare(b.key));
 }
 
-// Test-only settings from docs/designs/hermes-backend.md, expiring by 2026-12-31.
 const TEST_ONLY_KEYS = new Set(["backends"]);
 
 function hostSettings(setup: Doc): HostSetting[] {
@@ -172,8 +159,6 @@ function hostSettings(setup: Doc): HostSetting[] {
     };
   });
 }
-
-// --- Troubleshooting, permissions, guides, releases ---------------------------------------------------------
 
 function troubleshooting(setup: Doc): TroubleEntry[] {
   const table = sectionTree(setup, "Troubleshooting");
@@ -236,8 +221,6 @@ function releases(changelog: string): Release[] {
   return [...changelog.matchAll(/^## (\d+\.\d+\.\d+)\s*\n([\s\S]*?)(?=^## |(?![\s\S]))/gm)].map(([, version, text]) => ({ version, text: text.trim() }));
 }
 
-// --- Main ---------------------------------------------------------------------------------------------------
-
 function generate(): string {
   const all = docs();
   const setup = all.find((d) => d.id === "setup") ?? fail("docs/setup.md is missing");
@@ -275,8 +258,6 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
         console.error(`${name} is stale. Run: pnpm --filter @yorozu/help-mcp generate`);
         process.exit(1);
       }
-      // A stable release PR changes only CHANGELOG.md (scripts/release_pr.sh) and must stay green, so
-      // release notes alone never fail the check; the next regeneration picks them up.
       if (current !== text) console.warn(`${name}: only the release notes are behind CHANGELOG.md; the next generate picks them up.`);
       else console.log(`${name} is up to date.`);
     } else if (current === text) {

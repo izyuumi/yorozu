@@ -221,7 +221,6 @@ pub fn step(mut m: Machine, event: Event) -> (Machine, Vec<Effect>) {
             return (m, effects);
         }
     }
-    // C0 precedes all payload handling, including foreign and malformed frames.
     if m.state.socket() {
         if let E::RelayFrame { flow_bytes, .. } = &event.kind {
             if let Some(ack) = flow::on_relay_frame(&mut m.flow, *flow_bytes) {
@@ -232,15 +231,15 @@ pub fn step(mut m: Machine, event: Event) -> (Machine, Vec<Effect>) {
     match (&m.state, &event.kind) {
         (S::Idle(_) | S::Backoff, E::Start) | (S::Backoff, E::Timer(Timer::Backoff)) => {
             m.dial(&mut effects)
-        } // C1
-        (S::Dialing, E::SocketOpen) => m.state = S::AwaitNonce, // C2
+        }
+        (S::Dialing, E::SocketOpen) => m.state = S::AwaitNonce,
         (S::AwaitNonce, E::Nonce(nonce)) => {
             m.state = S::Joining;
             effects.push(F::Join {
                 nonce: nonce.clone(),
                 token: m.standing == Standing::CodeOnly && !m.retried_as_known,
             });
-        } // C3
+        }
         (
             S::Joining,
             E::Joined {
@@ -248,7 +247,6 @@ pub fn step(mut m: Machine, event: Event) -> (Machine, Vec<Effect>) {
                 flow_control,
             },
         ) => {
-            // C4, C5
             m.state = S::Joined;
             m.cancel(Timer::Connect, &mut effects);
             m.flow = Flow {
@@ -264,7 +262,7 @@ pub fn step(mut m: Machine, event: Event) -> (Machine, Vec<Effect>) {
                 m.init(&mut effects);
             }
         }
-        (S::Joined, E::Owner(true)) => m.init(&mut effects), // C5
+        (S::Joined, E::Owner(true)) => m.init(&mut effects),
         (
             S::Handshaking { keys: false },
             E::RelayFrame {
@@ -274,7 +272,7 @@ pub fn step(mut m: Machine, event: Event) -> (Machine, Vec<Effect>) {
         ) => {
             m.state = S::Handshaking { keys: true };
             effects.push(F::PeerInfo);
-        } // C6
+        }
         (
             S::Handshaking { keys: true },
             E::RelayFrame {
@@ -282,7 +280,6 @@ pub fn step(mut m: Machine, event: Event) -> (Machine, Vec<Effect>) {
                 ..
             },
         ) if peer.compatible() => {
-            // C7
             m.state = S::Open;
             m.cancel(Timer::Handshake, &mut effects);
             m.inits = 0;
@@ -299,7 +296,6 @@ pub fn step(mut m: Machine, event: Event) -> (Machine, Vec<Effect>) {
             || matches!(envelope, Envelope::Error(error) if error.code == "update_required")
             || matches!(envelope, Envelope::MessageError(error) if error.code == "update_required") =>
         {
-            // C8
             m.end_session(event.now_ms);
             m.state = S::Idle(Some(Terminal::UpdateRequired));
             m.socket_generation += 1;
@@ -307,9 +303,8 @@ pub fn step(mut m: Machine, event: Event) -> (Machine, Vec<Effect>) {
             m.cancel_all(&mut effects);
             effects.push(F::Terminal(Terminal::UpdateRequired));
         }
-        (S::Handshaking { .. }, E::Timer(Timer::Handshake)) => m.init(&mut effects), // C9
+        (S::Handshaking { .. }, E::Timer(Timer::Handshake)) => m.init(&mut effects),
         (S::Handshaking { .. } | S::Open, E::Owner(false)) => {
-            // C10
             if m.state == S::Open {
                 effects.push(F::SessionLost);
             }
@@ -323,10 +318,10 @@ pub fn step(mut m: Machine, event: Event) -> (Machine, Vec<Effect>) {
                 payload: Payload::Box(envelope),
                 ..
             },
-        ) => effects.push(F::Chat(envelope.clone())), // C11
+        ) => effects.push(F::Chat(envelope.clone())),
         (S::Joined | S::Handshaking { .. } | S::Open, E::Accepted(sig)) => {
             effects.push(F::Accepted(sig.clone()))
-        } // C12
+        }
         (state, E::Close { code: 4001, reason })
             if state.socket()
                 && reason == "unknown token"
@@ -337,11 +332,10 @@ pub fn step(mut m: Machine, event: Event) -> (Machine, Vec<Effect>) {
             m.retried_as_known = true;
             effects.push(F::Close);
             m.dial(&mut effects);
-        } // C13a
+        }
         (state, E::Close { code, reason })
             if state.socket() && close_outcome(*code, reason, m.standing).is_some() =>
         {
-            // C13
             let Some(terminal) = close_outcome(*code, reason, m.standing) else {
                 return (m, effects);
             };
@@ -355,7 +349,6 @@ pub fn step(mut m: Machine, event: Event) -> (Machine, Vec<Effect>) {
         (state, E::Close { .. } | E::Error | E::Timer(Timer::Connect | Timer::Pong))
             if state.socket() =>
         {
-            // C14
             if let E::Close { code, reason } = &event.kind {
                 m.last_close = Some((*code, reason.clone()));
             }
@@ -375,7 +368,7 @@ pub fn step(mut m: Machine, event: Event) -> (Machine, Vec<Effect>) {
             effects.push(F::Ping);
             m.arm(Timer::Ping, 25_000, &mut effects);
             m.arm(Timer::Pong, 10_000, &mut effects);
-        } // C15
+        }
         (S::Joined | S::Handshaking { .. } | S::Open, E::Pong) => {
             m.cancel(Timer::Pong, &mut effects)
         }
@@ -384,8 +377,8 @@ pub fn step(mut m: Machine, event: Event) -> (Machine, Vec<Effect>) {
             m.socket_generation += 1;
             effects.push(F::Close);
             m.cancel_all(&mut effects);
-        } // C16
-        _ => {} // Explicit default: unchanged, no effects (except C0).
+        }
+        _ => {}
     }
     (m, effects)
 }

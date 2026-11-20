@@ -1,4 +1,3 @@
-//! Pure single-flight history synchronization and open-conversation model.
 use crate::{
     events::{ConvList, Envelope, History, Message},
     model::{Conversation, Item},
@@ -20,7 +19,6 @@ pub struct Open {
     pub items: Vec<Item>,
     pub older_more: bool,
     pub typing_until: Option<u64>,
-    /// The user opened this conversation and its first newest page is still owed.
     pub fresh: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,7 +41,6 @@ pub enum Event {
     New(String),
     Older(String),
     Outgoing(Message),
-    /// A retry moved the outbox row off this message id.
     Retried(String),
     Live(Envelope),
     Tick,
@@ -58,7 +55,6 @@ pub enum Effect {
         items: usize,
         more: bool,
         newest: bool,
-        /// The first newest page since the user opened the conversation.
         opened: bool,
     },
 }
@@ -131,7 +127,6 @@ impl Machine {
                         o.items.push(item);
                     }
                 }
-                // Discard requests for conversations whose items we no longer hold.
                 self.queue.retain(|r| matches!(r, Request::List));
                 if let Some(o) = &self.open {
                     if self.online {
@@ -232,7 +227,6 @@ impl Machine {
                             if let Some(o) = self.open.as_mut().filter(|o|o.conv_id==conv_id) {
                                 let opened = newest && std::mem::take(&mut o.fresh);
                                 if newest {
-                                    // Their `before` was computed from items this page replaces.
                                     self.queue.retain(|r| !matches!(r, Request::History {conv_id:id,before:Some(_)} if *id==conv_id));
                                     o.items.retain(|i| {
                                         (i.kind=="user" && outbox.pending(&conv_id,Some(&i.id)))
@@ -308,7 +302,6 @@ impl Machine {
                                     .iter()
                                     .any(|i| i.kind == "user" && i.id == r.message_id)
                         }) {
-                            // A page already in flight may predate this run.
                             let request = Request::History {
                                 conv_id: r.conv_id,
                                 before: None,
@@ -372,7 +365,6 @@ impl Machine {
         }
         effects
     }
-    /// Whether a tick at `now` would change anything.
     pub fn due(&self, now: u64) -> bool {
         self.flight.as_ref().is_some_and(|f| now >= f.deadline)
             || self

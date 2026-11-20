@@ -1,36 +1,25 @@
 import Foundation
 import Network
 
-/// When each leg of a race starts and how long to wait before the next race (#532 items 5 and 6). Pure: no sockets, no clocks.
 enum RacePolicy {
-    /// The key the store holds when the relay won; a direct candidate's key is its URL string.
     static let relayKey = "relay"
-    /// Happy Eyeballs: each further direct candidate starts this long after the one before.
     static let stagger = Duration.milliseconds(50)
-    /// The relay's wait when a direct candidate won last time on this network kind.
     static let headStart = Duration.milliseconds(300)
-    /// A granted direct handshake gets 3 s to open while a relay fallback remains.
     static let directHandshakeTimeout = Duration.seconds(3)
-    /// Failed direct handshakes are skipped for 10 minutes on this room and network kind.
     static let directFailureLifetime: TimeInterval = 10 * 60
-    /// A session that lived less than this counts as a quick loss.
     static let quickSession = Duration.seconds(10)
     static let maxPause = Duration.seconds(30)
 
     struct Start: Equatable, Sendable {
-        /// The candidate's index in the list given to `plan`.
         var index: Int
         var delay: Duration
     }
 
     struct Plan: Equatable, Sendable {
-        /// The direct candidates in dial order.
         var direct: [Start]
         var relay: Duration
     }
 
-    /// The last winner first if it is a direct candidate, the others after it in their order, 50 ms apart from 0. The relay
-    /// waits 300 ms only behind a direct candidate that won last; after a relay win, no win or a stale key it starts at 0.
     static func plan(direct: [String], lastWinner: String?) -> Plan {
         var order = Array(direct.indices)
         let won = lastWinner.flatMap { direct.firstIndex(of: $0) }
@@ -41,18 +30,15 @@ enum RacePolicy {
         return Plan(direct: order.enumerated().map { Start(index: $1, delay: stagger * $0) }, relay: won == nil ? .zero : headStart)
     }
 
-    /// The count of consecutive quick losses once a session that lived `lived` is lost. A long session resets it.
     static func quickLosses(after previous: Int, lived: Duration) -> Int {
         lived < quickSession ? previous + 1 : 0
     }
 
-    /// No pause for the first quick loss; then 1 s, 2 s, 4 s and so on, capped at 30 s.
     static func pause(quickLosses: Int) -> Duration {
         guard quickLosses >= 2 else { return .zero }
         return min(maxPause, .seconds(1 << min(quickLosses - 2, 5)))
     }
 
-    /// "wifi", "wired", "cellular", "other", or "none" without a usable path.
     static func networkKind(_ path: NWPath) -> String {
         guard path.status == .satisfied else { return "none" }
         if path.usesInterfaceType(.wifi) { return "wifi" }
@@ -62,13 +48,11 @@ enum RacePolicy {
     }
 }
 
-/// The candidate that won the last race, per pairing room and network kind.
 protocol RaceWinners: Sendable {
     func winner(room: String, network: String) -> String?
     func record(_ key: String, room: String, network: String)
 }
 
-/// The production store, in the standard user defaults.
 struct DefaultsRaceWinners: RaceWinners {
     static func prefix(_ room: String) -> String { "yorozu.raceWinner.\(room)." }
 
@@ -86,7 +70,6 @@ struct DefaultsRaceWinners: RaceWinners {
     }
 }
 
-/// Direct handshake failures, timestamped per candidate URL, pairing room and network kind.
 protocol RaceFailures: Sendable {
     func failedAt(_ key: String, room: String, network: String) -> Date?
     func record(_ key: String, room: String, network: String, at: Date)
@@ -108,7 +91,6 @@ struct DefaultsRaceFailures: RaceFailures {
 
     func record(_ key: String, room: String, network: String, at: Date) {
         Self.lock.withLock {
-            // Lapsed entries go as new ones come, so the store never grows past the live failures.
             var stored = entries(room: room, network: network).filter { at.timeIntervalSince($0.value) < RacePolicy.directFailureLifetime }
             stored[key] = at
             UserDefaults.standard.set(stored, forKey: Self.prefix(room) + network)
@@ -133,8 +115,6 @@ struct DefaultsRaceFailures: RaceFailures {
     }
 }
 
-/// The latest network path's kind, from one monitor shared by the app. The first path arrives asynchronously, so a race
-/// started at launch waits for it rather than racing as "none".
 final class NetworkKind: @unchecked Sendable {
     static let shared = NetworkKind()
 

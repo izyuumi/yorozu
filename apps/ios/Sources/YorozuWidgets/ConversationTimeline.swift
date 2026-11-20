@@ -1,8 +1,6 @@
 import AppIntents
 import WidgetKit
 
-/// A conversation as the widget's configuration offers it: read from the App Group snapshot, never
-/// from the app's store, so picking one works without launching the app.
 struct WidgetConversationEntity: AppEntity {
     static let typeDisplayRepresentation: TypeDisplayRepresentation = "Conversation"
     static let defaultQuery = WidgetConversationQuery()
@@ -36,11 +34,9 @@ struct ConversationsConfiguration: WidgetConfigurationIntent {
 
 struct ConversationsEntry: TimelineEntry {
     let date: Date
-    /// Nil while unpaired, in demo mode, or before the app first ran.
     let snapshot: WidgetSnapshot?
     var chosen: [String] = []
 
-    /// The chosen conversations first, in the order picked, then pinned and recent ones.
     var rows: [WidgetSnapshot.Row] {
         let all = snapshot?.rows ?? []
         let picked = chosen.compactMap { id in all.first { $0.id == id } }
@@ -56,8 +52,6 @@ struct ConversationsEntry: TimelineEntry {
         unread: 2))
 }
 
-/// Entries every quarter hour keep the relative times fresh; the app and the notification service
-/// reload the timeline whenever the snapshot changes.
 func quarterHourTimeline(_ entry: (Date) -> ConversationsEntry) -> Timeline<ConversationsEntry> {
     let now = Date.now
     return Timeline(entries: (0..<16).map { entry(now.addingTimeInterval(TimeInterval($0) * 15 * 60)) }, policy: .atEnd)

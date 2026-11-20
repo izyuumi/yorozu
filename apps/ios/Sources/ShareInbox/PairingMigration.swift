@@ -16,7 +16,6 @@ struct KeychainPairingStorage: PairingStorage {
 enum PairingMigration {
     enum Outcome { case nothingToDo, migrated, kept }
 
-    /// Process-local: an unsuccessful migration permits reads of the retained old item until retry.
     final class State: @unchecked Sendable {
         static let shared = State()
         private let lock = NSLock()

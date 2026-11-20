@@ -2,8 +2,6 @@ import Foundation
 import Testing
 @testable import YorozuWire
 
-/// The real sender against the plugin's real spool in a node process, killed at 50 % and 99 % and restarted
-/// on the same spool. Run with `YOROZU_RESUME_BENCH=1 swift test --filter ResumeBench`.
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["YOROZU_RESUME_BENCH"] == "1"), .serialized)
 struct ResumeBenchTests {
     static let size = 100 * 1024 * 1024

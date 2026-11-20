@@ -8,7 +8,6 @@ export const PHONE_BUFFER_CAP_BYTES = 2 * MAX_PAYLOAD_BYTES;
 export const MAX_TOKENS_PER_ROOM = 8;
 export const NOTIFY_PER_MINUTE = 60;
 export const ACTIVITY_PUSH_PER_MINUTE = 60;
-/** A room no member connected to for this long is deleted with everything stored for it; its host rebuilds it. */
 export const ROOM_IDLE_TTL_MS = 30 * 24 * 60 * 60_000;
 
 export function positiveLimit(value: string | undefined, fallback: number): number {
@@ -33,7 +32,6 @@ export const PONG = JSON.stringify({ type: "pong" });
 
 export const CLOSE_PROTOCOL = 4001;
 export const CLOSE_BAD_SIGNATURE = 4003;
-/** A nonce join the relay cannot answer yet: no host registered, or it has not announced its devices. Retry. */
 export const CLOSE_HOST_OFFLINE = 4011;
 export const HOST_OFFLINE_REASON = "host offline";
 export const CLOSE_RATE_LIMIT = 4029;
@@ -206,14 +204,12 @@ export const parsePush = (msg: Record<string, unknown>): Push | null =>
     ? { deviceToken: msg.deviceToken }
     : null;
 
-// pushProxy / the push-proxy capability, #532: the host registers a direct client's token.
 export const parseHostPush = (msg: Record<string, unknown>): { device: string; deviceToken: string } | null => {
   if (!deviceKey(msg.device)) return null;
   const push = parsePush({ deviceToken: msg.token });
   return push ? { device: msg.device, deviceToken: push.deviceToken } : null;
 };
 
-/** `null` when malformed; `undefined` for a class this relay does not know, which the caller ignores. */
 export const parseNotify = (msg: Record<string, unknown>): Notify | null | undefined => {
   if (typeof msg.threadRef !== "string" || msg.threadRef === "") return null;
   if (typeof msg.class !== "string") return null;
@@ -289,7 +285,6 @@ const deviceKey = (value: unknown): value is string =>
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
 const epochSeconds = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) > 0;
 
-/** `null` when malformed; `undefined` for a kind or state this relay does not know, which drops the job. */
 function parseActivityJob(value: unknown): ActivityJob | null | undefined {
   if (!isEnvelope(value)) return null;
   const { token, kind, state, steps, startedAt, finishedAt } = value;
@@ -309,7 +304,6 @@ function parseActivityJob(value: unknown): ActivityJob | null | undefined {
   };
 }
 
-/** The Live Activity's content state, rebuilt from known fields only: opaque tokens, kinds, states, counts, times. */
 export function parseActivityState(value: unknown): ActivityState | null {
   if (!isEnvelope(value) || !Array.isArray(value.jobs) || value.jobs.length > MAX_ACTIVITY_JOBS) return null;
   const jobs: ActivityJob[] = [];
@@ -329,7 +323,6 @@ export const parseActivityToken = (msg: Record<string, unknown>): ActivityToken 
   return token ? { device, token: token.deviceToken } : null;
 };
 
-/** `null` when malformed; `undefined` for an event this relay does not know, which the caller ignores. */
 export const parseActivityPush = (msg: Record<string, unknown>): ActivityPush | null | undefined => {
   if (!deviceKey(msg.device) || typeof msg.event !== "string") return null;
   if (msg.event !== "update" && msg.event !== "end") return undefined;
@@ -350,7 +343,6 @@ export const parseActivityPush = (msg: Record<string, unknown>): ActivityPush | 
   };
 };
 
-/** No alert: the activity changes silently, its own view is the notice. */
 export function activityPayload(push: ActivityPush, now: number): unknown {
   return {
     aps: {

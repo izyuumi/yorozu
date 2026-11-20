@@ -1,7 +1,6 @@
 import Foundation
 import Testing
 
-/// Runs `body` with defaults of its own, removed afterwards.
 private func withDefaults(_ body: (UserDefaults) throws -> Void) throws {
     let suite = "LiveActivitySettingTests-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))

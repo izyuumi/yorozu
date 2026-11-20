@@ -5,9 +5,7 @@ import Network
 import os
 import dnssd
 
-/// Addresses, URLs and the Bonjour tag of the direct path (#532).
 extension Direct {
-    /// The 4 or 16 bytes of an IPv4 or IPv6 literal; nil for anything else, a zone (`%en0`) included.
     static func ipBytes(_ text: String) -> [UInt8]? {
         guard !text.contains("%") else { return nil }
         var v4 = in_addr()
@@ -17,7 +15,6 @@ extension Direct {
         return nil
     }
 
-    /// Whether `address` lies in `network`/`prefix`; both of one family.
     static func contains(_ network: [UInt8], prefix: Int, _ address: [UInt8]) -> Bool {
         guard network.count == address.count, (0...network.count * 8).contains(prefix) else { return false }
         let whole = prefix / 8, bits = prefix % 8
@@ -27,7 +24,6 @@ extension Direct {
         return network[whole] & mask == address[whole] & mask
     }
 
-    /// A DNS name of letters, digits and hyphens, without a trailing dot; nil if it is not one.
     static func hostName(_ text: String) -> String? {
         let name = text.hasSuffix(".") ? String(text.dropLast()) : text
         guard !name.isEmpty, name.utf8.count <= 253,
@@ -37,7 +33,6 @@ extension Direct {
         return name
     }
 
-    /// `ws://host:port`, an IPv6 literal bracketed.
     static func url(host: String, port: Int) -> URL? {
         URL(string: "ws://\(host.contains(":") ? "[\(host)]" : host):\(port)")
     }
@@ -46,7 +41,6 @@ extension Direct {
         Int64(floor(date.timeIntervalSince1970 / 3600))
     }
 
-    /// Rotates the instance name and TXT `t` hourly to limit discovery tracking.
     public static func bonjourTag(hostKey: Data, epoch: Int64) -> String {
         let mac = HMAC<SHA256>.authenticationCode(for: Data("yorozu-bonjour:\(epoch)".utf8), using: SymmetricKey(data: hostKey))
         return Data(mac).prefix(9).base64URLEncodedString()
@@ -70,13 +64,10 @@ public enum DirectRoute: String, Sendable, Equatable, CaseIterable {
     }
 }
 
-/// One address of a local network interface, from `getifaddrs`.
 struct LocalInterface: Equatable, Sendable {
     var name: String
-    /// Without a zone.
     var address: String
     var prefix: Int
-    /// Up and running.
     var up: Bool
 
     init(name: String, address: String, prefix: Int, up: Bool = true) {
@@ -86,7 +77,6 @@ struct LocalInterface: Equatable, Sendable {
         self.up = up
     }
 
-    /// A VPN's tunnel: where Tailscale's addresses live.
     var isVPN: Bool { ["utun", "ipsec", "ppp"].contains { name.hasPrefix($0) } }
 
     static func current() -> [LocalInterface] {
@@ -113,7 +103,6 @@ struct LocalInterface: Equatable, Sendable {
         return text.split(separator: "%", maxSplits: 1).first.map(String.init)
     }
 
-    /// The mask's address bytes; Darwin may hand a netmask sockaddr shorter than its type, so only `sa_len` bytes are read.
     private static func maskBytes(_ mask: UnsafeMutablePointer<sockaddr>, family: sa_family_t) -> [UInt8]? {
         let length = Int(mask.pointee.sa_len)
         let raw = UnsafeRawPointer(mask)
@@ -130,8 +119,6 @@ struct LocalInterface: Equatable, Sendable {
     }
 }
 
-/// The owner's go-ahead for LAN candidates and Bonjour (#532); the Local Network explainer sets it. Loopback and
-/// Tailscale do not need it.
 public enum LocalNetwork {
     public static let key = "yorozu.localNetwork.allowed"
 
@@ -157,7 +144,6 @@ public enum LocalNetwork {
         return false
     }
 
-    /// Waits past ready: a policy denial can arrive after the browser starts.
     public static func refresh(timeout: Duration = .seconds(3)) async -> Bool {
         let browser = NWBrowser(for: .bonjour(type: Bonjour.type, domain: "local."), using: .tcp)
         let (states, continuation) = AsyncStream<NWBrowser.State>.makeStream()
@@ -185,9 +171,7 @@ public enum LocalNetwork {
     }
 }
 
-/// The latest `direct_hints` per pairing room, as JSON in user defaults.
 public struct DirectHintStore: Sendable {
-    /// nil: the standard defaults; tests name a suite of their own.
     private let suite: String?
     private var defaults: UserDefaults { suite.flatMap(UserDefaults.init(suiteName:)) ?? .standard }
 
@@ -207,14 +191,10 @@ public struct DirectHintStore: Sendable {
     public func forget(room: String) { defaults.removeObject(forKey: Self.key(room)) }
 }
 
-/// Which direct candidates a race dials (#532 item 4). Pure: the interfaces and the Local Network gate come in.
 enum DirectCandidates {
     static let tailscaleV4 = (network: Direct.ipBytes("100.64.0.0")!, prefix: 10)
     static let tailscaleV6 = (network: Direct.ipBytes("fd7a:115c:a1e0::")!, prefix: 48)
 
-    /// Loopback on the Mac (the default port), always, since stored hints can be stale; LAN addresses on a subnet of an
-    /// up, non-VPN interface, once Local Network is allowed; Tailscale IPs and then the MagicDNS name while an up VPN
-    /// interface holds a Tailscale address. `skipped` names each left-out hint and why, for the log.
     static func plan(hints: DirectHints?, interfaces: [LocalInterface], isMac: Bool, lanAllowed: Bool, lanDenied: Bool = false, port: Int = Direct.port)
         -> (candidates: [URL], skipped: [(String, String)]) {
         var candidates: [URL] = []
@@ -249,7 +229,6 @@ enum DirectCandidates {
         return (candidates, skipped)
     }
 
-    /// No address hints, or a hint matching any local interface: loopback may reach the host.
     static func hostMayBeLocal(_ hints: DirectHints?, _ interfaces: [LocalInterface]) -> Bool {
         guard let hints else { return true }
         let addresses = hints.lan.map(\.address) + hints.tailscale.map(\.address)
@@ -264,7 +243,6 @@ enum DirectCandidates {
         return [tailscaleV4, tailscaleV6].contains { Direct.contains($0.network, prefix: $0.prefix, bytes) }
     }
 
-    /// An address on the subnet of an up, non-VPN interface: where a Bonjour result must be.
     static func onLAN(_ address: String, _ interfaces: [LocalInterface]) -> Bool {
         guard let bytes = Direct.ipBytes(address) else { return false }
         return interfaces.contains { local in
@@ -274,8 +252,6 @@ enum DirectCandidates {
     }
 }
 
-/// Browses `_yorozu._tcp` for the pairing's tag (#532 item 7) and yields each match's IPv4 address and port on this
-/// subnet as a direct URL. Ends when the consumer stops iterating.
 enum Bonjour {
     static let type = "_yorozu._tcp"
 
@@ -317,8 +293,6 @@ enum Bonjour {
         }
     }
 
-    /// Resolves a service to the address it answers on: a TCP connection's remote endpoint, closed at once. Touched only
-    /// on `queue`.
     private final class Resolver: @unchecked Sendable {
         let queue = DispatchQueue(label: "to.yumi.yorozu.bonjour")
         private var connections: [NWConnection] = []

@@ -1,34 +1,21 @@
 import CryptoKit
 import Foundation
 
-/// Local Mac pairing (#532, feature flag `local-pair`): "Pair with the Gateway on this Mac" asks the plugin's loopback
-/// direct listener where its local pairing file is. The client probes as on the direct path, but without a room yet: the
-/// room is the hash of the key that answered. Then it sends `{"type":"local_pair"}` and gets
-/// `{"type":"local_pair","path":…}`, or `error` when the host could not make a code. The link itself never crosses the
-/// socket; the app reads it from the file (owner-only, `0600`) and checks it names the proven room.
 public enum LocalPairing {
-    /// The feature flag of the `local_pair` message. A plugin without it closes the socket (4101), which reads as no host.
     public static let flag = "local-pair"
-    /// Per loopback address: the probe, the request and the host making a code.
     public static let timeout = Duration.seconds(5)
 
     public struct Found: Equatable, Sendable {
-        /// The local pairing file's absolute path, as the plugin named it.
         public let path: String
-        /// The room the probe proved: `base64url(sha256(signingKey))`.
         public let room: String
-        /// The host's Ed25519 key, which signed the probe.
         public let signingKey: Data
     }
 
     public enum Failure: Error, Equatable, Sendable {
-        /// No loopback listener proved a key and named a file.
         case notFound
-        /// A host proved its key but could not make a pairing code.
         case hostFailed
     }
 
-    /// Asks `ws://127.0.0.1:<port>`, then `ws://[::1]:<port>`.
     public static func find(port: Int = Direct.port, timeout: Duration = LocalPairing.timeout, urlSession: URLSession = .shared)
         async throws -> Found {
         try await find(urls: urls(port: port), timeout: timeout) { URLSessionPairingSocket(urlSession.webSocketTask(with: $0)) }
@@ -50,7 +37,6 @@ public enum LocalPairing {
         throw failure
     }
 
-    /// One listener, closed when it answered, failed or ran out of time.
     static func ask(_ socket: any LocalPairingSocket, timeout: Duration) async throws -> Found {
         try await withThrowingTaskGroup(of: Found.self) { group in
             group.addTask { try await exchange(socket) }
@@ -58,7 +44,6 @@ public enum LocalPairing {
                 try await Task.sleep(for: timeout)
                 throw Failure.notFound
             }
-            // Closing ends a `receive` still waiting, so the group can finish.
             defer {
                 group.cancelAll()
                 socket.close()
@@ -83,8 +68,6 @@ public enum LocalPairing {
         return Found(path: path, room: room, signingKey: key)
     }
 
-    /// The probe answer when the client knows no room yet: the room is the answered key's hash, and that key must have
-    /// signed the nonce for it. The room, or nil.
     public static func verify(nonce: String, pubkey: String, sig: String) -> String? {
         guard let key = Data(base64URLEncoded: pubkey), key.count == 32 else { return nil }
         let room = Data(SHA256.hash(data: key)).base64URLEncodedString()
@@ -101,11 +84,9 @@ public enum LocalPairing {
     }
 }
 
-/// What local pairing uses of a WebSocket; tests script one.
 protocol LocalPairingSocket: Sendable {
     func send(_ text: String) async throws
     func receive() async throws -> String
-    /// Ends the socket; a `receive` waiting then throws.
     func close()
 }
 

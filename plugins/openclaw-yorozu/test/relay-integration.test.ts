@@ -18,7 +18,6 @@ const sdk = process.env.YOROZU_OPENCLAW_SDK;
 const sdkPrefix = "openclaw/plugin-sdk/";
 const skip = !sdk ? "set YOROZU_OPENCLAW_SDK to an installed OpenClaw package root"
   : !existsSync(path.join(sdk, "dist/plugin-sdk/websocket-runtime.js")) ? "YOROZU_OPENCLAW_SDK has no dist/plugin-sdk/websocket-runtime.js" : false;
-// Relative overrides are relative to this file, just like the default ../src.
 const source = process.env.YOROZU_PLUGIN_SRC
   ? pathToFileURL(path.resolve(path.dirname(fileURLToPath(import.meta.url)), process.env.YOROZU_PLUGIN_SRC) + path.sep)
   : new URL("../src/", import.meta.url);
@@ -50,7 +49,6 @@ async function until<T>(read: () => T | undefined, description: string, timeout 
 test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 }, async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "yorozu-relay-integration-"));
   const previous = { HOME: process.env.HOME, OPENCLAW_STATE_DIR: process.env.OPENCLAW_STATE_DIR };
-  // Must precede every SDK/plugin import, including SDK modules with import-time state paths.
   process.env.HOME = root;
   process.env.OPENCLAW_STATE_DIR = root;
   t.after(async () => {
@@ -60,7 +58,6 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     await rm(root, { recursive: true, force: true });
   });
 
-  // Stub every network discovery entry point: only the fake relay may listen (loopback).
   const stub = (code: string) => `data:text/javascript,${encodeURIComponent(code)}`;
   const networkStubs: Record<string, string> = {
     "./direct.js": stub(`export const bindAddresses = () => [];
@@ -138,19 +135,11 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     stores.set("devices", new Map([[deviceKey, {
       signingPub: deviceKey, staticPub: b64u(device.static.publicKey), pairedAt: REQUESTED_AT_MS,
     }]]));
-    // Opt-in worker storage semantics; existing fixtures retain their original behaviour.
     const pairedRows = new Set<string>();
     const activityTokens = new Map<string, string>();
-    // Pushes the relay sends to APNs: the slot token read on arrival, if the slot still holds it when
-    // the queued send starts; deliveries name the token they went to.
     const delivered: HostMessage[] = [];
     const deliveries: { event: unknown; timestamp: number; token: string }[] = [];
     const dropped: typeof deliveries = [];
-    // Model: an idle relay queue with zero-latency APNs; each queued send starts before the next
-    // host message is applied. On the real relay (one activityTail chain per room), a send waits
-    // for the previous send's APNs round trip. With two or more replaced devices, or a push already
-    // in flight at reconnect, a later END can see the newer token and be dropped (never misdelivered).
-    // That residual needs a relay change and is not modelled here.
     const sendQueue: (() => void)[] = [];
     const startSends = () => { for (let start = sendQueue.shift(); start; start = sendQueue.shift()) start(); };
     const connections: Connection[] = [];
@@ -197,20 +186,16 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
           } else if (message.type === "activityPush" && typeof message.timestamp === "number") {
             const device = message.device;
             const token = slotModel && device ? activityTokens.get(device) : undefined;
-            // worker.ts reads the slot on arrival and queues the send, which starts by dropping it if
-            // the slot no longer holds the arrival token.
             if (device && token !== undefined) {
               sendQueue.push(() => {
                 const row = { event: message.event, timestamp: message.timestamp!, token };
                 if (activityTokens.get(device) !== token) { dropped.push(row); return; }
                 delivered.push(message);
                 deliveries.push(row);
-                // A delivered END clears the slot only if it still holds the sent token (worker.ts, 2xx on end).
                 setImmediate(() => { if (message.event === "end" && activityTokens.get(device) === token) activityTokens.delete(device); });
               });
               setImmediate(startSends);
             }
-            // Capture at arrival, before any later save could make the assertion pass.
             const data = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : [];
             const rows = Array.isArray(data) ? data : data.records;
             receipts.push({ timestamp: message.timestamp, persisted: rows.some((row: { device: string; kLast: number }) =>
@@ -234,7 +219,6 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
         liveTurn: owner.conversation.liveTurn, mediaMaxBytes: 1024, onStatus: () => {}, onMessage: () => {}, onReaction: () => {},
       });
       running = task;
-      // Observe failures without leaving a rejected promise unhandled during a wait.
       void task.catch(() => { failures.push(new Error("runRelayHost rejected")); });
       return registered(index);
     }
@@ -300,7 +284,6 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
       activityTurn(CONV, { kind: "step", steps: 2 });
       return until(() => pushes(c)[0], "bound turn activityPush");
     }
-    // Another build's write to the relay slot.
     const setSlot = (device: string, token: string) => { activityTokens.set(device, token); };
     return { pairedRows, activityTokens, delivered, deliveries, dropped, setSlot, ownerRun: run, ownerDispatch: dispatch, connection, phone, pushes, sendReport, turn, stop, start, connect, registered, receipts, failures, deviceKey };
   }
@@ -318,10 +301,8 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
         await rotate();
         assert.ok(f.connection.messages.some((m) => m.type === "activityToken" && m.token === rotated.pushToken), "T2 must reach relay before delayed T1 invalidation");
       }
-      // Worker has already deleted T1 before emitting this notice. In B its notice
-      // was queued before the host's T2 registration, then delivered afterwards.
       f.connection.socket.send(JSON.stringify({ type: "activityGone", device: f.deviceKey }));
-      await f.phone.event({ kind: "device_list", data: {} }); // Noise/ack barrier after notice.
+      await f.phone.event({ kind: "device_list", data: {} });
       await rotate();
       await delay(100);
       const row = JSON.parse(readFileSync(file, "utf8")).records[0];
@@ -336,7 +317,6 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
       } finally { Date.now = originalNow; }
       assert.equal(f.pushes().length, 2, "next in-session host change after recovery must push");
       assert.equal(f.pushes()[1].timestamp, first.timestamp! + 1);
-      // Restart clears only throttle time; the same live owner and disk remain.
       await f.stop();
       const restarted = await f.start();
       activityTurn(CONV, { kind: "step", steps: 4 });
@@ -372,7 +352,7 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     await f.stop();
     f.pairedRows.clear();
     f.activityTokens.clear();
-    const restarted = await f.start(); // Restores real v3 file, no app re-report.
+    const restarted = await f.start();
     assert.ok(f.pairedRows.has(f.deviceKey), "devices announce must rebuild p: rows");
     activityTurn(CONV, { kind: "step", steps: 3 });
     await delay(200);
@@ -396,7 +376,7 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     await f.turn();
     await delay(50);
     assert.deepEqual(activityWire(f.connection), [
-      { type: "activityToken", token: T1 }, // report time
+      { type: "activityToken", token: T1 },
       { type: "activityToken", token: T1 },
       { type: "activityPush", event: "update", timestamp: 1_800_000_002 },
     ]);
@@ -420,7 +400,6 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     assert.equal(f.activityTokens.get(f.deviceKey), T1);
   });
 
-  // With 3-b, replaces the old LA-2i L4 test: the replay may overwrite a rollback token (known limit L4-4), but no push reaches it.
   await t.test("LA-2k 3-a [known limit] roll-forward over a changed slot pushes only to the record's token", async (t) => {
     const f = await fixture(t, { liveActivity: true, activityTimestamp: true }, undefined, false, true);
     await f.sendReport(true);
@@ -468,7 +447,6 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
       const push = await f.turn();
       const after = Date.now();
       assert.equal(Object.hasOwn(push, "timestamp"), false);
-      // A step has no time-dependent job fields; staleDate is bounded by the real clock.
       const data = report(false);
       const expected = plan(data.jobs, applyTurn(data.jobs, data.turns, CONV, { kind: "step", steps: 2 }, before), before);
       assert.ok(expected);
@@ -487,7 +465,7 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     const f = await fixture(t, { liveActivity: true, activityTimestamp: true });
     await f.sendReport(true);
     const push = await f.turn();
-    assert.equal(push.timestamp, 1_800_000_002); // ceil(1_800_000_000_500 / 1000) + 1
+    assert.equal(push.timestamp, 1_800_000_002);
     assert.deepEqual(f.receipts, [{ timestamp: 1_800_000_002, persisted: true }]);
     assert.equal(f.failures.length, 0);
   });
@@ -523,18 +501,15 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     await f.sendReport(true);
     await f.turn();
     f.connection.socket.close();
-    // Production backoff starts at roughly 1 s; keep real time and allow 5 s to reconnect.
     const reconnected = await f.registered(1);
     const first = reconnected.messages[2];
     assert.equal(reconnected.messages[0]?.type, "register");
-    // Real relay (apps/relay/src/worker.ts registerActivity) ignores activityToken without a p: row;
-    // only the devices announce restores that row in a wiped room.
     assert.equal(reconnected.messages[1]?.type, "devices");
     assert.ok(first?.type === "activityToken" && first.device === f.deviceKey && first.token === report(true).pushToken,
       "the first message after devices must replay the token");
     const phone = await f.connect(reconnected);
     await phone.event({ kind: "device_list", data: {} });
-    activityTurn(CONV, { kind: "done" }); // urgent: exercises replay ordering without a 15 s throttle wait
+    activityTurn(CONV, { kind: "done" });
     const push = await until(() => f.pushes(reconnected)[0], "post-reconnect push");
     assert.equal(push.timestamp, 1_800_000_003);
     assert.equal(f.failures.length, 0);
@@ -545,13 +520,12 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     await f.sendReport(true);
     await f.turn();
     await f.stop();
-    const restarted = await f.start(); // New runRelayHost, same synthetic keys/store/state dir.
+    const restarted = await f.start();
     const phone = await f.connect(restarted);
     await f.sendReport(true, phone, restarted);
-    // Mode H row ownership decision (Yorozu, 2026-11-08): restored host already owns steps 2.
     activityTurn(CONV, { kind: "step", steps: 3 });
     const push = await until(() => f.pushes(restarted)[0], "bound turn activityPush");
-    assert.equal(push.timestamp, 1_800_000_003); // last sent (1_800_000_002) + 1, not the report seed + 1
+    assert.equal(push.timestamp, 1_800_000_003);
     assert.ok(f.receipts.every((receipt) => receipt.persisted), "every timestamp must already be durable on arrival");
     assert.equal(f.failures.length, 0);
   });
@@ -576,7 +550,6 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     await t.test(`(i) ${state} state refuses seeded pushes and never advertises host writer`, async (t) => {
       const f = await fixture(t, { liveActivity: true, activityTimestamp: true }, state);
       assert.equal(f.phone.peer.capabilities.includes("liveActivityHostWriter"), false);
-      // LA-2k J1: a Mode H report before load is dropped, token included.
       await f.phone.event({ kind: "live_activity", data: report(true) });
       activityTurn(CONV, { kind: "step", steps: 2 });
       activityTurn(CONV, { kind: "done" });
@@ -592,7 +565,7 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
   async function endOnce(f: Awaited<ReturnType<typeof fixture>>, connection: Connection, timestamp: number) {
     const before = f.pushes(connection).length;
     activityTurn(CONV, { kind: "done" });
-    await delay(200); // Bounded observation, followed by a count assertion (not a timeout failure).
+    await delay(200);
     assert.equal(f.pushes(connection).length, before + 1, "exactly one post-restart activityPush");
     const push = f.pushes(connection)[before]!;
     assert.equal(push.timestamp, timestamp);
@@ -600,7 +573,6 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
   }
   function replay(f: Awaited<ReturnType<typeof fixture>>, connection: Connection, token: string) {
     assert.equal(connection.messages[0]?.type, "register");
-    // Real relay registerActivity ignores a device without a p: row; the devices announce restores it.
     assert.equal(connection.messages[1]?.type, "devices");
     assert.deepEqual(connection.messages[2], { type: "activityToken", device: f.deviceKey, token });
     assert.deepEqual(connection.messages.filter((m) => m.type === "activityToken"),
@@ -611,10 +583,9 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     const f = await fixture(t, flags);
     await f.sendReport(true);
     assert.equal((await f.turn()).timestamp, 1_800_000_002);
-    // Device last reported the step snapshot; restart must retain both it and the binding.
     await f.phone.event({ kind: "live_activity", data: steppedReport() });
     await f.stop();
-    const restarted = await f.start(); // Device deliberately never reconnects.
+    const restarted = await f.start();
     replay(f, restarted, "abababababababababababababababababababababababababababababababab");
     const originalNow = Date.now;
     const now = 1_800_000_001_000;
@@ -631,7 +602,6 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     } finally { Date.now = originalNow; }
   });
 
-  // Characterization: pending reports revoke transport until a token-bearing report arrives.
   await t.test("(k) pending restart has no token replay or push", async (t) => {
     const f = await fixture(t, flags);
     await f.sendReport(true);
@@ -651,7 +621,6 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     assert.equal((await endOnce(f, f.connection, 1_800_000_002)).event, "end");
     await f.stop();
     const records = JSON.parse(readFileSync(file, "utf8")).records;
-    // LA-2h generation ordering: terminal records retain their requested generation.
     assert.deepEqual(records, [{ device: f.deviceKey, activityId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       requestedAtMs: REQUESTED_AT_MS, kLast: 1_800_000_002, terminal: true }]);
     assert.deepEqual(Object.keys(records[0]).sort(), ["activityId", "device", "kLast", "requestedAtMs", "terminal"]);
@@ -696,7 +665,6 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     const f = await fixture(t, flags);
     await f.sendReport(true);
     assert.equal((await f.turn()).timestamp, 1_800_000_002);
-    // A completed second row changes the report at priority 5; done on CONV then urgently ends both.
     await f.phone.event({ kind: "live_activity", data: { ...steppedReport(), jobs: [
       ...steppedReport().jobs,
       { token: "BBBBBBBBBBBBBBBB", kind: "transcribing", state: "done", startedAt: Date.now(), finishedAt: Date.now() },
@@ -705,7 +673,6 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     assert.equal(f.pushes().length, 1, "report change remains held by throttle");
     await f.stop();
     const restarted = await f.start();
-    // LA-2g round 1 rule 3: relayRegistered sends the held change at the next allowed opportunity.
     const update = await until(() => f.pushes(restarted)[0], "post-restart held report update");
     activityTurn(CONV, { kind: "done" });
     const end = await until(() => f.pushes(restarted)[1], "post-restart end");
@@ -744,7 +711,7 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     ]);
     assert.deepEqual(f.pushes(restarted), []);
     const phone = await f.connect(restarted);
-    await f.sendReport(true, phone, restarted); // Original steps-1 snapshot, through real Noise.
+    await f.sendReport(true, phone, restarted);
     assert.deepEqual(f.pushes(restarted), [], "stale report must not push host steps backwards");
     await phone.event({ kind: "live_activity", data: {
       ...report(true), jobs: [...report(true).jobs,
@@ -766,12 +733,10 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     assert.deepEqual(f.failures, []);
   });
 
-  // red: behavioural
   await t.test("(t) relay closed terminal survives host restart and device re-report", async (t) => {
     const f = await fixture(t, flags);
     await f.sendReport(true);
     await f.turn();
-    // Recording keeps the activity non-terminal so its ended-token set stays inspectable.
     const recording = { token: "RRRRRRRRRRRRRRRR", kind: "recording", state: "running", startedAt: REQUESTED_AT_MS } as const;
     await f.phone.event({ kind: "live_activity", data: { ...report(true), jobs: [...report(true).jobs, recording] } });
     const closed = new Promise<void>((resolve) => f.connection.socket.on("close", () => resolve()));
@@ -786,12 +751,11 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     const restarted = await f.start();
     const phone = await f.connect(restarted);
     await phone.event({ kind: "live_activity", data: { ...report(true), jobs: [...report(true).jobs, recording] } });
-    await f.stop(); // Drain persistence and queued sends without adding observation timers.
+    await f.stop();
     assert.ok(f.pushes(restarted).every((p) => !(p.state as { jobs: { token: string; state: string }[] }).jobs.some((r) => r.token === JOB && r.state === "running")));
     assert.ok((JSON.parse(readFileSync(file, "utf8")).records[0].ended ?? []).includes(JOB));
   });
 
-  // red: behavioural
   await t.test("(u) Noise report steps 999 yields owner steps 2", async (t) => {
     const f = await fixture(t, flags);
     activityTurn(CONV, { kind: "step", steps: 2 });
@@ -804,11 +768,9 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     assert.equal((push.state as { jobs: { token: string; steps: number }[] }).jobs.find((r) => r.token === JOB)!.steps, 2);
   });
 
-  // red: behavioural
   await t.test("(v) 65 ended tokens re-listed over Noise never resurrect", async (t) => {
     const f = await fixture(t, flags);
     const recording = { token: "RRRRRRRRRRRRRRRR", kind: "recording", state: "running", startedAt: REQUESTED_AT_MS } as const;
-    // Real owner is absent for each synthetic conversation: admission must tombstone it.
     for (let i = 0; i < 65; i++) {
       const token = i.toString(16).padStart(16, "0");
       const conv = i.toString(16).padStart(8, "0") + "-0000-4000-8000-000000000000";
@@ -823,7 +785,6 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     assert.ok(f.pushes().every((p) => !(p.state as { jobs: { kind: string }[] }).jobs.some((r) => r.kind === "turn")));
   });
 
-  // red: API-adapted (liveTurn option). Same legacy scenario as (b), runtime behavior unchanged.
   await t.test("(w) legacy wire step push remains unchanged with liveTurn", async (t) => {
     const f = await fixture(t, flags);
     await f.sendReport(false);
@@ -848,11 +809,11 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     assert.equal(end.event, "end");
     await f.stop();
     const bytes = readFileSync(file, "utf8");
-    const restarted = await f.start(); // Same state directory, new runRelayHost and Noise session.
+    const restarted = await f.start();
     const phone = await f.connect(restarted);
     await phone.event({ kind: "live_activity", data: a1 });
     await phone.event({ kind: "live_activity", data: a2 });
-    await delay(200); // Dispatch ack precedes async disk saves; bound observation then assertions.
+    await delay(200);
     const afterEnd = [...f.connection.messages.slice(f.connection.messages.indexOf(end) + 1), ...restarted.messages];
     assert.ok(afterEnd.every((m) => m.type !== "activityPush" || (typeof m.timestamp === "number" && m.timestamp > end.timestamp!)),
       "(x) no activityPush may reuse a timestamp at or below A2 end after restart");
@@ -920,7 +881,6 @@ test("runRelayHost over a real Noise device session", { skip, timeout: 60_000 },
     });
     await t.test("stuck takeover guard with a dead owner permits acquisition", async (t) => {
       const f = await lockFixture(t);
-      // Derive a definitely dead PID from a child whose exit has been observed.
       const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
       await once(child, "exit");
       await writeFile(`${f.file}.lock`, JSON.stringify({ pid: child.pid, createdAt: Date.now(), starttime: 12345 }));
