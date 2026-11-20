@@ -88,7 +88,6 @@ import YorozuWire
         first.resume()
         _ = await settled { stored()?.paired == true }
 
-        // The next launch reads what storage holds, and the host refuses it.
         let transport = ScriptedTransport()
         await transport.emit(.state(refusal))
         transports.scripted = transport

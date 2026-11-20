@@ -2,7 +2,6 @@ import Testing
 @testable import VoiceText
 
 struct TranscriptBudgetTests {
-    /// Clip length and tokens LFM3-Audio wrote for the densest and fastest clips measured.
     private let measured: [(seconds: Double, tokens: Int)] = [(5.89, 61), (7.94, 63), (6.85, 56), (5.12, 32), (13.5, 57)]
 
     @Test func realSpeechKeepsTwiceTheRoomItNeeded() {

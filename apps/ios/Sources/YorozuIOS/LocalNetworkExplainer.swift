@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Asks once, after pairing, before the system's Local Network prompt (#532): direct LAN paths and Bonjour wait for it.
 struct LocalNetworkExplainer: View {
     let model: AppModel
     @Environment(\.dismiss) private var dismiss

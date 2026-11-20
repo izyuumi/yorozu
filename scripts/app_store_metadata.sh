@@ -1,30 +1,15 @@
 #!/bin/sh
-# The App Store listing in every locale with a folder in apps/ios/metadata/app_store. Run by hand, never in CI: it
-# edits what the App Store shows once the version is released.
-#
-#   scripts/app_store_metadata.sh           prints what --apply would change; reads App Store Connect, writes nothing
-#   scripts/app_store_metadata.sh --apply   makes those changes
-#   scripts/app_store_metadata.sh --check   checks the files against App Store Connect's limits; offline, needs no key
-#
-# It edits only the iOS version that is still being prepared and the app info that goes with it. It never creates,
-# submits or releases a version: make the version in App Store Connect first and submit it there yourself.
-# A locale App Store Connect lacks is created, and an empty field is set, from <locale>/<field>.txt. The marketing,
-# support and privacy policy URLs, where empty, are copied from en-US, so they live in App Store Connect alone. Text
-# that differs from its file is kept and reported, since someone may have written it by hand; locales without a
-# folder are left alone. Running it twice changes nothing the second time.
 set -eu
 cd "$(dirname "$0")/.."
 DIR=apps/ios/metadata/app_store
 MODE=plan
 case "${1:-}" in --apply) MODE=apply ;; --check) MODE=check ;; '') ;; *) echo "usage: $0 [--apply | --check]" >&2; exit 64 ;; esac
 
-# <file> <field>: the file's text, without its last newline
 text() { cat "$DIR/$1/$2.txt"; }
 chars() { printf '%s' "$1" | jq -Rrs length; }
 bytes() { printf '%s' "$1" | wc -c | tr -d ' '; }
 locales() { for d in "$1"/*/; do basename "$d"; done; }
 
-# Limits from App Store Connect, counted in characters; keywords in bytes, as App Store Connect counts them.
 check() {
     bad=0
     for dir in "$DIR"/*/; do
@@ -42,13 +27,11 @@ check() {
             if [ "$n" -lt "$min" ] || [ "$n" -gt "$max" ]; then
                 echo "$file is $n $unit; it must be $min to $max" >&2; bad=1
             fi
-            # description is at most 4,000 characters, and What's New too; keep both within 4,000 bytes as well
             case "$field" in description | release_notes) [ "$(bytes "$t")" -le 4000 ] || {
                 echo "$file is over 4,000 bytes" >&2; bad=1; } ;; esac
             case "$t" in *'<'* | *'>'*) echo "$file has < or >, which App Store Connect rejects" >&2; bad=1 ;; esac
         done
     done
-    # Same languages as TestFlight and the app
     [ "$(locales "$DIR")" = "$(locales apps/ios/metadata/testflight)" ] || { echo "$DIR and apps/ios/metadata/testflight have different locales" >&2; bad=1; }
     return "$bad"
 }
@@ -62,12 +45,10 @@ check
 # shellcheck source=scripts/asc_lib.sh
 . scripts/asc_lib.sh
 
-# change <method> <url> <json> <message>
 change() {
     if [ "$MODE" = apply ]; then asc_send "$1" "$2" "$3" >/dev/null; echo "$4"; else echo "Would: $4"; fi
 }
 
-# sync <type> <parent type> <parent id> <live json> <copied URL fields> <attribute=file>...
 sync() {
     type=$1 parent=$2 pid=$3 live=$4 copied=$5
     shift 5
@@ -104,7 +85,6 @@ sync() {
     done
 }
 
-# The versions App Store Connect still lets you edit
 EDITABLE=PREPARE_FOR_SUBMISSION,DEVELOPER_REJECTED,REJECTED,METADATA_REJECTED,INVALID_BINARY
 versions=$(asc_get "$API/v1/apps/$APP_ID/appStoreVersions?filter%5Bplatform%5D=IOS&filter%5BappStoreState%5D=$EDITABLE&limit=5")
 version=$(printf '%s' "$versions" | jq -r '.data[0].id // ""')

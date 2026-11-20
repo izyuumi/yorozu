@@ -1,7 +1,6 @@
 import CryptoKit
 import Foundation
 
-/// Chunk indices as sorted, merged, half-open ranges; on the wire `[[start, end], …]`.
 public struct ChunkRanges: Codable, Equatable, Sendable {
     public private(set) var ranges: [Range<Int>] = []
 
@@ -43,13 +42,11 @@ public struct ChunkRanges: Codable, Equatable, Sendable {
 
     public func contains(_ index: Int) -> Bool { ranges.contains { $0.contains(index) } }
 
-    /// The indices in `0..<count` not covered, ascending.
     public func missing(count: Int) -> [Int] { (0..<count).filter { !contains($0) } }
 
     public var covered: Int { ranges.reduce(0) { $0 + $1.count } }
 }
 
-/// Capability `resume`: which chunks of an upload the plugin already holds.
 public struct UploadStatus: Codable, Equatable, Sendable {
     public var attachmentId: String
     public var size: Int
@@ -64,7 +61,6 @@ public struct UploadStatus: Codable, Equatable, Sendable {
     }
 }
 
-/// The answer to `upload_status`; `done` when the plugin already stored the attachment.
 public struct UploadState: Codable, Equatable, Sendable {
     public var attachmentId: String
     public var done: Bool
@@ -82,7 +78,6 @@ public enum FileDigest {
         value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
     }
 
-    /// The file's SHA-256 as lowercase hex, read 1 MiB at a time.
     public static func sha256(of url: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
@@ -92,8 +87,6 @@ public enum FileDigest {
     }
 }
 
-/// Which chunk an upload sends next: the ones the receiver lacks, `window` in flight, in index order.
-/// Used by the app's uploads and the share extension alike.
 public struct UploadSender: Sendable {
     public let size: Int
     public let count: Int
@@ -110,8 +103,6 @@ public struct UploadSender: Sendable {
         resume(have: have)
     }
 
-    /// A new session: the receiver holds `have` and nothing is in flight. With every chunk held but the upload
-    /// not stored, the last chunk goes again so the receiver assembles it.
     public mutating func resume(have: ChunkRanges) {
         acked = have
         inFlight = []
@@ -119,10 +110,8 @@ public struct UploadSender: Sendable {
         queue = (missing.isEmpty ? [count - 1] : missing).reversed()
     }
 
-    /// Start over from chunk 0 (the receiver dropped what it had).
     public mutating func restart() { resume(have: ChunkRanges()) }
 
-    /// The next chunk to send, counted as sent; `nil` while the window is full or nothing is left.
     public mutating func next() -> Int? {
         guard inFlight.count < window, let index = queue.popLast() else { return nil }
         inFlight.insert(index)
@@ -142,7 +131,6 @@ public struct UploadSender: Sendable {
     public var progress: Double { Double(acked.covered) / Double(count) }
 }
 
-/// What the app keeps per attachment upload so a resume survives a relaunch.
 public struct UploadLedger: Codable, Equatable, Sendable {
     public var attachmentId: String
     public var size: Int

@@ -15,9 +15,6 @@ struct RelayHostOfflineRetryTests {
 
     private func assertHostOfflineRetry(relayKnows: Bool) async throws {
         try await withRelay(relayKnows: relayKnows) { server, updates, identity, pairing in
-            // `.hostOffline` arrives only with the third, accepted join: two refusals, so two backoffs
-            // (1 s + 2 s), around three dial/join/close cycles. A fixed 6 s wait was too close to that
-            // and timed out in CI at 6.092 s, so the wait is the schedule plus slack for each cycle.
             let backoffs = (1...2).map(retryBackoff)
             let cycleSlack = Duration.seconds(5)
             try await eventually(within: backoffs.reduce(.zero, +) + cycleSlack * (backoffs.count + 1)) {
@@ -29,7 +26,6 @@ struct RelayHostOfflineRetryTests {
             #expect(snapshot.joins.count == 3)
             #expect(snapshot.joins.map(\.accepted) == [false, false, true])
             guard snapshot.dials.count == 3, snapshot.joins.count == 3 else { return }
-            // 100 ms under each backoff: the server stamps a dial slightly after the client starts it.
             #expect(snapshot.dials[1] - snapshot.dials[0] >= backoffs[0] - .milliseconds(100))
             #expect(snapshot.dials[2] - snapshot.dials[1] >= backoffs[1] - .milliseconds(100))
             #expect(Set(snapshot.joins.map(\.nonce)).count == 3)
@@ -69,13 +65,10 @@ struct RelayHostOfflineRetryTests {
     }
 }
 
-/// The wait before retry `attempt` (from 1), as `RelayConnection.scheduleRetry` computes it:
-/// `min(30, 1 << min(attempt - 1, 5))` seconds. The dial-gap expectations fail if production waits less.
 private func retryBackoff(attempt: Int) -> Duration {
     .seconds(min(30, 1 << min(attempt - 1, 5)))
 }
 
-/// The default covers a wait with nothing scheduled in front of it (the listener's port, a first close).
 private func eventually(within limit: Duration = .seconds(6), _ condition: () async throws -> Bool) async throws {
     let deadline = ContinuousClock.now + limit
     while !(try await condition()) {
@@ -161,7 +154,6 @@ private func withRelay(
     await server.stop()
 }
 
-// Mutable state and Network callbacks stay on this serial queue; snapshots cross it by continuation.
 private final class RetryRelayServer: @unchecked Sendable {
     struct Join: Sendable {
         let message: [String: String]

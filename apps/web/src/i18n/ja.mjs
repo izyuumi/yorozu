@@ -1,4 +1,3 @@
-// 日本語。アプリの Localizable.xcstrings と App Store の ja テキストに用語をそろえています。
 export default {
   name: 'よろず Yorozu',
   skip: '本文へ移動',

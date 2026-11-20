@@ -1,11 +1,8 @@
-// What the Windows client expects of the relay, checked against the real Node relay of this commit.
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { afterEach, beforeEach, test } from "node:test";
 
-// The relay's sources import "./x.js" for tsc; Node runs the .ts files directly.
-// Same hook as plugins/openclaw-yorozu/test/hub-host.ts.
 registerHooks({
   resolve(specifier, context, next) {
     if (specifier.startsWith("./") && specifier.endsWith(".js") && context.parentURL) {
@@ -32,17 +29,15 @@ beforeEach(async () => {
 });
 afterEach(() => relay.close());
 
-/** The close code and reason the relay ends a connection with. */
 const closeOf = (c: Client): Promise<{ code: number; reason: string }> =>
   new Promise((resolve) => {
     c.ws.on("close", (code: number, reason: Buffer) => resolve({ code, reason: reason.toString() }));
   });
 
-/** A token join with keys the caller keeps, so the same token can be tried again. */
 async function tokenJoin(room: string, token: string, keys: Keys): Promise<Client> {
   const phone = client(relay.port, room);
   await phone.open;
-  await phone.next(); // the nonce
+  await phone.next();
   phone.send({ type: "join", roomId: room, token, phonePubkey: keys.pub, sig: signChallenge(token, keys.priv) });
   return phone;
 }
@@ -79,7 +74,7 @@ test("an unknown device's nonce join closes 4011 before the announce and 4001 af
 
   mac.send({ type: "devices", devices: [] });
   mac.send({ type: "ping" });
-  assert.equal((await mac.next()).type, "pong"); // the relay has handled the announce
+  assert.equal((await mac.next()).type, "pong");
   assert.deepEqual(await closeOf(await rejoinPhone(relay.port, room, device)), {
     code: 4001,
     reason: "unknown device",
@@ -91,7 +86,6 @@ test("the 17th pending token join closes 4011 and does not spend its token", asy
   const mac = await connectMac(relay.port, host);
   const room = roomId(host.pub);
 
-  // Pending: joined by token, not yet in a `devices` announce from the host.
   for (let i = 0; i < 16; i++) {
     const { phone } = await connectPhone(relay.port, room, await mintToken(mac));
     assert.equal((await phone.next()).type, "joined");

@@ -5,7 +5,6 @@ import { describeSchedule } from "../src/cron-text.ts";
 const cron = (expr: string, tz?: string) => describeSchedule({ kind: "cron", expr, ...(tz !== undefined && { tz }) });
 const every = (everyMs: number) => describeSchedule({ kind: "every", everyMs });
 
-// The shapes of `CronScheduleTests.cronShapes` in apps/ios, with the text the plugin has always sent.
 test("names the cron shapes the client also names", () => {
   assert.equal(cron("*/15 * * * *"), "Every 15 minutes");
   assert.equal(cron("5 * * * *"), "Hourly at :05");
@@ -36,7 +35,6 @@ test("the time zone follows the text", () => {
   assert.equal(cron("0 24 * * *", "Asia/Tokyo"), "Cron 0 24 * * * (Asia/Tokyo)");
 });
 
-// `CronScheduleTests.unsupportedCronFallsBack`: the client shows this text exactly when it declined the schedule.
 for (const expr of ["0 24 * * *", "60 * * * *", "0 9 0 * *", "0 9 32 * *", "*/0 * * * *", "60 9 * * *", "60 9 * * 1-5", "0 24 * * 3", "0 24 15 * *"]) {
   test(`out of range is named by its expression: ${expr}`, () => assert.equal(cron(expr), `Cron ${expr}`));
 }

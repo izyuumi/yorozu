@@ -1,4 +1,3 @@
-//! Pure memory-only outbox. Frame signatures belong to one session.
 use crate::events::{ChatError, Message, MessageRef};
 use serde::Serialize;
 pub const TOO_LONG: &str = "This message is too long. The limit is 60,000 characters.";
@@ -98,7 +97,6 @@ impl Machine {
                 message_id,
                 new_id,
             } => {
-                // The failed row moves to the new id: a second Retry on the old id finds nothing.
                 let Some(row) = self.rows.iter_mut().find(|r| {
                     r.message.conv_id == conv_id
                         && r.message.message_id == message_id

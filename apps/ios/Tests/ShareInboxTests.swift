@@ -2,7 +2,6 @@ import Foundation
 import Testing
 import YorozuWire
 
-/// The share inbox across an unpair: what the extension left pending belongs to the host it was shared for.
 @Suite struct ShareInboxTests {
     let container: URL
 

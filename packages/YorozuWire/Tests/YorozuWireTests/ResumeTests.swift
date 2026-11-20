@@ -25,7 +25,6 @@ struct ChunkRangesTests {
     }
 }
 
-/// The plugin's spool in memory: holds received chunks, checks the SHA-256 on assembly.
 final class FakeReceiver {
     let size: Int
     var have = ChunkRanges()
@@ -62,8 +61,6 @@ extension Digest {
     var hex: String { map { String(format: "%02x", $0) }.joined() }
 }
 
-/// Drives one session: chunks sent go on the wire in order, each answered when it arrives. A kill drops what is
-/// still on the wire once `progress` reaches the fraction.
 enum Transmission {
     enum End: Equatable { case stored, killed, mismatch }
 

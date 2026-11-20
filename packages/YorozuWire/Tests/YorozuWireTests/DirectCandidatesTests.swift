@@ -2,7 +2,6 @@ import Foundation
 import Testing
 @testable import YorozuWire
 
-/// #532 step 4: the plugin's hints, which of them a race dials, and the Bonjour tag.
 struct DirectCandidatesTests {
     let wifi = LocalInterface(name: "en0", address: "192.168.0.20", prefix: 24)
     let wifi6 = LocalInterface(name: "en0", address: "fd00:1::20", prefix: 64)
@@ -17,7 +16,6 @@ struct DirectCandidatesTests {
     @Test func lanOnlyOnThisSubnet() {
         let hints = DirectHints(port: 9000, lan: [.init(address: "192.168.0.9", prefix: 24), .init(address: "10.77.0.5", prefix: 16)])
         #expect(plan(hints, [wifi]) == (["ws://192.168.0.9:9000"], ["10.77.0.5 (not on this subnet)"]))
-        // An interface that is down, or a VPN's, is no LAN.
         let down = LocalInterface(name: "en0", address: "192.168.0.20", prefix: 24, up: false)
         let vpn = LocalInterface(name: "utun2", address: "192.168.0.20", prefix: 24)
         #expect(plan(hints, [down, vpn]).candidates.isEmpty)

@@ -6,8 +6,6 @@ import YorozuWire
 import AppKit
 #endif
 
-/// A plain-text report for whoever debugs Yorozu: app, device, connection state and this run's log.
-/// It holds no keys, tokens or message text.
 @MainActor
 enum Diagnostics {
     nonisolated static let subsystem = "to.yumi.yorozu"
@@ -19,14 +17,11 @@ enum Diagnostics {
         return "\(short) (\(build))"
     }
 
-    /// Cards since launch, as counts only: cards drawn, blocks that fell back to their `alt` or were skipped, and
-    /// cards with nothing to draw, whose bubble showed the text.
     private(set) static var presentationShown = 0
     private(set) static var blockFellBack = 0
     private(set) static var presentationFellBack = 0
     private static var counted: Set<String> = []
 
-    /// Counts a message's card once, however often its row appears.
     static func count(_ card: Presentation, id: String) {
         guard counted.insert(id).inserted else { return }
         if card.renders { presentationShown += 1 } else { presentationFellBack += 1 }
@@ -77,7 +72,6 @@ enum Diagnostics {
         return lines.joined(separator: "\n")
     }
 
-    /// The app's own entries since launch, plus errors from the frameworks it uses.
     private nonisolated static func log() -> [String] {
         do {
             let store = try OSLogStore(scope: .currentProcessIdentifier)
@@ -116,7 +110,6 @@ enum Diagnostics {
     }
 }
 
-/// Copies the report and says so for a moment.
 struct CopyDiagnosticsButton: View {
     let model: AppModel
     @State private var copied = false

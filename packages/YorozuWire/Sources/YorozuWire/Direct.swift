@@ -2,8 +2,6 @@ import CryptoKit
 import Foundation
 import Network
 
-/// The direct path to the plugin's own listener (#532, capability `direct`): a probe proves the host key, then the same
-/// signed frames as on the relay. Candidates come from loopback on the Mac, the plugin's `direct_hints` and Bonjour.
 extension Direct {
     public static let port = 8738
     public enum Close {
@@ -18,7 +16,6 @@ extension Direct {
 
     static func probeText(room: String, nonce: String) -> Data { Data("yorozu-direct|\(room)|\(nonce)".utf8) }
 
-    /// The listener's answer holds only if its key is the room's (the room id is its hash) and it signed this nonce.
     public static func verifyProbe(room: String, nonce: String, pubkey: String, sig: String) -> Bool {
         guard let key = Data(base64URLEncoded: pubkey), key.count == 32, let signature = Data(base64URLEncoded: sig),
               Data(SHA256.hash(data: key)).base64URLEncodedString() == room else { return false }
@@ -26,22 +23,17 @@ extension Direct {
     }
 }
 
-/// One path of a race: a `RelayConnection` to the relay or to a direct candidate.
 protocol ConnectionLeg: Actor {
     func updates() -> AsyncStream<RelayConnection.Update>
-    /// The leg calls `ready` when it could send its init, and waits for `grant`.
     func gate(_ ready: @escaping @Sendable () -> Void)
-    /// Sends the init if the leg is still waiting for it.
     func grant() -> Bool
     func start()
     func stop()
     func registerPush(deviceToken: String)
     @discardableResult func send(_ message: Message) -> Bool
     @discardableResult func send(_ event: WireEvent) -> Bool
-    /// "<host[:port]>" and "<path> <host[:port]>" for the log.
     nonisolated var host: String { get }
     nonisolated var label: String { get }
-    /// What the winner store keeps for a direct candidate: its URL string.
     nonisolated var key: String { get }
 }
 
@@ -52,28 +44,14 @@ extension ConnectionLeg {
 
 extension RelayConnection: ConnectionLeg {}
 
-/// Dials the direct candidates and the relay; the first path whose Noise session opens wins and the others are closed.
-/// `RacePolicy` sets when each leg starts: last time's winner on this network kind first, the other direct candidates
-/// 50 ms apart, the relay 300 ms late behind a direct winner, and at once when every direct leg has failed. One leg
-/// handshakes at a time: the plugin keeps a device's newest session, so two inits in flight could leave it holding the
-/// loser's. A network path change or a lost session starts a new race; nothing migrates, and the app resends its
-/// unacknowledged outbox on the new session. Each race reads the stored `direct_hints`, and Bonjour results join it as
-/// they come. A granted direct handshake gets 3 s while the relay remains; without it the normal 15 s limit applies.
-/// Failed granted candidates are skipped per room and network kind for 10 minutes, including Bonjour and relay hints.
-/// Direct success clears its failure; path changes and removing a pairing clear the room. Permission retries ignore
-/// failures for that race only. While pairing, failures are neither recorded nor skipped.
 public actor RacingConnection {
     typealias Legs = @Sendable (_ pairing: QrPayload, _ relayKnows: Bool, _ direct: [URL], _ unversionedWire: Bool)
         -> (relay: any ConnectionLeg, direct: [any ConnectionLeg])
-    /// A direct leg added to the race in flight (a Bonjour result).
     typealias DirectLeg = @Sendable (_ pairing: QrPayload, _ url: URL, _ unversionedWire: Bool) -> any ConnectionLeg
-    /// The direct candidates for these hints, and the hints left out with why.
     typealias Candidates = @Sendable (_ hints: DirectHints?) -> (candidates: [URL], skipped: [(String, String)])
-    /// Matching Bonjour results for the pairing's tag; nil while browsing is not allowed.
     typealias Browse = @Sendable (_ hostKey: Data) -> AsyncStream<URL>?
     typealias Sleep = @Sendable (Duration) async throws -> Void
 
-    /// An app reconnect joins a healthy race this young, won or not, instead of starting another.
     static let joinWindow = Duration.seconds(10)
     static let browseTime = Duration.seconds(5)
 
@@ -121,9 +99,7 @@ public actor RacingConnection {
     private var nextID = 0
     private var legs: [Int: any ConnectionLeg] = [:]
     private var relayID: Int?
-    /// The race's direct legs in dial order.
     private var order: [Int] = []
-    /// Every direct URL this race knows, including candidates skipped after a recent failure.
     private var dialed: Set<String> = []
     private var browsing: Task<Void, Never>?
     private var started: Set<Int> = []
@@ -134,9 +110,7 @@ public actor RacingConnection {
     private var grant: Grant = .free
     private var winner: Int?
     private var hostWasOffline = false
-    /// While pairing: the relay leg joined, or `relayUnreachable` went out, this race.
     private var relayReached = false
-    /// While pairing: the relay refused the code (an offline one), which the direct legs may still pair with.
     private var relayRefusal: RelayConnection.State?
     private var paths: Task<Void, Never>?
     private var again: Task<Void, Never>?
@@ -147,7 +121,6 @@ public actor RacingConnection {
     private var sessionBegan = ContinuousClock.now
     private var quickLosses = 0
 
-    /// `unversionedWire` is true only if the host listed `UnversionedWire.capability` in its last `peer_info`.
     public init(pairing: QrPayload, identity: PhoneIdentity, relayKnows: Bool, local: PeerInfo, unversionedWire: Bool = false, urlSession: URLSession = .shared) throws {
         let relayURL = try RelayConnection.relayURL(pairing)
         let direct: DirectLeg = { pairing, url, unversionedWire in
@@ -196,7 +169,6 @@ public actor RacingConnection {
         self.joinWindow = joinWindow
     }
 
-    /// Forgets winners and direct failures on every network kind when a pairing is removed or replaced.
     public static func forgetRaceWinners(room: String) {
         DefaultsRaceWinners.forget(room: room)
         DefaultsRaceFailures().forget(room: room)
@@ -213,16 +185,11 @@ public actor RacingConnection {
         running = true
         let changes = pathChanges()
         paths = Task { [weak self] in
-            // A new path can change which candidates answer: always a new race.
             for await _ in changes { await self?.pathChanged() }
         }
         await race()
     }
 
-    /// The app's reconnect (scene active, a sent share, a background wake) joins a race that began under 10 s ago, won or
-    /// not: it began moments ago for the same reason (at launch the race can be won before the scene's reconnect comes).
-    /// A stale race, a pause after a lost session, a relay waiting out its retry or a winner whose session is no longer
-    /// open gives way to a new race.
     public func reconnect() async {
         guard running else { return await start() }
         let healthy = again == nil && (winner == nil ? relayState != .offline : state == .ready)
@@ -233,8 +200,6 @@ public actor RacingConnection {
         await race()
     }
 
-    /// Permission changes can make direct candidates usable while a relay session is healthy, or while pairing (the
-    /// Local Network explainer's Continue), when it always races again.
     public func raceAgain() async {
         guard running else { return }
         if let winner, winner != relayID {
@@ -274,12 +239,10 @@ public actor RacingConnection {
         return await leg.send(event)
     }
 
-    /// Returns the new round, taken before any wait: a race that began during the wait has a newer one.
     @discardableResult
     private func endRace() async -> Int {
         round += 1
         let round = round
-        // A race being set up counts as in flight for `reconnect`.
         raceBegan = .now
         again?.cancel()
         again = nil
@@ -304,14 +267,11 @@ public actor RacingConnection {
         return round
     }
 
-    /// `preferDirect`: the race is for a direct path that may have come back (the host returned, permission changed), so the
-    /// relay waits out the head start even after a relay win; otherwise a loopback relay can take the tie again.
     private func race(preferDirect: Bool = false) async {
         let round = await endRace()
         guard running else { return }
         let network = await network()
         guard round == self.round, running else { return }
-        // Pairing races the stored hints too, which came with the QR code (#532 step 5); Bonjour waits until it paired.
         let paired = pairing.secret == nil
         var found = candidates(pairing.roomId.flatMap(hints.load(room:)))
         raceNetwork = network
@@ -343,7 +303,6 @@ public actor RacingConnection {
         if paired { startBrowsing(round) }
     }
 
-    /// Bonjour runs alongside the race until a session opens, the race ends or 5 s pass.
     private func startBrowsing(_ round: Int) {
         guard let key = Data(base64URLEncoded: pairing.macPubkey), key.count == 32,
               let results = browse?(key) else { return }
@@ -366,7 +325,6 @@ public actor RacingConnection {
         browsing = nil
     }
 
-    /// A Bonjour result joins the race in flight as one more direct leg, unless the race already dials its URL.
     private func add(_ url: URL, _ round: Int) {
         guard round == self.round, running, winner == nil, dialed.insert(url.absoluteString).inserted else { return }
         guard !recentlyFailed(url.absoluteString) else {
@@ -380,8 +338,6 @@ public actor RacingConnection {
         launch(id, round)
     }
 
-    /// The plugin's addresses: kept for the next race. On the relay, hints that name a candidate this race did not dial
-    /// start a new race at once; a direct winner just keeps them.
     private func received(_ new: DirectHints, from id: Int) {
         guard let room = pairing.roomId else { return }
         hints.save(new, room: room)
@@ -408,8 +364,6 @@ public actor RacingConnection {
         })
     }
 
-    /// Happy Eyeballs: a failed direct leg starts the next pending one at once, and once every direct leg has failed the
-    /// relay starts without waiting out its head start. A failed relay never holds back a direct leg.
     private func hurry() {
         guard winner == nil else { return }
         if let next = order.first(where: { legs[$0] != nil && !started.contains($0) }) { return launch(next, round) }
@@ -565,7 +519,6 @@ public actor RacingConnection {
                 relayReached = true
                 continuation?.yield(.relayUnreachable)
             }
-            // The relay doesn't know an offline code; the direct legs may still pair with it (#532 step 5).
             if id == relayID, refused, pairing.secret != nil, order.contains(where: { legs[$0] != nil }), let leg = legs[id] {
                 connectionLog.info("race \(round, privacy: .public): the relay refused the pairing code, direct legs go on")
                 relayRefusal = new
@@ -586,8 +539,6 @@ public actor RacingConnection {
             }
             if id == winner {
                 if id == relayID, new == .hostOffline { hostWasOffline = true }
-                // A direct winner is lost on any state but ready; a relay winner only when its socket closes (it rides
-                // out a host going offline on the same socket). Either way the next race may find the other path.
                 let lost = id == relayID ? new == .offline : new != .ready
                 guard lost, let leg = legs[id] else { return set(new) }
                 let lived = ContinuousClock.now - sessionBegan
@@ -605,7 +556,6 @@ public actor RacingConnection {
                 relayState = new
                 if winner == nil { set(new) }
             }
-            // `.ready` comes just before `.sessionOpen`; the holder keeps its turn through both.
             if new != .handshaking && new != .ready {
                 waiting.removeAll { $0 == id }
                 if grant.leg == id {
@@ -633,7 +583,6 @@ public actor RacingConnection {
         }
     }
 
-    /// A terminal state: the racer stops.
     private func fail(_ final: RelayConnection.State) async {
         running = false
         paths?.cancel()
@@ -665,7 +614,6 @@ public actor RacingConnection {
         continuation?.yield(.state(new))
     }
 
-    /// Each change of the network path the system reports, after the first.
     static let networkChanges: @Sendable () -> AsyncStream<Void> = {
         AsyncStream { continuation in
             let watch = Task {

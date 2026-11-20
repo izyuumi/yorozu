@@ -3,9 +3,6 @@ import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-// Upload chunks on disk: `<id>.part` holds the bytes at `index * chunkBytes`, `<id>.json` the chunks it holds.
-// Imports only node built-ins so `node --test` runs it without OpenClaw.
-
 export type Range = [number, number];
 export type SpoolMeta = {
   id: string;
@@ -65,7 +62,6 @@ export class Spool {
     this.now = now;
   }
 
-  // Runs `fn` after every earlier `run` for the same id. The other methods expect to be called inside it.
   run<T>(id: string, fn: () => Promise<T>): Promise<T> {
     const result = (this.chains.get(id) ?? Promise.resolve()).then(fn, fn);
     const tail = result.catch(() => undefined);
@@ -93,7 +89,6 @@ export class Spool {
     }
   }
 
-  // The chunks held for an upload of this shape; a spool of another shape is dropped.
   async status(id: string, want: { size: number; count: number; sha256?: string }): Promise<Range[]> {
     const meta = await this.read(id);
     if (!meta) return [];
@@ -102,7 +97,6 @@ export class Spool {
     return [];
   }
 
-  // Writes one chunk; `null` when the spool held another upload under this id (it is dropped).
   async put(head: Head, index: number, bytes: Buffer): Promise<SpoolMeta | null> {
     const part = this.partPath(head.id);
     await this.ready();
@@ -139,7 +133,6 @@ export class Spool {
     await Promise.all([".part", ".json", ".json.tmp"].map((ext) => fs.rm(this.file(id, ext), { force: true })));
   }
 
-  // Drops entries idle past the TTL and files without a ledger; call outside `run`.
   async sweep(): Promise<void> {
     this.sweptAt = this.now();
     for (const id of await this.ids()) {
@@ -152,7 +145,6 @@ export class Spool {
     await this.trim();
   }
 
-  // Housekeeping after an upload event; call outside `run`.
   async tidy(): Promise<void> {
     if (this.now() - this.sweptAt >= SWEEP_MS) return this.sweep();
     if (this.grew) await this.trim();
@@ -198,8 +190,6 @@ export class Spool {
     return path.join(this.dir, id + ext);
   }
 }
-
-// The upload side of the wire, around a spool. The plugin supplies OpenClaw's media store; tests, a temp dir.
 
 export type UploadChunk = {
   attachmentId: string;

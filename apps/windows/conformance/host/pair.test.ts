@@ -17,7 +17,6 @@ test("pair removes token at joined and secret at Open; interrupted joined resume
   const interrupted = probe(dir2, ["--exit-after-joined-persist"]); t.after(() => interrupted.quit()); interrupted.send({ cmd: "pair", link: await host.link() });
   await interrupted.exited;
   const resumed = probe(dir2); t.after(() => resumed.quit()); await resumed.wait(e => e.ev === "conn" && e.state === "Open");
-  // A token join would have closed with 4001 unknown token before recovering by nonce.
   assert.deepEqual(resumed.events.filter(e => e.ev === "close"), []);
   assert.equal((await resumed.wait(e => e.ev === "file" && !e.hasSecret)).hasToken, false);
 });

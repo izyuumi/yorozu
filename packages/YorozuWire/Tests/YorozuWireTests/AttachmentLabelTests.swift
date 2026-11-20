@@ -2,7 +2,6 @@ import Foundation
 import Testing
 @testable import YorozuWire
 
-/// The name and type an attachment travels under, and how many chunks it takes.
 struct AttachmentLabelTests {
     @Test func emptyNameBecomesFile() {
         #expect(Attachment.wireName("") == "file")
@@ -21,13 +20,11 @@ struct AttachmentLabelTests {
         let wire = Attachment.wireName(name)
         #expect(wire.count == Attachment.maxLabel)
         #expect(wire == String(repeating: "a", count: Attachment.maxLabel - 4) + ".txt")
-        // Only the last extension counts; the rest is stem and gets cut.
         let archive = Attachment.wireName(String(repeating: "b", count: 300) + ".tar.gz")
         #expect(archive == String(repeating: "b", count: Attachment.maxLabel - 3) + ".gz")
     }
 
     @Test func overLongExtensionIsCutWithTheName() {
-        // The extension is kept only when shorter than half the limit.
         let half = Attachment.maxLabel / 2
         let kept = String(repeating: "a", count: 300) + "." + String(repeating: "x", count: half - 1)
         #expect(Attachment.wireName(kept)
@@ -36,7 +33,6 @@ struct AttachmentLabelTests {
         #expect(Attachment.wireName(cut) == String(cut.prefix(Attachment.maxLabel)))
         let allExtension = "a." + String(repeating: "x", count: 300)
         #expect(Attachment.wireName(allExtension) == String(allExtension.prefix(Attachment.maxLabel)))
-        // No extension at all: a plain cut.
         #expect(Attachment.wireName(String(repeating: "a", count: 300)) == String(repeating: "a", count: Attachment.maxLabel))
     }
 

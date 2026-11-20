@@ -58,7 +58,6 @@ export function parseQuery(packet: Buffer): { id: number; questions: Question[] 
       offset += 4;
       if ((cls & 0x7fff) === 1 || (cls & 0x7fff) === 255) questions.push({ name: decoded.name.toLowerCase(), type, qu: !!(cls & 0x8000) });
     }
-    // Validate known-answer and additional records too; malformed datagrams never elicit traffic.
     const records = packet.readUInt16BE(6) + packet.readUInt16BE(8) + packet.readUInt16BE(10);
     for (let i = 0; i < records; i++) {
       offset = decodeName(packet, offset).offset;
@@ -100,7 +99,6 @@ type Address = { address: string; prefix: number };
 type Receiver = { socket: Socket; handlers: Set<(packet: Buffer, remote: RemoteInfo) => void>; memberships: Map<string, number> };
 let receiver: Promise<Receiver> | undefined;
 async function receiveSocket(): Promise<Receiver> {
-  // One receive socket per process; replies use per-interface sockets (macOS cannot send from the group bind).
   return receiver ??= (async () => {
     const socket = createSocket({ type: "udp4", reuseAddr: true });
     socket.on("error", () => {});
@@ -124,7 +122,6 @@ export function sameSubnet(local: Address, remote: string): boolean {
   return (ipv4(local.address) & mask) === (ipv4(remote) & mask);
 }
 
-/** IPv4 only for now. Production passes LAN hints; an injected loopback address permits the integration test. */
 export async function serveBonjour(opts: {
   hostStaticPub: Uint8Array; port: number; addresses: Address[]; log?: Log; now?: () => number;
   schedule?: (callback: () => void, delay: number) => () => void;
@@ -161,7 +158,6 @@ export async function serveBonjour(opts: {
   };
   const answer = (packet: Buffer, remote: RemoteInfo) => {
     if (closed) return;
-    // A wall-clock jump past the timer: rotate now and answer under the new tag from then on.
     if (tag !== currentTag()) return void rotate();
     const query = parseQuery(packet);
     if (!query) return;

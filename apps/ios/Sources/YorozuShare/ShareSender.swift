@@ -1,9 +1,6 @@
 import Foundation
 import YorozuWire
 
-/// Sends one share over a relay session of the extension's own, under the app's pairing: uploads the file
-/// in chunks read from disk, sends the message, and returns once the host answers `delivered` or
-/// `run_started`. The host keeps one session per device, so this replaces the app's while it runs.
 enum ShareSender {
     enum Failure: LocalizedError {
         case hostOffline, unreachable, noAnswer, needsPairing, needsUpdate, refused(String)
@@ -101,7 +98,6 @@ enum ShareSender {
                 default: break
                 }
             case .update(.sessionOpen(let host)):
-                // A host listing `resume` says which chunks it kept; an older one starts the upload over.
                 heard = .now
                 guard !uploaded else {
                     await connection.send(message)

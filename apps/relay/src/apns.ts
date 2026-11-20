@@ -69,7 +69,6 @@ export interface ApnsRequest {
   priority?: number;
 }
 
-/** A Live Activity push goes to the app's topic with Apple's suffix; the same token key signs it. */
 export const topic = (env: ApnsEnv, pushType: ApnsRequest["pushType"]): string => {
   const app = env.APNS_TOPIC ?? DEFAULT_TOPIC;
   return pushType === "liveactivity" ? `${app}.push-type.liveactivity` : app;
@@ -106,6 +105,5 @@ export const gone = (status: number): boolean => status === 410;
 export const misaddressed = ({ status, reason }: ApnsResult): boolean =>
   status === 400 && reason === "BadDeviceToken";
 
-/** A token that will never work again: unregistered, expired, or bad in both environments (after the retry). */
 export const dead = (result: ApnsResult): boolean =>
   gone(result.status) || (result.status === 400 && ["BadDeviceToken", "ExpiredToken", "Unregistered"].includes(result.reason ?? ""));

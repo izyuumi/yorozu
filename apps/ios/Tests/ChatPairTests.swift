@@ -1,7 +1,5 @@
 import Testing
 
-/// HomeView's side of the pair: it owns `selection`, and every change to it reaches `selectionChanged`, including
-/// the ones the pair itself makes.
 private struct Home {
     var pair = ChatPair()
     var selection: String?
@@ -21,7 +19,6 @@ private struct Home {
 
     mutating func select(_ convId: String?, compact: Bool = false) { run(compact: compact) { _, selection in selection = convId } }
 
-    /// X on the left, Y focused on the right, reached through the picker.
     static func split() -> Home {
         var home = Home("X")
         home.pair.choosing = true

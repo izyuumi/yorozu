@@ -93,7 +93,6 @@ type Room = {
   tokens: Map<string, number>;
   devices: Map<string, number>;
   vouched: Set<string>;
-  /** The current host announced its devices; until then a nonce join of an unknown device retries. */
   announced: boolean;
   pushTokens: Map<string, string>;
   buffer: Buffered[];
@@ -381,7 +380,6 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           }
           if (token === undefined) {
             if (!room.devices.has(phonePubkey)) {
-              // Only the host's announce can say a device is unknown; until it has, the device retries.
               if (!room.announced) return ws.close(CLOSE_HOST_OFFLINE, HOST_OFFLINE_REASON);
               return ws.close(CLOSE_PROTOCOL, "unknown device");
             }
@@ -469,7 +467,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
         }
 
         default:
-          return; // An unknown type is ignored (it still costs a rate-limit token).
+          return;
       }
     });
 

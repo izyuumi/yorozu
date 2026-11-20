@@ -4,7 +4,6 @@ import Testing
 @testable import YorozuWire
 
 struct RelayLegTests {
-    // Preventive coverage: no failing pairing-standing baseline. Expectations preserve the existing wire policy.
     @Test func closeDecisionMatchesTheWirePolicy() {
         let standings: [RelayConnection.Standing] = [.knownToRelay,
             .codeOnly(retriedAsKnown: false), .codeOnly(retriedAsKnown: true),
@@ -20,7 +19,6 @@ struct RelayLegTests {
             ("host offline", Array(repeating: .retry, count: 5)),
             ("pairing expired", Array(repeating: .retry, count: 5)),
             ("", Array(repeating: .retry, count: 5)),
-            // A reason this client does not recognize never ends the pairing: it retries.
             ("unauthorized", Array(repeating: .retry, count: 5)),
             ("internal error", Array(repeating: .retry, count: 5)),
             ("some future reason", Array(repeating: .retry, count: 5)),
@@ -33,7 +31,6 @@ struct RelayLegTests {
         }
     }
 
-    // Preventive: no failing baseline. Only `revoked`, and `unknown device` once the relay knew this device, unpair.
     @Test func onlyRevocationUnpairsAKnownDevice() {
         let reasons = ["revoked", "unknown device", "unknown token", "expired token", "host offline",
             "pairing expired", "", "unauthorized", "internal error", "some future reason"]
@@ -50,7 +47,6 @@ struct RelayLegTests {
         }
     }
 
-    // Preventive: no failing baseline; pins the allowed transitions.
     @Test func standingTransitionsMatchTheAllowedPolicy() {
         let rows: [(standing: RelayConnection.Standing, joined: RelayConnection.Standing,
             retried: RelayConnection.Standing, opened: RelayConnection.Standing)] = [
@@ -71,7 +67,6 @@ struct RelayLegTests {
         }
     }
 
-    // Preventive: no failing baseline; pins the allowed transitions.
     @Test func knownToRelayIsAbsorbing() {
         let standing = RelayConnection.Standing.knownToRelay
         #expect(standing.afterJoined() == .knownToRelay)
@@ -79,7 +74,6 @@ struct RelayLegTests {
         #expect(standing.afterSessionOpened() == .knownToRelay)
     }
 
-    // Preventive: no failing baseline; pins the allowed transitions.
     @Test func retryAsKnownIsIdempotent() {
         let standings: [RelayConnection.Standing] = [.knownToRelay,
             .codeOnly(retriedAsKnown: false), .codeOnly(retriedAsKnown: true),
@@ -90,7 +84,6 @@ struct RelayLegTests {
         }
     }
 
-    // Preventive: no failing baseline; pins the allowed transitions.
     @Test func closeNeverRetriesAsKnownTwice() {
         let standings: [RelayConnection.Standing] = [
             .codeOnly(retriedAsKnown: true), .pairedDirect(retriedAsKnown: true)]
@@ -137,7 +130,6 @@ struct RelayLegTests {
             relay.owner(online: false)
             try await relay.wait(until: deadline, "hostOffline update") { $0.hostOffline }
             relay.owner(online: true)
-            // Leave the new grant withheld, as when a direct leg holds the race.
             try await Task.sleep(for: .milliseconds(500))
             let returned = relay.snapshot
             #expect(returned.readyCount == 2, "host return must ask the race again")
@@ -153,7 +145,6 @@ struct RelayLegTests {
     }
 }
 
-/// Real WebSocket relay; never answers Noise, so every frame must be an init.
 private final class LoopbackRelay: @unchecked Sendable {
     struct Snapshot {
         var port: UInt16?
@@ -168,7 +159,6 @@ private final class LoopbackRelay: @unchecked Sendable {
     private let queue = DispatchQueue(label: "yorozu.tests.loopback-relay")
     private let lock = NSLock()
     private var recorded = Snapshot()
-    // Connections and all WebSocket operations belong to queue; recorded belongs to lock.
     private var connections: [NWConnection] = []
 
     var snapshot: Snapshot { lock.withLock { recorded } }

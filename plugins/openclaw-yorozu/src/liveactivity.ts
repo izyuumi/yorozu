@@ -1,15 +1,8 @@
-// Counts-only Live Activity pushes (capability `liveActivityPush`): the pure part, with no runtime imports so
-// `node --test` runs it as is. The app reports its activity's jobs over the encrypted session; the plugin changes
-// only the turn jobs it can map to a conversation and passes every other job (recording, transcribing) unchanged.
-
 export type JobKind = "turn" | "recording" | "transcribing" | "needsYou";
 export type JobState = "running" | "done" | "failed";
-/** One row as the app reports it; times are epoch milliseconds like the rest of the wire. */
 export type WireJob = { token: string; kind: JobKind; state: JobState; steps?: number; startedAt: number; finishedAt?: number };
-/** `live_activity`, client → plugin. With activityId but no pushToken: pending. Legacy without pushToken: ended. `turns`: job token → convId of its running turns. */
 export type ActivityReport = { pushToken?: string; activityId?: string; requestedAtMs?: number; jobs: WireJob[]; turns: Record<string, string> };
 
-/** `YorozuActivityState` as Swift's default `JSONDecoder` reads it: dates are seconds since 2001-01-01. */
 export type ContentJob = { token: string; kind: JobKind; state: JobState; steps?: number; startedAt: number; finishedAt?: number };
 export type ContentState = { jobs: ContentJob[] };
 
@@ -24,13 +17,10 @@ export type Plan = {
   dismissalDate?: number;
 };
 
-// The same numbers as `YorozuJobs` in the app.
 export const LIMIT = 8;
 export const LINGER_MS = 120_000;
 export const STALE_MS = 15 * 60_000;
-/** Step counts go at most this often per activity, at priority 5. */
 export const STEP_INTERVAL_MS = 15_000;
-/** The relay refuses a job above this many steps and drops the host; must match `MAX_STEPS` in apps/relay/src/protocol.ts. */
 export const MAX_STEPS = 100_000;
 
 const REFERENCE_MS = 978_307_200_000;
@@ -47,7 +37,6 @@ const PUSH_TOKEN = /^(?:[0-9a-f]{2}){1,512}$/i;
 type Fields = Record<string, unknown>;
 const object = (v: unknown): v is Fields => typeof v === "object" && v !== null && !Array.isArray(v);
 const nat = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
-/** A wire timestamp in epoch seconds (`timestamp`, `staleDate`, `dismissalDate`); 1e11 s rules out milliseconds. */
 export const validStamp = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) > 0 && (v as number) < 1e11;
 
 export const validJob = (v: unknown): boolean =>
@@ -74,7 +63,6 @@ export const validReport = (d: Fields): boolean =>
   d.jobs.every(validJob) &&
   validTurns(d.turns);
 
-/** A report's jobs with only the known fields, so nothing else can reach the relay; a job of an unknown kind or state is dropped. */
 export const cleanJobs = (jobs: readonly WireJob[]): WireJob[] =>
   jobs.filter((job) => KINDS.includes(job.kind) && STATES.includes(job.state)).map(({ token, kind, state, steps, startedAt, finishedAt }) => ({
     token,
@@ -91,15 +79,12 @@ const rank = (job: WireJob): number => {
 };
 const recency = (job: WireJob): number => job.finishedAt ?? job.startedAt;
 
-/** Needs you, recording, running, then finished; newest first within each (`YorozuJobs.sorted`). */
 export const sorted = (jobs: readonly WireJob[]): WireJob[] =>
   [...jobs].sort((a, b) => rank(a) - rank(b) || recency(b) - recency(a) || (a.token < b.token ? -1 : a.token > b.token ? 1 : 0));
 
-/** Finished rows leave once they lingered; at most `LIMIT` stay (`YorozuJobs.apply`). */
 export const tidy = (jobs: readonly WireJob[], now: number): WireJob[] =>
   sorted(jobs.filter((job) => job.finishedAt === undefined || now < job.finishedAt + LINGER_MS)).slice(0, LIMIT);
 
-/** A turn of `convId` moved on: its running turn rows change, every other row stays as the app reported it. */
 export function applyTurn(jobs: readonly WireJob[], turns: Readonly<Record<string, string>>, convId: string, change: TurnChange, now: number): WireJob[] {
   const mine = (job: WireJob) => job.kind === "turn" && job.state === "running" && turns[job.token] === convId;
   const next = jobs.flatMap((job): WireJob[] => {
@@ -131,7 +116,6 @@ export const contentState = (jobs: readonly WireJob[]): ContentState => ({
   })),
 });
 
-/** A row finished, left, or now needs you: Apple's immediate priority. Step counts alone wait (priority 5). */
 export function urgent(before: readonly WireJob[], after: readonly WireJob[]): boolean {
   const was = new Map(before.map((job) => [job.token, job]));
   const left = before.some((job) => !after.some((other) => other.token === job.token));
@@ -145,9 +129,6 @@ export function urgent(before: readonly WireJob[], after: readonly WireJob[]): b
   );
 }
 
-/** What to send for a change from `before` (last sent) to `after`, or null when nothing shows differently. With nothing
- * running the activity ends, dismissed once the last row lingered, since the suspended app runs no timer
- * (`YorozuActivityAttributes.show` with `endWhenIdle`). */
 export function plan(before: readonly WireJob[], after: readonly WireJob[], now: number): Plan | null {
   if (JSON.stringify(before) === JSON.stringify(after)) return null;
   const state = contentState(after);
@@ -159,6 +140,5 @@ export function plan(before: readonly WireJob[], after: readonly WireJob[], now:
   return { event: "update", priority: urgent(before, after) ? 10 : 5, state, staleDate: epochSeconds(now + STALE_MS) };
 }
 
-/** How long to hold a push: urgent ones go now, step counts once `STEP_INTERVAL_MS` passed since the last push. */
 export const holdFor = (priority: 5 | 10, lastPushAt: number | undefined, now: number): number =>
   priority === 10 || lastPushAt === undefined ? 0 : Math.max(0, lastPushAt + STEP_INTERVAL_MS - now);

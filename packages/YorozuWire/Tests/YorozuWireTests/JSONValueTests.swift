@@ -33,7 +33,6 @@ struct JSONValueTests {
         #expect(try decode("1") == .number(1))
         #expect(try decode("0") == .number(0))
         #expect(JSONValue.bool(true) != .number(1))
-        // And they are written back as what they were.
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         let value = JSONValue.object(["b": .bool(true), "f": .bool(false), "n": .number(1), "z": .number(0)])
@@ -47,7 +46,6 @@ struct JSONValueTests {
         #expect(try decode("{}") == .object([:]))
     }
 
-    /// An unknown event keeps its data as a `JSONValue`, with the same split.
     @Test func unknownEventDataKeepsBoolsAndNumbers() throws {
         let json = #"{"kind":"someday","data":{"on":true,"n":1,"list":[0,false]}}"#
         let event = try JSONDecoder().decode(WireEvent.self, from: Data(json.utf8))

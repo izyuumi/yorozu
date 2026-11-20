@@ -1,7 +1,4 @@
 #!/bin/sh
-# Tests scripts/release_notes.sh in a throwaway repository: scripts/release_notes.overrides retitles one PR and drops
-# another in both the Markdown and the What to Test form, and without the file every PR keeps its own title. Then
-# checks that every line of the real overrides file is a comment, "#<n> -" or "#<n> <Conventional Commits title>".
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d)
@@ -45,7 +42,6 @@ plain=$(scripts/release_notes.sh --what-to-test en-US 0.2.0 7)
 has "$plain" "- relay: delete room data after 30 idle days (#2, #4)"
 lacks "$plain" "(#3)"
 
-# An override without its own numbers keeps the PR's.
 printf '#2 fix: reworded\n' > scripts/release_notes.overrides
 has "$(scripts/release_notes.sh)" "- reworded (#2)"
 

@@ -2,7 +2,6 @@ import Foundation
 import Testing
 @testable import YorozuWire
 
-/// Tolerant readers (OWNER_DECISIONS.md, Versioning rules): unknown kinds, fields and enum values never fail a decode.
 struct WireEventTolerantTests {
     let conv = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b"
     let msg = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"

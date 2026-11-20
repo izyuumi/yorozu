@@ -4,7 +4,6 @@ import { registerHooks } from "node:module";
 import { test } from "node:test";
 import type { Received } from "../src/envelope.ts";
 
-// The plugin's files import siblings as `./x.js`, which the Gateway's loader maps to `./x.ts`; do the same here.
 registerHooks({
   resolve(specifier, context, next) {
     if (specifier.startsWith("./") && specifier.endsWith(".js") && context.parentURL) {

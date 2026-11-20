@@ -1,5 +1,3 @@
-// The web view lock-down (spec section 9). Each test pins one lock-down setting from spec section 9.
-
 use std::fs;
 use std::path::Path;
 

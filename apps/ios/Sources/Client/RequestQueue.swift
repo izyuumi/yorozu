@@ -1,6 +1,5 @@
 import YorozuWire
 
-/// The host requests that go out one at a time, and the conversations waiting for an older history page.
 struct RequestQueue: Equatable {
     private(set) var pending: [WireEvent] = []
     private(set) var inFlight: WireEvent?
@@ -17,14 +16,12 @@ struct RequestQueue: Equatable {
         enqueue(.historyRequest(HistoryRequest(convId: convId, before: before)), first: true)
     }
 
-    /// The next request to send, now in flight; nil while one is in flight or nothing waits.
     mutating func take() -> WireEvent? {
         guard inFlight == nil, !pending.isEmpty else { return nil }
         inFlight = pending.removeFirst()
         return inFlight
     }
 
-    /// Only an answer for the in-flight request can finish it; older hosts may omit history cursors.
     @discardableResult
     mutating func finish(answering answer: WireEvent) -> Bool {
         switch (inFlight, answer) {
@@ -39,8 +36,6 @@ struct RequestQueue: Equatable {
         return true
     }
 
-    /// The in-flight request got no answer (host error, timeout or failed send), so its conversation stops loading.
-    /// Pass the request to fail it only while it is still the one in flight. False when nothing was failed.
     @discardableResult
     mutating func fail(_ request: WireEvent? = nil) -> Bool {
         guard let failed = inFlight, request == nil || request == failed else { return false }
@@ -50,8 +45,6 @@ struct RequestQueue: Equatable {
     }
 
 
-    /// A host error about one message fails the in-flight request only when that request is the message itself.
-    /// History and conversation-list requests carry no message id, so such an error leaves them in flight.
     @discardableResult
     mutating func fail(messageId: String) -> Bool {
         guard case .message(let message) = inFlight, message.messageId == messageId else { return false }
@@ -62,7 +55,6 @@ struct RequestQueue: Equatable {
         loadingOlder.remove(convId)
     }
 
-    /// A new session starts from the conversation list alone.
     mutating func restart() {
         self = RequestQueue(pending: [.convList(ConvList())])
     }

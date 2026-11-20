@@ -419,7 +419,6 @@ test("v0.13.0 app join shapes need no new fields", async () => {
   const macKeys = await keypair();
   const name = await roomId(macKeys.pub);
   const mac = await connectMac(macKeys);
-  // These helpers send exactly the shipped token and nonce join fields.
   const { phone, keys } = await connectPhone(name, await mintToken(mac));
   const joined = { type: "joined", roomId: name, ownerOnline: true, flowControl: true };
   expect(await phone.next()).toEqual(joined);
@@ -428,7 +427,6 @@ test("v0.13.0 app join shapes need no new fields", async () => {
     peer.send({ type: "push", deviceToken });
     await settled(peer);
     expect(await record(name, keys.pub)).toEqual({ deviceToken });
-    // Exceed the unacknowledged window: ignoring the old flowAck shape would close this peer.
     const payload = "x".repeat(128 * 1024);
     for (let i = 0; i < 18; i++) {
       await frame(mac, payload, macKeys);
@@ -612,7 +610,6 @@ test("a full room keeps every device the host listed: the oldest rejoins without
 });
 
 test("INTENDED CHANGE: at the pending bound a fresh token join waits instead of evicting", async () => {
-  // Roster fix, not equivalence: v0.13.0 evicted the oldest with "revoked", unpairing its app.
   const macKeys = await keypair();
   const name = await roomId(macKeys.pub);
   const mac = await connectMac(macKeys);
@@ -625,7 +622,6 @@ test("INTENDED CHANGE: at the pending bound a fresh token join waits instead of 
   }
   const oldest = devices[0]!;
   expect(await (await rejoin(name, oldest.keys)).next()).toMatchObject({ type: "joined" });
-  // A lagging announce keeps connected devices pending, so it cannot free pending capacity.
   mac.send({ type: "devices", devices: [] });
   const token = await mintToken(mac);
   const refused = await connectPhone(name, token);
@@ -653,7 +649,6 @@ async function pendingRoom() {
   const name = await roomId(host.pub);
   const mac = await connectMac(host);
   const devices = [];
-  // Consume each batch before minting more: at most eight live tokens.
   for (let batch = 0; batch < 2; batch++) {
     const tokens = [];
     for (let i = 0; i < 8; i++) tokens.push(await mintToken(mac));
@@ -717,7 +712,6 @@ test("an announce that drops pending rows frees the bound for a fresh pairing", 
   for (const { phone } of devices.slice(8)) {
     phone.close();
   }
-  // Wait for the relay to observe departures; a client close need not echo a close event.
   await vi.waitFor(() => expect(mac.phones.at(-1)).toBe(8));
   await quiet(name, 9);
   mac.send({ type: "devices", devices: devices.slice(0, 8).map(({ keys }) => keys.pub) });
@@ -767,7 +761,6 @@ test.each(["host", "unconfirmed"] as const)("legacy numeric rows are classified 
   expect(await phone.next()).toMatchObject({ type: "owner", online: false });
   const back = await connectMac(macKeys);
   expect(await phone.next()).toMatchObject({ type: "owner", online: true });
-  // Timestamp refresh must preserve the row's provenance.
   back.send({ type: "push", device: keys.pub, token: DEVICE_TOKEN });
   const next = await connectPhone(name, await mintToken(back));
   if (roster === "host") {
@@ -1450,7 +1443,6 @@ test("a live activity push carries counts only, to the activity topic, with no a
 
 const NOTIFY = JSON.stringify({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
 
-/** Delivers host messages at one instant, with both per-minute budgets set to 2. */
 const tightBudgets = (name: string, now: number) => (message: string) =>
   runInDurableObject(room(name), async (_instance, state) => {
     const socket = state.getWebSockets().find((ws) => ws.deserializeAttachment()?.role === "mac")!;
@@ -1548,14 +1540,12 @@ test("an activity token follows the device into sandbox", async () => {
 
 const DAY_MS = 24 * 60 * 60_000;
 
-/** Every socket but `open` is closed, and their closes have stamped the room. */
 const quiet = (name: string, open = 0) =>
   vi.waitFor(() => runInDurableObject(room(name), async (instance, state) => {
     expect(state.getWebSockets()).toHaveLength(open);
     await (instance as unknown as { tail: Promise<unknown> }).tail;
   }));
 
-/** As if `ms` passed with nobody connecting: every stored time moves back. */
 const age = (name: string, ms: number) =>
   runInDurableObject(room(name), async (_instance, state) => {
     const storage = state.storage;
@@ -1731,7 +1721,6 @@ test("an open hibernated socket keeps the room and its device, however long sinc
 test("an older plugin's `seen` is ignored: no reply, no close, nothing stored", async () => {
   const { mac, keys, room: name } = await paired();
   await age(name, DAY_MS);
-  // The mint that settles the socket stores a token; everything else must stay as it was.
   const untokened = async () =>
     Object.entries(await contents(name)).filter(([key]) => !key.startsWith("t:") && key !== "token-order");
   const before = await untokened();

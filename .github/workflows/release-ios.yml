@@ -51,13 +51,11 @@ jobs:
           umask 077
           printf '%s' "$ASC_KEY_P8" | base64 -d > "$RUNNER_TEMP/AuthKey.p8"
 
-      # upload_ios.sh also sets the build's What to Test in each locale (release_notes.sh --what-to-test), internal group only.
       - name: Upload the iOS build and set its What to Test
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
-          # The external TestFlight kill switch (scripts/external_testflight.sh): unset, so internal group only.
           YOROZU_EXTERNAL_TESTFLIGHT: ${{ vars.YOROZU_EXTERNAL_TESTFLIGHT }}
         run: scripts/upload_ios.sh --confirm
       - name: Forget signing credentials

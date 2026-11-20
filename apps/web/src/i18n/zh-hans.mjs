@@ -1,4 +1,3 @@
-// 简体中文。术语与 App 的 Localizable.xcstrings 和 App Store 的 zh-Hans 文本一致。
 export default {
   name: 'Yorozu',
   skip: '跳到正文',

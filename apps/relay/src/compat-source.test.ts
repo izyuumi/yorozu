@@ -16,7 +16,6 @@ try {
   execFileSync("git", ["cat-file", "-e", manifest.commit], { cwd: repo, stdio: "ignore" });
   hasCommit = true;
 } catch {
-  // Shallow CI checkouts need only the vendored source and manifest.
 }
 
 for (const [file, hash] of Object.entries(manifest.files)) {

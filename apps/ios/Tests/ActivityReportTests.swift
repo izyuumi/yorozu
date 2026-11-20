@@ -2,13 +2,10 @@ import Foundation
 import Testing
 import YorozuWire
 
-/// 2027-01-15T08:00:00Z, the instant `plugins/openclaw-yorozu/test/liveactivity.test.ts` builds the fixture from.
 private let t0 = Date(timeIntervalSince1970: 1_800_000_000)
 private let conv = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b"
 
 @Suite struct ActivityReportTests {
-    /// The plugin's counts-only state, as the relay forwards it in `content-state`, decodes the way ActivityKit
-    /// decodes it: the default `JSONDecoder`, dates as seconds since 2001.
     @Test func pluginContentStateDecodes() throws {
         let url = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "Fixtures/activity-content-state.json")
         let state = try JSONDecoder().decode(YorozuActivityState.self, from: Data(contentsOf: url))
@@ -16,7 +13,6 @@ private let conv = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b"
             YorozuJob(token: "recLocal-_012345", kind: .recording, startedAt: t0 + 10.5),
             YorozuJob(token: "AAAAAAAAAAAAAAAA", kind: .turn, state: .done, steps: 2, startedAt: t0, finishedAt: t0 + 60.25),
         ])
-        // And the app's own encoding is the same shape, so its updates and the plugin's agree.
         let again = try JSONDecoder().decode(YorozuActivityState.self, from: JSONEncoder().encode(state))
         #expect(again == state)
     }

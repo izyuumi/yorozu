@@ -73,7 +73,6 @@ struct SettingsView: View {
                 .tabItem { Label(String(localized: "About"), systemImage: "info.circle") }
         }
         #else
-        // The same groups as the Mac's tabs, each on a page of its own.
         Form {
             Section {
                 page(String(localized: "General"), systemImage: "gearshape") { general }
@@ -353,7 +352,6 @@ struct SettingsView: View {
         #endif
     }
 
-    /// iOS keeps the Local Network switch on the app's own Settings page.
     private func openLocalNetworkSettings() {
         #if os(iOS)
         if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
@@ -362,7 +360,6 @@ struct SettingsView: View {
         #endif
     }
 
-    /// "Since 18:44" today; before that, how long ago.
     private static func switched(_ at: Date) -> String {
         Calendar.current.isDateInToday(at)
             ? String(localized: "Since \(at.formatted(date: .omitted, time: .shortened))")

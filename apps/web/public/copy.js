@@ -1,5 +1,3 @@
-// Copy buttons: <button data-copy="ID"> copies the text of #ID and reports in #ID-status.
-// The page supplies the translated words in data-copied, data-status and data-failed.
 for (const button of document.querySelectorAll("[data-copy]")) {
   const source = document.getElementById(button.dataset.copy);
   if (!source) continue;

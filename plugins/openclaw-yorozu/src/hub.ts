@@ -1,5 +1,3 @@
-// The sessions the plugin serves, each over its own path: the relay or the direct listener (#532). Imports only node
-// built-ins and the pure wire and envelope files, so the direct path's end-to-end test runs it without OpenClaw.
 import {
   ATTACHMENTS,
   DIRECT,
@@ -22,12 +20,10 @@ import { acceptHandshake, b64u, HANDSHAKE_MAX_AGE_MS, type Frame, type Keypair, 
 const TAKEN_MS = 24 * 60 * 60 * 1000;
 const TAKEN_MAX = 10_000;
 
-/** Close codes of the direct path (capability `direct`, #532), apart from the relay's. */
 export const CLOSE = { unauthorized: 4101, replaced: 4102, tooLarge: 4103 } as const;
 
 export type Log = { info: (message: string) => void; warn: (message: string) => void };
 export type Path = "relay" | "direct";
-/** Where a session's frames go: the one relay link every relay session shares, or one direct socket. */
 export type Link = { path: Path; send: (payloads: string[]) => void; close?: (code: number, reason: string) => void };
 export type DeviceSession =
   | { phase: "awaitingPeer"; session: Session; link: Link }
@@ -36,7 +32,6 @@ export type Opened = { deviceKey: string; entry: DeviceSession; plain: Buffer };
 export type Request = {
   deviceKey: string;
   event: Event;
-  /** Seals for the device's current session, once it has sent `peer_info`. */
   reply: (events: Event[]) => void;
   refuse: (data: ErrorInfo) => void;
 };
@@ -46,17 +41,13 @@ export type StaticKey = { staticPub: string } | { absent: true } | { unread: tru
 export type HubOptions = {
   keys: { static: Keypair; room: string };
   peerInfo: () => PeerInfo;
-  /** The allowlist lookup: the device's X25519 key (base64url), known absent, or the store could not be read. Legacy callers return the key itself, or nothing for absent. */
   staticKeyOf: (deviceKey: string) => Promise<StaticKey | string | null | undefined>;
-  /** Stores a device whose proof matches a pending pairing, on either path (offline pairing, #532 step 5). */
   pair?: (proof: string | undefined, staticPub: string, deviceKey: string, now: number, path: Path) => Promise<boolean>;
-  /** A relay handshake from a device that is not allowlisted. */
   refused?: (deviceKey: string) => void;
   directHints?: () => DirectHints | undefined;
   onPeer?: (request: Request) => Promise<void>;
   claim?: (message: Message) => "fresh" | "duplicate";
   onMessage: (message: Message) => void;
-  /** Every other event after `peer_info`; false when the plugin does not take it from a device. */
   dispatch: (request: Request) => Promise<boolean>;
   log?: Log;
 };
@@ -120,12 +111,10 @@ export class Hub {
     if (close) old.link.close?.(close.code, close.reason);
   }
 
-  /** The link went away: its sessions end. */
   detach(link: Link): void {
     for (const [key, entry] of this.served) if (entry.link === link) this.end(key);
   }
 
-  /** Answers an init frame on `link`; the device's key when its session opened. */
   async handshake(payload: string, sig: string, link: Link): Promise<string | null> {
     const now = Date.now();
     const { keys } = this.opts;
@@ -137,7 +126,6 @@ export class Hub {
     if (this.answered.has(accepted.sid)) return this.drop("replayed");
     const found = await this.opts.staticKeyOf(deviceKey).catch((): StaticKey => ({ unread: true }));
     const listed: StaticKey = typeof found === "string" ? { staticPub: found } : found ?? { absent: true };
-    // A store miss says nothing about the device: no session, no pairing, and no revoke.
     if ("unread" in listed) return this.drop("device allowlist unreadable");
     const known = "staticPub" in listed && listed.staticPub === staticPub;
     const paired = !known && (await this.opts.pair?.(accepted.payload.proof, staticPub, deviceKey, now, link.path));
@@ -156,7 +144,6 @@ export class Hub {
     return deviceKey;
   }
 
-  /** Opens a box that arrived on `link` under one of its sessions. */
   open(frame: Frame, link: Link): Opened | null {
     const deviceKey = frame.type === "box" ? this.bySid.get(b64u(frame.sid)) : undefined;
     const entry = deviceKey ? this.served.get(deviceKey) : undefined;
@@ -228,7 +215,6 @@ export class Hub {
     if (!(await this.opts.dispatch(request))) refuse({ code: "unsupported", message: `a device cannot send "${event.kind}"` });
   }
 
-  /** Every device with a live session, each over its own path: the relay batch skips devices connected directly. */
   broadcast(events: Event[]): number {
     const live = [...this.served.values()].filter((entry) => entry.phase === "live");
     const takes = (event: Event, peer: PeerInfo) =>
@@ -247,19 +233,16 @@ export class Hub {
     return live.length;
   }
 
-  /** Devices whose live session, on either path, has the app active or this conversation in front. */
   watching(convId: string): Set<string> {
     return new Set(
       [...this.served].filter(([, entry]) => entry.phase === "live" && (entry.active || entry.foreground === convId)).map(([key]) => key),
     );
   }
 
-  /** Devices connected directly. */
   direct(): Set<string> {
     return new Set([...this.served].filter(([, entry]) => entry.link.path === "direct").map(([key]) => key));
   }
 
-  /** The relay has no device sockets left: only relay sessions lose their foreground. */
   relayGone(): void {
     for (const entry of this.served.values()) {
       if (entry.phase !== "live" || entry.link.path !== "relay") continue;

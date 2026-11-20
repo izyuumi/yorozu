@@ -80,7 +80,6 @@ jobs:
       - name: Wire package tests
         run: env -u SDKROOT swift test --package-path packages/YorozuWire --scratch-path .build/wire
 
-  # The plugin's pure files' tests import only node built-ins, so they run without OpenClaw or an install.
   plugin:
     needs: changes
     if: needs.changes.outputs.plugin == 'true'
@@ -92,7 +91,6 @@ jobs:
           node-version: 26
       - run: node --test 'plugins/openclaw-yorozu/test/*.test.ts'
 
-  # Every external TestFlight or Beta App Review path must pass the kill switch (scripts/external_testflight.sh).
   release-guards:
     runs-on: ubuntu-latest
     steps:
@@ -101,12 +99,13 @@ jobs:
       - run: scripts/external_testflight.sh --audit
       - run: scripts/app_store_metadata.sh --check
       - run: scripts/release_notes_test.sh
+      - run: node --test scripts/comments.test.mjs
+      - run: node scripts/comments.mjs check --base "$(git rev-parse HEAD^1)"
       - name: Windows commit types
         if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]'
         env:
           TITLE: ${{ github.event.pull_request.title }}
           BODY: ${{ github.event.pull_request.body }}
-        # HEAD is the merge ref, so its first parent is the base it was built on; base.sha can be older.
         run: BASE=$(git rev-parse HEAD^1) bash apps/windows/ci/commit-type.sh
 
   relay:
@@ -154,7 +153,6 @@ jobs:
       - run: pnpm --filter @yorozu/web build
       - run: pnpm --filter @yorozu/web test
 
-  # The Windows client's Rust core (apps/windows/core): format, lint and tests.
   windows-core:
     needs: changes
     if: needs.changes.outputs.windows_core == 'true'
@@ -167,7 +165,6 @@ jobs:
         with:
           node-version: 26
           cache: pnpm
-      # actions/cache, not Swatinem/rust-cache: the repository allows only GitHub-owned, verified and listed actions.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |

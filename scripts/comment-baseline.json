@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "comments": {
+    ".github/workflows/checks.yml": [
+      "The Windows client's Rust core and its conformance test against the real Node relay; later the shared wire fixtures and the plugin Hub too.",
+      "The help MCP bundle is generated from these (not CHANGELOG.md: the release PR changes only that).",
+      "The relay's tests also run the plugin's direct path end to end (src/direct.test.ts).",
+      "The website's Worker serves the help MCP server, so its tests run for both."
+    ],
+    ".github/workflows/paios-example.yml": [
+      "--force and -f may be named only on a line that says they are not supported. The exemption is per line: \"not supported\" must appear on the same line as the flag.",
+      "Exactly one fenced block.",
+      "Nothing but PAIOS/ (and this step's out.txt) appears in the folder, and the install holds no hidden file or folder, so no app-settings folder was created anywhere. Portable: macos find has no -printf. Count top-level entries without ls.",
+      "Option tokens: -x or --word at the start of a word.",
+      "PAIOS_ROOT wins when both are set.",
+      "The checks above leave the install as it was.",
+      "The installer and the self-test leave nothing behind in the temp folder.",
+      "Wiki-style [[links]] and query blocks need a particular app; only the optional guides under docs/ may show them.",
+      "curl's and bash's own flags in the one-liner are not installer flags."
+    ],
+    ".github/workflows/windows-installer.yml": [
+      "app.ps1 expects the built app to carry it"
+    ]
+  }
+}

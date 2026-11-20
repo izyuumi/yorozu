@@ -1,16 +1,11 @@
-// Stateless Streamable HTTP on web-standard Request and Response, so the same code serves Node (src/http.ts)
-// and the website's Cloudflare Worker (apps/web/worker.mjs). Each POST gets a fresh server; nothing is kept between requests.
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import pkg from "../package.json" with { type: "json" };
 import { createServer } from "./server.ts";
 
 export interface HandlerOptions {
-  /** Path prefix the server answers under, like "/yorozu"; "" for none. */
   basePath: string;
-  /** Requests per client IP per window, for the MCP endpoint. */
   rateLimit: number;
   rateWindowMs: number;
-  /** Allowed browser origins, or "*" for any. */
   corsOrigins: "*" | string[];
   maxBodyBytes: number;
 }
@@ -23,10 +18,8 @@ export const handlerDefaults: HandlerOptions = {
   maxBodyBytes: 64 * 1024,
 };
 
-/** Answers one request from the client at `clientIp`. */
 export type Handler = (request: Request, clientIp: string) => Promise<Response>;
 
-/** Fixed-window counter per key. Returns seconds to wait, or 0 when the request may go ahead. */
 export function rateLimiter(limit: number, windowMs: number, now: () => number = Date.now) {
   const windows = new Map<string, { start: number; count: number }>();
   return (key: string): number => {
@@ -92,7 +85,6 @@ export function createHandler(options: HandlerOptions): Handler {
       console.error("yorozu-help: request failed:", error);
       return json(500, rpcError(-32603, "Internal error"));
     } finally {
-      // With JSON responses the body is complete once handleRequest returns.
       void transport.close();
       void server.close();
     }

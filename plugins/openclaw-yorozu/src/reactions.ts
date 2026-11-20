@@ -21,8 +21,6 @@ export async function loadReactions(): Promise<void> {
 
 export const reactionsOf = (messageId: string): Reactions | undefined => known.get(messageId);
 
-// One slot per person: adding replaces, removing clears the slot when it holds that emoji.
-// Sends the change to every device and returns it, or nothing when nothing changed.
 function apply(reaction: Reaction & { by: "user" | "agent" }): Reaction | undefined {
   const { messageId, emoji, by } = reaction;
   const next = { ...known.get(messageId) };
@@ -41,7 +39,6 @@ function apply(reaction: Reaction & { by: "user" | "agent" }): Reaction | undefi
   return sent;
 }
 
-// The user's reaction reaches the agent as a system line at the start of its next turn; it never wakes the agent.
 export function userReaction(reaction: Reaction, route: { agentId: string; sessionKey: string }): void {
   const sent = apply({ ...reaction, by: "user" });
   if (!sent) return;

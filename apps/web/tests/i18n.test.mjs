@@ -129,7 +129,6 @@ function texts(value, path = '') {
 
 test('every translation has the English text\'s shape, links, tags and code, and is actually translated', () => {
   const en = strings.en;
-  // Words that are the same in a language: names, "Support" in German, and the app's "Message" placeholder in French.
   const same = new Set(['.name', '.footer.copyright', '.home.og.title']);
   const sameIn = { de: ['.nav.support', '.support.title', '.home.docs.2.0'], fr: ['.home.demo.placeholder'] };
   for (const { code } of translated) {
@@ -147,8 +146,6 @@ test('every translation has the English text\'s shape, links, tags and code, and
   assert.equal(strings.ja.name, 'よろず Yorozu');
 });
 
-// Per language: the age rule (17, the App Store rating) in privacy and terms, the controller statement, the relay's 30-day room deletion, that pairing
-// survives it (no 180-day device expiry any more), and the old "continuing to use means you accept" sentence, which the terms replaced with 30 days' notice.
 const legal = {
   en: { age: 'under 17', controller: 'Yumi Izumi, an individual in Japan, is the controller (operator)', room: 'deleted after 30 days', rejoin: 'with no need to pair again', accept: 'Continuing to use Yorozu after an update' },
   ja: { age: '17 歳未満', controller: '日本在住の個人である Yumi Izumi', room: '30 日間ない場合は削除', rejoin: 'ペアリングし直す必要はありません', accept: '使い続けることは、その更新に同意' },

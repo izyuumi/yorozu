@@ -1,8 +1,4 @@
 #!/bin/bash
-# Read-only: every PAIOS log note for an agent, dated on or after <since>, must carry a receipt with all nine fields.
-# Usage: log-receipt-check.sh [--bot "<agent name>"] [--dir <Logs dir>] [YYYY-MM-DD since]
-# Logs dir: --dir, else $PAIOS_LOGS, else $PAIOS_ROOT/PAIOS/Execution/Logs ($PAIOS_VAULT is the older name for PAIOS_ROOT).
-# No --bot checks every dated note. Exit 0 = all pass, 1 = a note is missing fields, 2 = no Logs dir.
 root="${PAIOS_ROOT:-${PAIOS_VAULT:-}}"
 bot=""; dir="${PAIOS_LOGS:-${root:+$root/PAIOS/Execution/Logs}}"; since="0000-00-00"
 while [ $# -gt 0 ]; do
@@ -24,12 +20,8 @@ for f in "${files[@]}"; do
   d=$(basename "$f" | cut -c1-10); [[ "$d" < "$since" ]] && continue
   n=$((n+1)); miss=$(missing "$f")
   if [ -n "$miss" ]; then
-    # paios-log forbids editing a note, so a numbered addendum "<name> (N).md" with a full receipt fixes it.
     fixed=""
     for a in "${f%.md}"\ \(*\).md; do [ -z "$(missing "$a")" ] && { fixed="$a"; break; }; done
-    # Or a later note with a full receipt that names this one as [[<name>]] or [[<name>|...]].
-    # The double-bracket form is this check's own plain-text marker and needs no particular editor;
-    # it stays so that existing notes still count. The rest of PAIOS uses ordinary Markdown links.
     if [ -z "$fixed" ]; then
       link="[[$(basename "${f%.md}")"
       while IFS= read -r a; do

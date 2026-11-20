@@ -3,7 +3,6 @@ import SpeechEngines
 import Testing
 
 extension VoiceSessionTests {
-    /// Voice messages sent straight from the composer, against a speech engine the test answers.
     @MainActor
     @Suite struct Sends {
         private let conv = "conv-a"
@@ -35,7 +34,6 @@ extension VoiceSessionTests {
             sends.add(clip(engine), in: conv) { sent.append($0) }
             #expect(await engine.reaches(1))
             let id = try #require(sends.pending[conv]?.first?.id)
-            // A second transcription, should Retry start one, gets the preview's transcript 600 ms later.
             PreviewScene.transcript = "hello"
             sends.retry(id, in: conv)
             #expect(sends.pending[conv]?.first?.failure == nil)
@@ -95,7 +93,6 @@ extension VoiceSessionTests {
     }
 }
 
-/// A speech engine whose calls wait until the test answers them.
 private actor HeldEngine: SpeechEngine {
     private(set) var calls = 0
     private var waiting: [CheckedContinuation<String, Error>] = []
@@ -105,13 +102,11 @@ private actor HeldEngine: SpeechEngine {
         return try await withCheckedThrowingContinuation { waiting.append($0) }
     }
 
-    /// Answers every call waiting now.
     func answer(_ result: Result<String, Error>) {
         for call in waiting { call.resume(with: result) }
         waiting = []
     }
 
-    /// Whether `count` calls have started within two seconds.
     func reaches(_ count: Int) async -> Bool {
         let deadline = ContinuousClock.now + .seconds(2)
         while calls < count, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }

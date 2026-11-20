@@ -1,4 +1,3 @@
-// Calls every tool once with a realistic argument; shared by the in-process, stdio and sandboxed runs.
 import assert from "node:assert/strict";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 

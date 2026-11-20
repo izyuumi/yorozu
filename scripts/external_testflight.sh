@@ -1,12 +1,4 @@
 #!/bin/sh
-# The external TestFlight kill switch. A step that would give a build to an external TestFlight group or submit it
-# to Beta App Review runs this first and goes on only if it exits 0, which it does only when the repository
-# variable YOROZU_EXTERNAL_TESTFLIGHT, passed into the job's environment, is exactly `true`. Unset, empty,
-# `false`, `TRUE` or anything else exits 1. Builds reach the internal group without it.
-#
-#   scripts/external_testflight.sh           the switch
-#   scripts/external_testflight.sh --audit   exits 1 if a workflow or script names an App Store Connect group or
-#                                            Beta App Review call without running the switch (checks.yml)
 set -eu
 cd "$(dirname "$0")/.."
 if [ "${1:-}" = --audit ]; then

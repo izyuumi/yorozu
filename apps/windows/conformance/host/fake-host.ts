@@ -75,7 +75,6 @@ export async function fakeHost() {
     } };
     const thisMac = mac;
     const thisLink = link;
-    // Preserve receive order across async Hub calls.
     let chain = Promise.resolve();
     mac.ws.on("message", raw => {
       const value = JSON.parse(raw.toString());
@@ -118,7 +117,6 @@ export function probe(dir: string, extra: string[] = []) {
     child.on("error", reject);
     child.on("exit", code => { if (code === 0) resolve(); else reject(new Error(`probe exit ${code}: ${stderr}`)); for (const wake of waiters) wake(); });
   });
-  // Tests await exited when a controlled process exit is part of the scenario.
   void exited.catch(() => {});
   return {
     child, events, exited,

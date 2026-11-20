@@ -1,7 +1,6 @@
 import SwiftUI
 import YorozuWire
 
-/// Why chatting is held up: the relay is out of reach, the Gateway is down, or a turn has gone quiet.
 enum StatusBanner: Equatable {
     case relay, gateway, stalled
 
@@ -33,7 +32,6 @@ enum StatusBanner: Equatable {
 
     @MainActor private static var announced: (banner: StatusBanner, at: Date)?
 
-    /// The chat and the list can show the same banner side by side; VoiceOver hears it once.
     @MainActor static func announce(_ banner: StatusBanner) {
         if let announced, announced.banner == banner, announced.at.timeIntervalSinceNow > -2 { return }
         announced = (banner, .now)

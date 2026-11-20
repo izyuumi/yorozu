@@ -2,10 +2,7 @@ import CoreGraphics
 
 enum PaneSide { case left, right }
 
-/// The detail column's panes beside the focused conversation, which is the external `selection`.
 struct ChatPair {
-    /// One case per layout, so a picker beside a split, a split without a second conversation, or a second pane
-    /// showing the focused conversation can't be stored.
     enum Panes: Equatable { case one, picking, two(other: String, otherOnLeft: Bool) }
 
     var panes = Panes.one
@@ -71,7 +68,6 @@ struct ChatPair {
     mutating func selectionChanged(from old: String?, to new: String?, compact: Bool, selection: inout String?) {
         defer { settle(selection) }
         if choosing {
-            // A pick puts the picker's conversation beside it; losing it (or gaining one from none) closes the picker.
             if let old, let new, old != new { panes = .two(other: old, otherOnLeft: true) } else if old != new { panes = .one }
         } else if let new, new == partner {
             let otherOnLeft = !partnerOnLeft
@@ -88,7 +84,6 @@ struct ChatPair {
         return convId == partner ? otherSide : nil
     }
 
-    /// The second pane never shows the focused conversation.
     private mutating func settle(_ selection: String?) {
         if case let .two(other, _) = panes, other == selection { panes = .one }
     }

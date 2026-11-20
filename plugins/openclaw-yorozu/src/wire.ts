@@ -12,8 +12,6 @@ import {
   type KeyObject,
 } from "node:crypto";
 
-// A frame leads with its type byte. Clients before 0.11 lead with the old version byte 3, then 1, 2 or 3;
-// each session answers in the format its init frame used, until the plugin drops the old one.
 export const LEGACY_VERSION = 3;
 const FRAME_TYPE = { init: 0x11, response: 0x12, box: 0x13 } as const;
 export const PROTOCOL_NAME = "Noise_IK_25519_ChaChaPoly_SHA256";

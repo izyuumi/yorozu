@@ -1,8 +1,6 @@
 import FluidAudio
 import Foundation
 
-/// Nemotron 3.5 ASR Streaming (CoreML, through FluidAudio) from a folder holding the encoder, the fused
-/// decoder, `metadata.json` and `tokenizer.json`. Apple silicon only.
 public actor NemotronSpeechEngine: SpeechEngine {
     private let manager: StreamingNemotronMultilingualAsrManager
 
@@ -28,7 +26,6 @@ public actor NemotronSpeechEngine: SpeechEngine {
         return try await manager.finish().trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// The model's prompt keys are mostly region-qualified; nil picks its automatic prompt.
     static func prompt(for language: String?) -> String? {
         switch language {
         case nil: nil

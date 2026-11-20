@@ -98,7 +98,6 @@ test("start-up counts log once across a reload and module re-import", async () =
   const first: string[] = [];
   const later: string[] = [];
   const ledger = await openLedger({ cfg: {}, agent: "main", log: log(first) } as never);
-  // A later load must keep its first result even when the store goes down.
   host.entries = "reject";
   assert.equal(await ledger.load(), "loaded");
   assert.equal(await openLedger({ cfg: {}, agent: "other", log: log(later) } as never), ledger);

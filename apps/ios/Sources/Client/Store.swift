@@ -58,8 +58,6 @@ struct Conversation: Codable, Identifiable, Equatable {
     mutating func merge(_ incoming: [ChatItem]) {
         let seqs = incoming.compactMap(\.seq)
         if let low = seqs.min(), let high = seqs.max() {
-            // A page replaces the seq range it covers. The app never re-fetches a range it already holds (requests are
-            // `after: newestSeq` or `before: oldestSeq`), so no held item, and no card on one, falls inside it.
             let ids = Set(incoming.map(\.id))
             items.removeAll { item in item.seq.map { (low...high).contains($0) } == true && !ids.contains(item.id) }
         }
@@ -100,7 +98,6 @@ struct ChatItem: Codable, Identifiable, Equatable {
     var seq: Int?
     var replyTo: ReplyTo?
     var reactions: Reactions?
-    /// The reply's card, drawn after the text bubble while a block of it renders (alone for a card-only reply).
     var presentation: Presentation?
 
     var summary: String {

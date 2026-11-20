@@ -22,7 +22,6 @@ enum AttachmentFiles {
 
     static func write(_ data: Data, for attachment: ChatAttachment) throws { try write(data, to: url(attachment)) }
 
-    /// A file of the transfer's own next to the attachment (`.upload.json`, `.download.part`, …).
     static func sidecar(_ name: String, of attachment: ChatAttachment) -> URL {
         url(attachment).deletingLastPathComponent().appending(path: name)
     }
@@ -40,7 +39,6 @@ enum AttachmentFiles {
         for name in names { try? StoredNames.shared.remove("\(attachment.id)/\(name)", in: .attachments) }
     }
 
-    /// An empty file, protected like the attachments, replacing any there.
     static func create(_ url: URL) throws {
         try makeDirectory(url.deletingLastPathComponent())
         #if os(iOS)
@@ -162,7 +160,6 @@ final class Transfers {
     enum Outcome { case ack(index: Int, done: Bool), state(UploadState), chunk(Chunk), refused(code: String, message: String), lost }
 
     @ObservationIgnored var send: (WireEvent) async -> Bool = { _ in false }
-    /// The host's `peer_info` lists `resume`: uploads ask what it holds and carry the file's SHA-256.
     @ObservationIgnored var resumable = false
     @ObservationIgnored private var inbox: [String: [Outcome]] = [:]
     @ObservationIgnored private var waiters: [String: CheckedContinuation<Outcome, Never>] = [:]
@@ -279,7 +276,6 @@ final class Transfers {
                 unsaved += 1
                 if unsaved >= Self.ledgerEvery || ContinuousClock.now - savedAt >= Self.ledgerInterval { persist() }
             case .refused(let code, let why):
-                // The host dropped what it had; start over once, with the hash read again.
                 if code == ErrorInfo.hashMismatch, ledger != nil, !restarted,
                    let sha256 = await Self.sha256(of: url, for: attachment) {
                     restarted = true
@@ -308,7 +304,6 @@ final class Transfers {
         }
     }
 
-    /// The saved ledger when it is for this file, else a new one with the file's SHA-256.
     private func uploadLedger(_ attachment: ChatAttachment, at url: URL, size: Int) async -> UploadLedger? {
         if let saved = AttachmentFiles.load(UploadLedger.self, from: Self.uploadLedger, of: attachment),
            saved.attachmentId == attachment.id, saved.size == size, FileDigest.isSHA256(saved.sha256) { return saved }
@@ -348,7 +343,6 @@ final class Transfers {
         }
     }
 
-    /// What a download holds so far in `.download.part`; `count` is known from the first chunk.
     private struct DownloadLedger: Codable {
         var size: Int
         var count: Int?

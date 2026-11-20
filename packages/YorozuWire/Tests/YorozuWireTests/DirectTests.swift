@@ -3,7 +3,6 @@ import Foundation
 import Testing
 @testable import YorozuWire
 
-/// The direct path (#532 step 3): the probe the client checks before its init, and the race between paths.
 struct DirectProbeTests {
     let host = Curve25519.Signing.PrivateKey()
     var pubkey: String { host.publicKey.rawRepresentation.base64URLEncodedString() }
@@ -31,7 +30,6 @@ struct DirectProbeTests {
         let nonce = Direct.newNonce()
         let other = Curve25519.Signing.PrivateKey()
         let otherKey = other.publicKey.rawRepresentation.base64URLEncodedString()
-        // A valid signature by a key whose hash is another room: some other Gateway, or one posing as ours.
         #expect(!Direct.verifyProbe(room: room, nonce: nonce, pubkey: otherKey, sig: try sign(other, room: room, nonce: nonce)))
         #expect(!Direct.verifyProbe(room: room, nonce: nonce, pubkey: String(pubkey.dropLast(2)), sig: try sign(host, room: room, nonce: nonce)))
     }
@@ -99,11 +97,9 @@ actor FakeLeg: ConnectionLeg {
     func emit(_ update: RelayConnection.Update) { continuation?.yield(update) }
 }
 
-/// Every leg each race made, newest race last, and the legs Bonjour added.
 actor Races {
     private(set) var rounds: [(relay: FakeLeg, direct: [FakeLeg])] = []
     private(set) var added: [FakeLeg] = []
-    /// The pairing secret each race handed its legs.
     private(set) var secrets: [String?] = []
     private(set) var wireFlags: [Bool] = []
     func add(_ round: (relay: FakeLeg, direct: [FakeLeg]), secret: String? = nil, unversionedWire: Bool = false) {
@@ -116,7 +112,6 @@ actor Races {
     var count: Int { rounds.count }
 }
 
-/// Bonjour results the test hands the race, and whether the race stopped browsing.
 actor Browser {
     let results = AsyncStream<URL>.makeStream()
     private(set) var browsed = 0
@@ -131,7 +126,6 @@ actor Browser {
     nonisolated func find(_ url: String) { results.continuation.yield(URL(string: url)!) }
 }
 
-/// What the app saw.
 actor Seen {
     private(set) var updates: [RelayConnection.Update] = []
     func add(_ update: RelayConnection.Update) { updates.append(update) }
@@ -167,7 +161,6 @@ actor Seen {
     }
 }
 
-/// The winner store, in memory.
 final class MemoryWinners: RaceWinners, @unchecked Sendable {
     private let lock = NSLock()
     private var stored: [String: String] = [:]
@@ -199,7 +192,6 @@ final class MemoryFailures: RaceFailures, @unchecked Sendable {
     func forget(room: String) { lock.withLock { stored[room] = nil } }
 }
 
-/// Records waits; controlled waits finish when released, and `never` waits until cancellation.
 actor Sleeps {
     private(set) var asked: [Duration] = []
     func add(_ duration: Duration) { asked.append(duration) }
@@ -245,8 +237,6 @@ struct RaceTests {
     let hints = DirectHintStore(suite: "yorozu.tests.\(UUID().uuidString)")
     let browser = Browser()
 
-    /// Waits a hundredth of the policy's delays unless `sleep` says otherwise. The candidates are `direct0`… and each
-    /// stored LAN hint as `ws://<address>:<port>`.
     func racer(direct: Int = 1, sleep: RacingConnection.Sleep? = nil, joinWindow: Duration = RacingConnection.joinWindow,
         bonjour: Bool = false, network: String = "wifi", candidates makeCandidates: RacingConnection.Candidates? = nil,
         hostIsLocal: @escaping @Sendable (DirectHints?) -> Bool = { _ in true }, secret: String? = nil,
@@ -584,7 +574,6 @@ struct RaceTests {
         await direct2[0].fail()
         await relay2.becomeReady()
         await relay2.open()
-        // A new `sessionOpen` is the app's cue to resend everything without ✓ (`AppModel.pumpOutbox(resend:)`).
         await eventually("relay opened") { await seen.opened == ["direct0", "relay"] }
         #expect(await racer.send(Message(convId: "c", messageId: "m1", text: "no ✓ yet")))
         #expect(await relay2.sent == ["m1"])
@@ -629,7 +618,6 @@ struct RaceTests {
         }
         #expect(await !relay2.started)
         #expect(await !direct2[0].started)
-        // A relay that would be ready at once cannot win: it has not started.
         await relay2.becomeReady()
         await direct2[1].becomeReady()
         await direct2[1].open()
@@ -666,7 +654,6 @@ struct RaceTests {
         try? await Task.sleep(for: .milliseconds(30))
         #expect(await races.count == 1)
         #expect(await !relay.stopped)
-        // A new network path still restarts it.
         changes.continuation.yield()
         _ = await round(2)
         await eventually("old legs closed") { await stopped([relay] + direct) }
@@ -710,7 +697,6 @@ struct RaceTests {
         await direct[0].open()
         await eventually("direct opened") { await seen.opened == ["direct0"] }
         await direct[0].fail()
-        // Every wait lasts until the race ends, so a second race at all means no pause.
         let (_, direct2) = await round(2)
         await started(direct2)
         await direct2[0].becomeReady()
@@ -982,7 +968,6 @@ struct RaceTests {
         await relay2.becomeReady()
         await relay2.open()
         await eventually("relay opened again") { await seen.opened == ["relay", "relay"] }
-        // The same hints name nothing new: no third race.
         await relay2.emit(.event(.directHints(lanHints)))
         try? await Task.sleep(for: .milliseconds(30))
         #expect(await races.count == 2)
@@ -1003,8 +988,6 @@ struct RaceTests {
         #expect(await !direct[0].stopped)
         await racer.stop()
     }
-
-    // Offline pairing (#532 step 5).
 
     @Test func aPairingRaceDialsTheStoredHintsAndADirectWinPairs() async {
         failures.record("ws://192.168.0.9:8738", room: "room", network: "wifi", at: failures.now)

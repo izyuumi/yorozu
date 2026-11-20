@@ -1,6 +1,3 @@
-// The prompt the home page's "Set up with your AI agent" block shows and copies.
-// It stays in English, which agents follow most reliably and which the help server answers in;
-// a translated page adds one line asking the agent to reply in the page's language.
 export const helpMcpUrl = 'https://yorozu.yumi.to/mcp';
 export const setupGuideUrl = 'https://github.com/izyuumi/yorozu/blob/main/docs/setup.md';
 

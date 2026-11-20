@@ -103,7 +103,6 @@ impl ClientHandshake {
             .remote_public_key(host)?
             .prologue(prologue.as_bytes())?;
         let mut noise = builder.build_initiator()?;
-        // ts first matches both existing wire implementations and the published vector.
         let payload = match secret {
             Some(s) => format!(r#"{{"ts":{now},"proof":"{}"}}"#, proof(s, x, ed)),
             None => format!(r#"{{"ts":{now}}}"#),

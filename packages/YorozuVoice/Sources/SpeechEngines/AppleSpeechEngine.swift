@@ -3,13 +3,10 @@ import AVFoundation
 import Foundation
 import Speech
 
-/// Apple's on-device SpeechAnalyzer with SpeechTranscriber (iOS, iPadOS and macOS 26 and later). The system
-/// downloads and keeps the speech model per language; `AppleSpeech` reports and installs it.
 @available(iOS 26, macOS 26, *)
 public final class AppleSpeechEngine: SpeechEngine {
     private let locale: Locale
 
-    /// Fails unless the model for the locale is installed.
     public init(locale: Locale) async throws {
         guard await AppleSpeech.status(for: locale) == .installed else { throw SpeechEngineError.languageUnavailable }
         self.locale = locale
@@ -48,7 +45,6 @@ public final class AppleSpeechEngine: SpeechEngine {
         return try await collected.value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// 16 kHz mono float samples converted to the analyzer's format.
     private static func buffer(_ samples: [Float], in format: AVAudioFormat) -> AVAudioPCMBuffer? {
         guard !samples.isEmpty, let source = AVAudioFormat(standardFormatWithSampleRate: Double(speechSampleRate), channels: 1),
               let input = AVAudioPCMBuffer(pcmFormat: source, frameCapacity: AVAudioFrameCount(samples.count)) else { return nil }
@@ -73,22 +69,18 @@ public final class AppleSpeechEngine: SpeechEngine {
     }
 }
 
-/// The system's speech models for SpeechTranscriber: which languages exist, and installing one.
 @available(iOS 26, macOS 26, *)
 public enum AppleSpeech {
     public enum Status: Equatable, Sendable {
         case unsupported, notInstalled, downloading, installed
     }
 
-    /// Whether this device can run SpeechTranscriber at all.
     public static var isAvailable: Bool { SpeechTranscriber.isAvailable }
 
-    /// The locale the system would transcribe for a language code; the device's language when nil.
     public static func locale(for code: String?) async -> Locale? {
         await SpeechTranscriber.supportedLocale(equivalentTo: code.map { Locale(identifier: $0) } ?? Locale.current)
     }
 
-    /// The ISO 639-1 codes of the languages the system can transcribe.
     public static func languageCodes() async -> Set<String> {
         Set(await SpeechTranscriber.supportedLocales.compactMap { $0.language.languageCode?.identifier })
     }
@@ -102,7 +94,6 @@ public enum AppleSpeech {
         }
     }
 
-    /// Downloads and installs the language's model, reporting the fraction done.
     public static func install(_ locale: Locale, progress: @escaping @Sendable (Double) -> Void) async throws {
         let modules = [SpeechTranscriber(locale: locale, preset: .transcription)]
         guard let request = try await AssetInventory.assetInstallationRequest(supporting: modules) else { return }

@@ -63,7 +63,6 @@ export type YorozuAccount = {
   configured: boolean;
   agent: string;
   relayUrl: string;
-  /** The direct listener's port, or null when `channels.yorozu.direct.enabled` is false (#532). */
   directPort: number | null;
   directBonjour: boolean;
 };
@@ -85,14 +84,12 @@ function resolveAccount(cfg: OpenClawConfig): YorozuAccount {
   };
 }
 
-// OpenClaw's own block rules and fallback text, behind the sanitizer's allowlist (presentation.ts).
 const presentationSdk: PresentationSdk = {
   normalize: normalizeMessagePresentation,
   tableAlt: renderMessagePresentationTableFallbackText,
   chartAlt: renderMessagePresentationChartFallbackText,
 };
 
-/** The running account's log, for sends through the outbound adapter, which is handed none. */
 let outboundLog: ChannelGatewayContext["log"];
 
 const deliveryReplyTo = (cfg: OpenClawConfig, threadId?: string | number | null, replyToId?: string | null) =>
@@ -102,7 +99,6 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
   const { account, abortSignal } = ctx;
   outboundLog = ctx.log;
   resolveHermesBackend(ctx.cfg, ctx.log);
-  // The agent and thread keys OpenClaw routes Yorozu to; bindings and identity links can differ from the config.
   const route = resolveOwnerRoute(ctx.cfg, account.agent, account.accountId);
   const agent = route.agentId;
   setThreadBase(agent, route.sessionKey);
@@ -187,7 +183,6 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
     agentPrompt: { messageToolHints: () => [...MESSAGE_TOOL_HINTS] },
     messaging: {
       normalizeTarget: () => PEER,
-      // Explicit owner resolves on every host; the adapter still requires a UUID threadId to deliver.
       targetResolver: { looksLikeId: looksLikeOwner, hint: PEER },
       resolveOutboundSessionRoute: ({ cfg, agentId, accountId, threadId, currentSessionKey }) => {
         const route = resolveOwnerRoute(cfg, agentId, accountId);
@@ -207,10 +202,8 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
       },
     },
   },
-  // Only explicit [[reply_to…]] tags and the message tool's replyTo quote a message.
   threading: {
     resolveReplyToMode: () => "off",
-    // Infer a missing threadId only for a configured Yorozu turn; see target.ts for the reply-route matcher gate.
     resolveAutoThreadId: currentConversation,
   },
   outbound: {
@@ -234,10 +227,6 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
       }),
     }),
     presentationCapabilities: PRESENTATION_CAPABILITIES,
-    // Explicit-target sends only (cron, a message tool send naming a target); a turn's own reply goes through
-    // `deliver` in conversation.ts. OpenClaw calls `sendPayload` only for a payload with presentation, interactive,
-    // channelData, location, audioAsVoice or videoAsNote; plain text and media still use sendText and sendMedia.
-    // `outboundLog` is unset until `startAccount` runs; a dropped card then goes without its log line.
     renderPresentation: ({ payload, presentation }) => renderedPayload(payload, presentation, presentationSdk, outboundLog),
     sendPayload: async ({ cfg, accountId, threadId, payload, mediaAccess, mediaLocalRoots, mediaReadFile, replyToId }) => ({
       channel: CHANNEL_ID,
@@ -247,7 +236,6 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
         threadId,
         text: payload.text,
         mediaUrls: mediaUrls(payload.mediaUrl, ...(payload.mediaUrls ?? [])),
-        // Sanitized again: channelData can also come straight from a caller.
         presentation: channelCard(payload),
         sdk: presentationSdk,
         log: outboundLog,

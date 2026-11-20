@@ -1,6 +1,3 @@
-// Renders AppPreview per locale, then finishes it to App Store Connect's app preview spec:
-// artifacts/app-preview/<locale>/yorozu-preview-886x1920.mp4 and poster-5s.png (frame 150, ASC's default poster).
-// Usage: pnpm --filter @yorozu/preview render [en-US] [ja]
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";

@@ -2,12 +2,10 @@ import Foundation
 import Testing
 @testable import YorozuWire
 
-/// What `Frame(bytes:)` and `Session.open` refuse, in both wire formats.
 struct FrameSessionRejectionTests {
     static let formats: [Wire.Format] = [.legacy, .unversioned]
     let sid = Data(repeating: 7, count: Wire.sidBytes)
 
-    /// Two ends of one session: each side's send key is the other's receive key.
     func pair(_ format: Wire.Format) -> (sender: Session, receiver: Session) {
         let a = Data(repeating: 1, count: 32), b = Data(repeating: 2, count: 32)
         return (Session(sid: sid, handshakeHash: Data(), sendKey: a, recvKey: b, format: format),
@@ -20,8 +18,6 @@ struct FrameSessionRejectionTests {
 
     func counterBytes(_ counter: UInt64) -> Data { withUnsafeBytes(of: counter.littleEndian) { Data($0) } }
 
-    // MARK: Session.open
-
     @Test(arguments: formats)
     func repeatedOrLowerCounterIsReplay(_ format: Wire.Format) throws {
         var (sender, receiver) = pair(format)
@@ -29,7 +25,6 @@ struct FrameSessionRejectionTests {
         #expect(receiver.lastReceived == nil)
         #expect(try receiver.open(frames[0]) == Data("m0".utf8))
         #expect(throws: Wire.Failure.replay) { try receiver.open(frames[0]) }
-        // A gap is accepted; the skipped counter is then behind the window.
         #expect(try receiver.open(frames[2]) == Data("m2".utf8))
         #expect(throws: Wire.Failure.replay) { try receiver.open(frames[1]) }
         #expect(throws: Wire.Failure.replay) { try receiver.open(frames[2]) }
@@ -77,7 +72,6 @@ struct FrameSessionRejectionTests {
         var tampered = ciphertext
         tampered[tampered.startIndex] ^= 1
 
-        // Before anything was received.
         #expect(throws: Wire.Failure.decrypt) {
             try receiver.open(.transport(sid: sid, counter: counter, ciphertext: tampered, format: format))
         }
@@ -87,7 +81,6 @@ struct FrameSessionRejectionTests {
         #expect(throws: Wire.Failure.decrypt) {
             try receiver.open(.transport(sid: sid, counter: counter, ciphertext: tampered, format: format))
         }
-        // A forged high counter and a ciphertext shorter than the tag move nothing either.
         #expect(throws: Wire.Failure.decrypt) {
             try receiver.open(.transport(sid: sid, counter: 99, ciphertext: ciphertext, format: format))
         }
@@ -95,12 +88,9 @@ struct FrameSessionRejectionTests {
             try receiver.open(.transport(sid: sid, counter: 100, ciphertext: Data(count: 15), format: format))
         }
         #expect(receiver.lastReceived == 0)
-        // So the genuine frame with that counter still opens.
         #expect(try receiver.open(second) == Data("m1".utf8))
         #expect(receiver.lastReceived == 1)
     }
-
-    // MARK: Frame(bytes:)
 
     @Test(arguments: formats)
     func counterAboveMaxIsRefused(_ format: Wire.Format) throws {
@@ -116,7 +106,6 @@ struct FrameSessionRejectionTests {
 
     @Test(arguments: formats)
     func bodyLengthLimitsPerType(_ format: Wire.Format) throws {
-        // (type, shortest body, longest body or nil)
         let limits: [(UInt8, Int, Int?)] = [
             (1, 32 + 96, 32 + 65_535),
             (2, Wire.sidBytes + 48, Wire.sidBytes + 65_535),
@@ -139,9 +128,7 @@ struct FrameSessionRejectionTests {
             #expect(throws: Wire.Failure.malformed("not a wire frame")) { try Frame(bytes: Data([first]) + body) }
         }
         #expect(throws: Wire.Failure.malformed("not a wire frame")) { try Frame(bytes: Data()) }
-        // A lone version byte has no type.
         #expect(throws: Wire.Failure.malformed("not a wire frame")) { try Frame(bytes: Data([Wire.version])) }
-        // A legacy head with a type nobody defines.
         for type: UInt8 in [0, 4, 0x11, 0xff] {
             #expect(throws: Wire.Failure.malformed("bad frame")) { try Frame(bytes: Data([Wire.version, type]) + body) }
         }
@@ -164,10 +151,8 @@ struct FrameSessionRejectionTests {
             #expect(back.format == format)
             #expect(back.bytes == frame.bytes)
             #expect(back.sid == frame.sid)
-            // Parsing does not depend on the buffer starting at index 0.
             #expect(try Frame(bytes: (Data([0xaa]) + frame.bytes).dropFirst()) == frame)
         }
-        // The same frame in the other format is a different frame.
         let other: Wire.Format = format == .legacy ? .unversioned : .legacy
         #expect(try Frame(bytes: frames[2].bytes) != .transport(sid: sid, counter: 0x0102_0304_0506, ciphertext: ciphertext, format: other))
     }

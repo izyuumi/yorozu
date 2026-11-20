@@ -18,19 +18,12 @@ export const DEVICES = "devices";
 export const INVITE = "invite";
 export const REPLIES = "replies";
 export const REACTIONS = "reactions";
-/** Counts-only Live Activity pushes through the relay; listed only while the relay can send them. */
 export const LIVE_ACTIVITY_PUSH = "liveActivityPush";
-/** Lifetime host writer; requires durable reservations and both relay ActivityKit flags. */
 export const LIVE_ACTIVITY_HOST_WRITER = "liveActivityHostWriter";
 export const RESUME = "resume";
-/** #532: listed only while the plugin's direct listener is listening. */
 export const DIRECT = "direct";
-/** #532: listed only while the relay's `registered` said `pushProxy: true`; a direct client then sends `push_token`. */
 export const PUSH_PROXY = "push-proxy";
-/** Feature flag `unversioned-wire` (#532 wire migration step 1): accepts unversioned frames and the `yorozu|…` prologue.
- * Clients may send unversioned only to a plugin listing it; this plugin always lists it. */
 export const UNVERSIONED_WIRE = "unversioned-wire";
-/** Read-only cards: `presentation` on a `reply` and on `agent` history items, only for a client that lists it too. */
 export const PRESENTATION = "presentation";
 
 export const PEER_INFO: PeerInfo = {
@@ -42,15 +35,12 @@ export const PEER_INFO: PeerInfo = {
 
 export const CHUNK_BYTES = 160 * 1024;
 export type Attachment = { id: string; name: string; mime: string; size: number };
-// Capability `replies`.
 export type ReplyTo = { messageId: string; text?: string };
 export type Message = { convId: string; messageId: string; text: string; attachments?: Attachment[]; replyTo?: ReplyTo };
-// Capability `reactions`: one emoji per person per message; `by` is set by the plugin.
 export type Reaction = { convId: string; messageId: string; emoji: string; remove?: boolean; by?: "user" | "agent" };
 export type Reactions = { user?: string; agent?: string };
 export type MessageRef = { convId: string; messageId: string };
 export type Typing = { convId: string; active: boolean };
-// Capability `presentation`: a sanitized card (presentation.ts), on a reply's last chunk.
 export type Reply = { convId: string; messageId: string; text: string; ts: number; attachments?: Attachment[]; replyTo?: ReplyTo; presentation?: Presentation };
 export type ErrorInfo = { code: string; message: string; convId?: string; messageId?: string; attachmentId?: string };
 export type Upload = {
@@ -63,7 +53,6 @@ export type Upload = {
   data: string;
   sha256?: string;
 };
-// Capability `resume`: the chunks the plugin already holds, as sorted half-open index ranges.
 export type UploadStatus = { attachmentId: string; size: number; count: number; sha256: string };
 export type UploadState = { attachmentId: string; done: boolean; have: [number, number][] };
 export type UploadAck = { attachmentId: string; index: number; done: boolean };
@@ -101,10 +90,8 @@ export type CronJob = {
   delivery?: { channel: "yorozu"; threadId: string };
 };
 export type CronList = { jobs?: CronJob[]; error?: string };
-// Capability `push-proxy` (#532): a direct client's APNs token (hex), forwarded to the relay as `push {device, token}`.
 export type PushToken = { token: string };
 
-// Introduced by feature flag `direct` (#532), plugin → client only.
 export type DirectHints = { port: number; lan: { address: string; prefix: number }[]; tailscale: { address: string }[]; magicDNS?: string };
 
 export type Event =
@@ -188,7 +175,6 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
   typing: (d) => isId(d.convId) && typeof d.active === "boolean",
   reply: (d) => ref(d) && str(d.text) && int(d.ts) && attachments(d.attachments) && replyTo(d.replyTo),
   reaction: (d) =>
-    // `by` from a device is ignored (the plugin sets it), so any string passes.
     ref(d) && label(d.emoji, 32) && optBool(d.remove) && optStr(d.by),
   error: (d) => str(d.code) && str(d.message) && optStr(d.convId) && optStr(d.messageId) && optStr(d.attachmentId),
   tool: (d) =>

@@ -16,7 +16,6 @@ enum WidgetText {
         return formatter
     }()
 
-    /// "5 min. ago", against the entry's date so each quarter-hour entry reads right.
     static func relative(_ date: Date, to now: Date) -> String {
         now.timeIntervalSince(date) < 60 ? String(localized: "now") : formatter.localizedString(for: date, relativeTo: now)
     }
@@ -34,7 +33,6 @@ enum WidgetText {
     }
 }
 
-/// Unread dot or pin, tinted in full color and accented when the system tints the widget.
 struct RowMark: View {
     let row: WidgetSnapshot.Row
     let tint: Color

@@ -1,8 +1,5 @@
 name: Windows installer
 
-# Builds, tests and installs the Windows app, then uploads the unsigned NSIS installer.
-# The installer carries the shared version from scripts/version.sh, as the Mac and iOS builds do.
-# apps/windows/README.md says how to download it.
 on:
   pull_request:
     paths: ['apps/windows/**', '.github/workflows/windows-installer.yml', 'scripts/version.sh']
@@ -15,7 +12,6 @@ permissions:
   contents: read
 
 concurrency:
-  # Pull request runs cancel each other; every commit on main gets its own run.
   group: windows-installer-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
@@ -24,11 +20,10 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
-      # The bash version scripts and scripts/version.sh must keep LF on the Windows runner.
       - run: git config --global core.autocrlf false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # version.sh needs the tags
+          fetch-depth: 0
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           package_json_file: apps/windows/app/package.json
@@ -37,7 +32,6 @@ jobs:
           node-version: 26
           cache: pnpm
           cache-dependency-path: apps/windows/app/pnpm-lock.yaml
-      # actions/cache, not Swatinem/rust-cache: the repository allows only GitHub-owned, verified and listed actions.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -47,7 +41,6 @@ jobs:
             apps/windows/target
           key: windows-installer-${{ runner.os }}-${{ hashFiles('apps/windows/Cargo.lock', 'apps/windows/rust-toolchain.toml') }}
           restore-keys: windows-installer-${{ runner.os }}-
-      # A warning only: the build stamps the shared version anyway, so stale checked-in files never fail the job.
       - name: Checked-in Windows version vs the latest stable release
         shell: bash
         run: |

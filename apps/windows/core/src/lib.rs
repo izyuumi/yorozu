@@ -1,7 +1,3 @@
-//! Platform-neutral core for the Yorozu Windows client.
-//!
-//! Relay wire, pairing and connection machines; the driver keeps keys out of the UI.
-
 mod snapshot;
 
 pub use snapshot::{ConvSummary, Item, Notice, OpenConv, PairingView, Snapshot};

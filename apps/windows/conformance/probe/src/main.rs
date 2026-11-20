@@ -60,7 +60,6 @@ async fn main() {
         },
     );
     let reader = handle.clone();
-    // Blocking stdin stays off the runtime, and EOF shuts the driver down.
     std::thread::spawn(move || {
         for line in io::stdin().lock().lines() {
             let Ok(line) = line else {

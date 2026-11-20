@@ -1,17 +1,7 @@
 #!/bin/bash
-# Installs the PAIOS example (a plain folder of Markdown) into an existing folder as <folder>/PAIOS,
-# writes <folder>/PAIOS/paios.env and runs the self-test. Never overwrites or merges.
-#
-# From a checkout:
-#   bash examples/paios/install.sh "/path/to/your folder"
-# One-liner:
-#   curl -fsSL https://raw.githubusercontent.com/izyuumi/yorozu/main/examples/paios/install.sh | bash -s -- "/path/to/your folder"
-#
-# Exit codes: 0 installed, 1 refused or failed, 2 usage error.
 set -euo pipefail
 unset CDPATH
 
-# Read at top level: inside a function, a piped bash 5 reports the bash binary here.
 script_path="${BASH_SOURCE[0]:-}"
 tmp=""
 dest=""
@@ -41,7 +31,6 @@ usage_error() { printf 'install.sh: %s\n\n' "$1" >&2; usage >&2; exit 2; }
 
 cleanup() {
   if [ -n "$tmp" ]; then rm -rf -- "$tmp" || true; fi
-  # Only ever removes the PAIOS folder this run created.
   if [ "$created" = 1 ] && [ -n "$dest" ]; then
     printf 'install.sh: removing %s\n' "$dest" >&2
     rm -rf -- "$dest"
@@ -53,7 +42,6 @@ valid_tz() {
   [ -n "$1" ] && python3 -c 'import sys,zoneinfo; zoneinfo.ZoneInfo(sys.argv[1])' "$1" 2>/dev/null
 }
 
-# Prints the first valid candidate; fails if there is none.
 system_tz() {
   local env_tz="${TZ:-}" file_tz="" link link_tz="" z
   env_tz="${env_tz#:}"
@@ -94,7 +82,6 @@ main() {
     vault="$1"; have_vault=1
   fi
 
-  # Piped through `curl | bash`, stdin is this script, so ask on the terminal instead.
   if [ "$have_vault" = 0 ]; then
     if [ -t 2 ] && { : </dev/tty; } 2>/dev/null; then
       printf 'Folder to create PAIOS/ in (any existing folder, for example ~): ' >&2
@@ -113,7 +100,6 @@ main() {
   [ -d "$vault" ] || die "not a folder: $vault (it must already exist; create it first)"
   vault="$(cd -- "$vault" && pwd -P)"
 
-  # Refuse before downloading anything; the mkdir further down is what claims the folder.
   dest="$vault/PAIOS"
   if [ -e "$dest" ] || [ -L "$dest" ]; then refuse; fi
 
@@ -129,7 +115,6 @@ main() {
     tz="UTC"
   fi
 
-  # Source: this script's own folder when run from a checkout, else a download.
   local src="" here
   if [ -f "$script_path" ] && [ "$(basename -- "$script_path")" = install.sh ]; then
     here="$(cd -- "$(dirname -- "$script_path")" && pwd -P)"
@@ -149,7 +134,6 @@ main() {
       -o "$tmp/src.tar.gz" "https://codeload.github.com/$repo/tar.gz/$ref" \
       || die "could not download $repo at $ref"
     mkdir "$tmp/x"
-    # GNU tar needs --wildcards for the pattern; bsdtar (macOS) matches it as is and rejects the flag.
     case "$(tar --version 2>/dev/null || true)" in
       *'GNU tar'*)
         tar -xzf "$tmp/src.tar.gz" -C "$tmp/x" --no-same-owner --wildcards '*/examples/paios/*' \
@@ -165,7 +149,6 @@ main() {
     echo "Fetched $repo@$ref"
   fi
 
-  # Claim the folder with a plain mkdir, so two runs can't both win and nothing existing is touched.
   mkdir "$dest" 2>/dev/null || {
     if [ -e "$dest" ] || [ -L "$dest" ]; then refuse; fi
     die "could not create $dest (check that the folder is writable)"
@@ -174,7 +157,6 @@ main() {
 
   cp -R "$src/." "$dest/"
   rm -f "$dest/install.sh" "$dest/paios.env" "$dest/INSTALL_WITH_AGENT.md"
-  # Junk a checkout may hold.
   find "$dest" -name __pycache__ -type d -prune -exec rm -rf {} +
   find "$dest" \( -name '*.pyc' -o -name .DS_Store \) -type f -exec rm -f {} +
   rm -rf "$dest/System/Scripts/vault-preflight/state"
@@ -212,13 +194,11 @@ else:
 with open(out, "w", encoding="utf-8", errors="surrogateescape") as f:
     f.write("\n".join(kept) + "\n")
 PY
-  # Read back from a child process, so the values must be exported.
   # shellcheck disable=SC1091,SC2016
   ( set +u; unset PAIOS_ROOT PAIOS_VAULT PAIOS_TZ; . "$dest/paios.env"
     "$BASH" -c '[ "$PAIOS_ROOT" = "$1" ] && [ "$PAIOS_VAULT" = "$1" ] && [ "$PAIOS_TZ" = "$2" ]' _ "$vault" "$tz" ) \
     || die "the written paios.env does not export the expected folder path and time zone"
 
-  # The self-test works on its own temporary copy and changes nothing in $dest.
   local out rc=0
   out="$(PAIOS_TZ="$tz" "$BASH" "$dest/System/Scripts/selftest.sh" </dev/null 2>&1)" || rc=$?
   printf '%s\n' "$out"
@@ -238,5 +218,4 @@ PY
   fi
 }
 
-# Called last, so a download cut off halfway runs nothing.
 main "$@"

@@ -33,7 +33,6 @@ impl Link {
         if !url.username().is_empty() || url.password().is_some() {
             return Err(Invalid);
         }
-        // Reject malformed percent escapes rather than silently treating them as literal input.
         let bytes = query.as_bytes();
         for (i, b) in bytes.iter().enumerate() {
             if *b == b'%'

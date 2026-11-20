@@ -14,7 +14,6 @@ struct NewConversationControl: ControlWidget {
     }
 }
 
-/// Opens a new conversation with voice input started, or the voice setup when the model isn't ready.
 struct TalkToYorozuControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: "to.yumi.yorozu.control.talk") {

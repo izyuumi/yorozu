@@ -19,7 +19,6 @@ async function listen(options: Partial<HttpOptions>, handle?: Handler) {
   return { url, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
 }
 
-/** Sends raw bytes on a fresh socket and resolves with everything the server answers before it closes. */
 function raw(url: string, bytes: string): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -40,7 +39,6 @@ describe("http behind a proxy at /yorozu", () => {
 
   test("SDK client: every tool and a resource", async () => {
     const client = new Client({ name: "test", version: "0" });
-    // Its own client IP, so these calls don't use up another test's rate-limit window.
     const transport = new StreamableHTTPClientTransport(new URL(`${url}/yorozu/mcp`), { requestInit: { headers: { "X-Forwarded-For": "192.0.2.10" } } });
     await client.connect(transport);
     assert.deepEqual((await client.listTools()).tools.map((t) => t.name).sort(), toolNames);
@@ -74,7 +72,6 @@ describe("http behind a proxy at /yorozu", () => {
     const wait = Number(limited.headers.get("retry-after"));
     assert.ok(wait >= 1 && wait <= 60, `Retry-After ${wait}`);
     assert.equal(((await limited.json()) as { error: { message: string } }).error.message, "Too many requests");
-    // The proxy appends the real client last; a spoofed left-hand entry does not change the key.
     assert.equal((await post("/yorozu/mcp", "203.0.113.1, 198.51.100.7")).status, 429);
     assert.equal((await post("/yorozu/mcp", "198.51.100.8")).status, 200);
     assert.equal((await fetch(`${url}/yorozu/healthz`, { headers: { "X-Forwarded-For": "198.51.100.7" } })).status, 200);
@@ -114,7 +111,6 @@ test("CORS with an origin allow-list", async () => {
 test("an unparseable request target answers 400 and the server keeps serving", async () => {
   const { url, close } = await listen({ basePath: "/yorozu" });
   try {
-    // Node's HTTP parser accepts this target; the WHATWG URL parser rejects it.
     assert.match(await raw(url, "GET //% HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"), /^HTTP\/1\.1 400 /);
     assert.equal((await fetch(`${url}/yorozu/healthz`)).status, 200);
   } finally {

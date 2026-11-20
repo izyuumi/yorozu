@@ -1,9 +1,6 @@
 import Foundation
 import Testing
 
-/// Dictation in the composer against the preview's clip and transcript (`PreviewScene.transcript`): no
-/// microphone and no model, with a transcript 600 ms after ✓. Serialized, nested suites included, since
-/// the transcript is global.
 @MainActor
 @Suite(.serialized) struct VoiceSessionTests {
     @Test func cancellingWhileTranscribingNeverDelivers() async {
@@ -58,7 +55,6 @@ import Testing
     }
 }
 
-/// Whether `condition` holds within `timeout`, checked every 10 ms.
 @MainActor func eventually(within timeout: Duration = .seconds(2), _ condition: () -> Bool) async -> Bool {
     let deadline = ContinuousClock.now + timeout
     while !condition(), ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }

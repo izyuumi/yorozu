@@ -69,7 +69,6 @@ fn list_drop_rule_and_three_exceptions() {
         4,
     );
     assert!(m.list.iter().any(|c| c.conv_id == "capped"));
-    // The cap counts the rows the answer carried, before a malformed one is dropped.
     m.step(Event::SessionLost, &o, 5);
     m.list = vec![conv("raw")];
     m.step(Event::SessionOpened, &o, 6);
@@ -207,7 +206,6 @@ fn queue_releases_on_answer_unscoped_error_timeout_and_loss() {
         1
     )
     .is_empty());
-    // A tick changes something only once the flight's 30 s are up.
     assert!(!m.due(29_999));
     assert!(m.due(30_000));
     assert!(m.step(Event::Tick, &o, 29_999).is_empty());
@@ -271,7 +269,6 @@ fn open_keeps_pending_rows_and_live_run_fetches_after_current_page() {
         4,
     );
     assert!(m.open.as_ref().unwrap().typing_until.is_some());
-    // The refetch's flight expires first; after that only the typing deadline is left.
     m.step(Event::Tick, &o, 30_003);
     assert!(!m.due(30_003));
     assert!(m.due(30_004));
@@ -339,30 +336,25 @@ fn run_started(m: &mut Machine, o: &outbox::Machine, now: u64) -> Vec<Effect> {
 fn only_the_first_newest_page_after_open_is_marked_opened() {
     let mut m = Machine::default();
     let o = outbox::Machine::default();
-    // Opened offline: the session-start fetch is this conversation's first newest page.
     m.step(Event::Open(Some("c".into())), &o, 0);
     m.step(Event::SessionOpened, &o, 0);
     live(&mut m, list(&["c"]), &o, 1);
     let first = live(&mut m, page("c", None, span(1, 2), true), &o, 2);
     assert_eq!(opened(&first), Some(true));
-    // An older page is never the opening page.
     assert_eq!(
         history_sends(&m.step(Event::Older("c".into()), &o, 3)),
         [Some(1)]
     );
     let older = live(&mut m, page("c", Some(1), vec![], false), &o, 3);
     assert_eq!(opened(&older), Some(false));
-    // The refetch after another device's run_started.
     assert_eq!(history_sends(&run_started(&mut m, &o, 4)), [None]);
     let refetch = live(&mut m, page("c", None, span(1, 3), false), &o, 5);
     assert_eq!(opened(&refetch), Some(false));
-    // The session-start refetch.
     m.step(Event::SessionLost, &o, 6);
     m.step(Event::SessionOpened, &o, 7);
     live(&mut m, list(&["c"]), &o, 8);
     let restart = live(&mut m, page("c", None, span(1, 3), false), &o, 9);
     assert_eq!(opened(&restart), Some(false));
-    // Opening it again.
     m.step(Event::Open(None), &o, 10);
     m.step(Event::Open(Some("c".into())), &o, 11);
     let reopened = live(&mut m, page("c", None, span(1, 3), false), &o, 12);
@@ -380,7 +372,6 @@ fn newest_page_drops_a_queued_older_request_and_answers_match_before() {
         history_sends(&m.step(Event::Older("c".into()), &o, 3)),
         [Some(121)]
     );
-    // An answer to a different `before` (a late one, after the 30 s release) is not applied.
     let stray = live(&mut m, page("c", Some(999), span(5, 5), false), &o, 4);
     assert!(stray.is_empty());
     let stray = live(&mut m, page("c", None, span(5, 5), false), &o, 4);
@@ -388,10 +379,8 @@ fn newest_page_drops_a_queued_older_request_and_answers_match_before() {
     assert_eq!(m.open.as_ref().unwrap().items.len(), 60);
     live(&mut m, page("c", Some(121), span(61, 120), true), &o, 5);
     assert_eq!(m.open.as_ref().unwrap().items.len(), 120);
-    // A newest fetch is in flight when the user asks for older items: `before: 61` is queued.
     assert_eq!(history_sends(&run_started(&mut m, &o, 6)), [None]);
     assert!(m.step(Event::Older("c".into()), &o, 7).is_empty());
-    // The newest page replaces the held items with 121-180, so `before: 61` would leave a hole.
     let effects = live(&mut m, page("c", None, span(121, 180), true), &o, 8);
     assert!(history_sends(&effects).is_empty());
     let open = m.open.as_ref().unwrap();

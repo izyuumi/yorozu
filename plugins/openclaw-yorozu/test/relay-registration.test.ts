@@ -166,7 +166,6 @@ test("LA-2i L1 [behaviour] registration remains usable during store retry", { sk
         assert.equal(fresh.filter((m) => m.type === "activityToken").length, 1, "only current registration replays");
       } else {
         controller.abort();
-        // Let socket close and stop enter before the acquire completes.
         await delay(100);
         const count = messages.length;
         unblock!();
@@ -200,7 +199,6 @@ test("LA-2i L5 [behaviour] legacy report and step push during held seeded restor
   });
   const stub = (code: string) => `data:text/javascript,${encodeURIComponent(code)}`;
   const networkStubs: Record<string, string> = {
-    // W1 holds the relay receive queue; reports arrive through a real Noise session on the direct link.
     "./direct.js": stub("export const bindAddresses=()=>[]; export const serveDirect=async({hub})=>{globalThis.__la2iDirectHub=hub;return {listening:false,close:async()=>{}};};"),
     "./hints.js": stub("export const watchDirect=async()=>async()=>{};"),
     "./bonjour.js": stub("export const serveBonjour=async()=>({update:async()=>{},close:async()=>{}});"),
@@ -274,7 +272,6 @@ test("LA-2i L5 [behaviour] legacy report and step push during held seeded restor
           const seededConv = "22222222-2222-4222-8222-222222222222";
           const job = "AAAAAAAAAAAAAAAA";
           const jobs = [{ token: job, kind: "turn" as const, state: "running" as const, steps: 1, startedAt: now }];
-          // The seeded record's device is paired too: load tombstones records of unlisted devices.
           owner.stores.set("devices", new Map([[deviceKey, { signingPub: deviceKey, staticPub: b64u(device.static.publicKey), pairedAt: now }],
             [seededKey, { signingPub: seededKey, staticPub: b64u(x25519Keypair().publicKey), pairedAt: now }]]));
           owner.lookups.set("L5-devices-read", async () => {
@@ -356,7 +353,6 @@ test("LA-2i L5 [behaviour] legacy report and step push during held seeded restor
             assert.equal(legacyMessages()[0]!.token, "ab".repeat(32));
             assert.equal(pushes()[0]!.state!.jobs[0]!.steps, 2);
             assert.equal(Object.hasOwn(pushes()[0]!, "timestamp"), false);
-            // Advance the injected wall clock near the 15 s boundary; the real hold timer still fires.
             now += 14_900;
             activityTurn(conv, { kind: "step", steps: 3 });
             await delay(30);
@@ -399,7 +395,6 @@ test("LA-2i L5 [behaviour] legacy report and step push during held seeded restor
           await delay(30);
           assert.deepEqual(seededMessages(), [], "seeded traffic still fenced by held acquire after devices announce");
           releaseAcquire();
-          // Main has no store/replay; identical legacy assertions apply there unchanged.
           if (calls > 0) await until(() => seededMessages().some((m) => m.type === "activityToken"), "seeded replay resumes after restore release");
           await delay(200);
           assert.equal(legacyMessages().length, count, "restore completion never duplicates or replays legacy traffic");

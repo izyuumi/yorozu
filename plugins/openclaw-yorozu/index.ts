@@ -13,7 +13,6 @@ export { yorozuRuntime };
 
 export type DeviceRow = { id: string; name?: string; pairedAt: number };
 
-/** Whether the hook's session is a Yorozu conversation of its agent. */
 const ownSession = (ctx: { agentId?: string; sessionKey?: string }): boolean => {
   const agent = ctx.agentId ?? ctx.sessionKey?.match(/^agent:([^:]+):/)?.[1];
   const start = agent ? prefix(agent) : undefined;
@@ -73,8 +72,6 @@ export default defineChannelPluginEntry({
       }),
       admin,
     );
-    // Register last: if OpenClaw throws when it refuses this gated prompt hook, table repair and pairing methods still register.
-    // Another plugin's prompt hook may replace the developer instructions that carry groupSystemPrompt; appendSystemContext survives that.
     api.on("before_prompt_build", (_event, ctx) => (ownSession(ctx) ? { appendSystemContext: CARD_GUIDANCE } : undefined));
   },
 });

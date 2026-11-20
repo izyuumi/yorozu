@@ -5,7 +5,6 @@ import Testing
 struct TranscriptTailTests {
     private let rate = 16_000
 
-    /// A clip of `seconds`, a 440 Hz tone everywhere except the silent `gaps` (start and length in seconds).
     private func clip(seconds: Double, gaps: [(Double, Double)] = []) -> [Float] {
         var samples = (0..<Int(seconds * Double(rate))).map { Float(0.3 * sin(2 * Double.pi * 440 * Double($0) / 16_000)) }
         for (start, length) in gaps {
@@ -21,7 +20,6 @@ struct TranscriptTailTests {
     }
 
     @Test func aWindowThatStoppedEarlyIsNotCovered() {
-        // Botchan, a window that repeated an earlier sentence and stopped about 12 s before its end.
         let transcript = "んである。このばあさんがどういう因縁か俺を非常にかわいがってくれた。不思議なものである。母も死ぬ三日前に愛想をつかした親父も年中もてやましている。町内では乱暴者のアクタロウとつまびきをする。この俺を無安に人長してくれた。不思議なものである。"
         let tail = "に取り扱われるのは何とも思わない。帰ってこの清のように� four やしてくれるのを不信に考えた。"
         #expect(!TranscriptTail.covers(transcript, tail: tail))

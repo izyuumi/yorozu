@@ -3,8 +3,6 @@ import SpeechEngines
 import SwiftUI
 import VoiceText
 
-/// One dictation in the composer: record, then transcribe into the field or straight into a message.
-/// The clip is kept until a transcript is delivered or the owner cancels, so a failure can be retried.
 @MainActor @Observable
 final class VoiceSession {
     enum Phase: Equatable {
@@ -12,7 +10,6 @@ final class VoiceSession {
         case failed(String)
     }
 
-    /// A recording waiting for its transcript, and where the text goes.
     private struct Take {
         let samples: [Float]
         let deliver: (String) -> Void
@@ -42,14 +39,13 @@ final class VoiceSession {
         }
     }
 
-    /// Recording stopped at the recorder's limit; ✓ or send still transcribe what was captured.
     var capped: Bool { phase == .recording && recorder.capture == .capped }
 
     func start() async {
         guard case .idle = state else { return }
         var permission = AVAudioApplication.shared.recordPermission
         #if DEBUG
-        if PreviewScene.transcript != nil { permission = .granted } // the recorder plays a clip instead of the microphone
+        if PreviewScene.transcript != nil { permission = .granted }
         #endif
         switch permission {
         case .granted: break
@@ -61,7 +57,6 @@ final class VoiceSession {
         }
         do {
             try recorder.start()
-            // Load while the owner speaks, so only the transcription itself is left after ✓.
             state = .recording(loading: VoiceSetup.shared.load())
         } catch {
             _ = recorder.stop()
@@ -69,13 +64,11 @@ final class VoiceSession {
         }
     }
 
-    /// Stops recording and transcribes; `deliver` gets the text on success.
     func finish(_ deliver: @escaping (String) -> Void) {
         guard case .recording(let loading) = state else { return }
         transcribe(Take(samples: recorder.stop(), deliver: deliver), loading: loading)
     }
 
-    /// Stops recording and hands the clip over, leaving the composer free; nil unless recording.
     func handOff() -> VoiceClip? {
         guard case .recording(let loading) = state else { return nil }
         let handed = VoiceClip(samples: recorder.stop(), loading: loading)
@@ -125,12 +118,10 @@ final class VoiceSession {
     }
 }
 
-/// A finished recording and the engine load started while it was spoken.
 struct VoiceClip {
     let samples: [Float]
     var loading: Task<any SpeechEngine, Error>?
 
-    /// The transcript in the chosen language with the voice dictionary applied; an empty one counts as a failure.
     @MainActor func transcribe() async -> Result<String, Error> {
         #if DEBUG
         if let transcript = PreviewScene.transcript {
@@ -156,8 +147,6 @@ struct VoiceClip {
     }
 }
 
-/// Voice messages sent straight from the composer: each shows as a "Transcribing…" bubble in its conversation
-/// until the transcript goes out as a message. A failure keeps the clip on the bubble for Retry.
 @MainActor @Observable
 final class VoiceSends {
     static let shared = VoiceSends()
@@ -172,11 +161,9 @@ final class VoiceSends {
         case failed(String)
     }
 
-    /// One voice message: its clip, where the text goes, and the one transcription running or its failure.
     private struct Item {
         let id: UUID
         let samples: [Float]
-        /// The engine load; kept for Retry once it succeeded, dropped after it failed so Retry loads again.
         var loading: Task<any SpeechEngine, Error>?
         let send: (String) -> Void
         var step: Step
@@ -184,7 +171,6 @@ final class VoiceSends {
 
     private var items: [String: [Item]] = [:]
 
-    /// The bubbles to show per conversation.
     var pending: [String: [Pending]] {
         items.mapValues { list in
             list.map { item in
@@ -200,7 +186,6 @@ final class VoiceSends {
         items[convId, default: []].append(Item(id: id, samples: clip.samples, loading: loading, send: send, step: step))
     }
 
-    /// Transcribes a failed message again; a no-op while it is still transcribing.
     func retry(_ id: UUID, in convId: String) {
         guard let item = find(id, in: convId), case .failed = item.step else { return }
         let (loading, step) = transcribe(id, samples: item.samples, loading: item.loading, in: convId)
@@ -210,14 +195,12 @@ final class VoiceSends {
         }
     }
 
-    /// Drops the message: its transcription stops and nothing is sent.
     func discard(_ id: UUID, in convId: String) {
         guard let item = remove(id, in: convId), case .transcribing(_, let job) = item.step else { return }
         job.cancel()
         item.loading?.cancel()
     }
 
-    /// Starts one transcription attempt for the message; the caller stores the returned load and step on it.
     private func transcribe(_ id: UUID, samples: [Float], loading: Task<any SpeechEngine, Error>?, in convId: String)
         -> (Task<any SpeechEngine, Error>, Step) {
         let loading = loading ?? VoiceSetup.shared.load()
@@ -226,7 +209,6 @@ final class VoiceSends {
         let job = Task {
             let result = await clip.transcribe()
             let loaded = (try? await loading.value) != nil
-            // Only the current attempt of a message still listed may finish it: a discard or a newer attempt wins.
             guard let item = find(id, in: convId), case .transcribing(let current, _) = item.step, current == attempt else { return }
             switch result {
             case .success(let text):
@@ -258,7 +240,6 @@ final class VoiceSends {
     }
 }
 
-/// A voice message on its way: the sender's bubble with "Transcribing…", or the error with Retry and Delete.
 struct PendingVoiceBubble: View {
     let item: VoiceSends.Pending
     let convId: String
@@ -295,8 +276,6 @@ struct PendingVoiceBubble: View {
     }
 }
 
-/// Replaces the composer's row while dictating: ✕, a waveform and timer (or progress, or an error with Retry),
-/// stop to put the text in the field, and send to post it as a message that transcribes in the chat.
 struct VoiceBar: View {
     let session: VoiceSession
     let onInsert: (String) -> Void
@@ -402,7 +381,6 @@ struct VoiceSetupSheet: View {
     }
 }
 
-/// The recording's loudness as bars, newest at the trailing edge; as many as fit.
 private struct Waveform: View {
     let levels: [Float]
     @Environment(\.accent) private var accent

@@ -2,14 +2,11 @@ import AVFoundation
 import Observation
 import Synchronization
 
-/// Records the microphone as 16 kHz mono PCM for `Transcriber`, up to five minutes, with a loudness trail
-/// for the waveform.
 @MainActor @Observable
 final class VoiceRecorder {
     nonisolated static let maxSeconds: Double = 300
     static let trail = 120
 
-    /// Whether audio is coming in: `capped` once the limit is reached, when the clip so far is kept for `stop()`.
     enum Capture { case idle, running, capped }
 
     private(set) var capture = Capture.idle
@@ -59,7 +56,6 @@ final class VoiceRecorder {
         capture = .running
     }
 
-    /// Stops recording and returns the clip.
     func stop() -> [Float] {
         capture = .idle
         #if DEBUG
@@ -101,7 +97,6 @@ final class VoiceRecorder {
     #if DEBUG
     @ObservationIgnored private var player: Task<Void, Never>?
 
-    /// The preview's talk take: the clip, then silence, in place of the microphone, at the same pace.
     private func play(_ source: [Float]) {
         let chunk = Transcriber.sampleRate / 10
         player = Task { [weak self] in
@@ -121,7 +116,6 @@ final class VoiceRecorder {
     }
     #endif
 
-    /// Built outside the main actor: the engine calls it on its own audio thread.
     nonisolated private static func tap(converter: AVAudioConverter, target: AVAudioFormat, clip: Clip, limit: Int,
                                         report: @escaping @Sendable (Float, Int) -> Void) -> AVAudioNodeTapBlock {
         { buffer, _ in

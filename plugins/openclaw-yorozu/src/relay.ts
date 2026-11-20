@@ -58,7 +58,6 @@ export type RelayHostOptions = {
   mediaMaxBytes: number;
   agent?: string;
   hostVersion?: string;
-  /** The direct listener's port (`channels.yorozu.direct`); absent when it is off. */
   directPort?: number;
   directBonjour?: boolean;
 };
@@ -69,7 +68,6 @@ export type Pairing = {
   fingerprint: string;
   expiresAt: number;
   devices: number;
-  /** The code pairs over the direct path only (#532 step 5 and local Mac pairing). */
   directOnly: boolean;
 };
 
@@ -82,7 +80,6 @@ let host: {
   keys: HostKeys;
   log?: ChannelGatewayContext["log"];
   mint: (() => Promise<{ token: string; expiresAt: number }>) | null;
-  /** The direct listener's hints while it is listening. */
   hints: () => DirectHints | undefined;
   forget: (deviceKeys: string[]) => void;
   broadcast: (events: Event[]) => number;
@@ -94,7 +91,6 @@ export function broadcast(events: Event[]): number {
   return host?.broadcast(events) ?? 0;
 }
 
-/** A turn moved on: devices whose Live Activity shows it get a counts-only push. */
 export function activityTurn(convId: string, change: OwnerTurnChange): void {
   host?.activityTurn(convId, change);
 }
@@ -108,12 +104,10 @@ export async function beginPairing(): Promise<Pairing> {
   return { link, webLink, fingerprint, expiresAt, directOnly, devices: (await listDevices()).length };
 }
 
-/** A new pairing code and its pending secret: for `openclaw yorozu pair`, `pair_invite` and the local pairing file. */
 async function mintPairing(directOnly = false): Promise<Omit<Pairing, "devices"> & { secret: string }> {
   if (!host) throw new Error("the yorozu channel reaches neither its relay nor its direct listener; check `openclaw channels status`");
   const { relayUrl, keys } = host;
   const hints = host.hints();
-  // Local Mac pairing must answer within 5 s, without waiting on a relay token.
   const code = await mintCode(directOnly ? null : host.mint, hints, directOnly ? undefined : host.log);
   const { token, expiresAt } = code;
   const secret = pending.add(expiresAt);
@@ -162,7 +156,6 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
   let stopWatching: (() => Promise<void>) | undefined;
   let bonjour: Awaited<ReturnType<typeof serveBonjour>> | undefined;
   let closeLocal: (() => Promise<void>) | undefined;
-  // Every relay session shares this link; it sends through whichever relay socket is registered.
   const relayLink: Link = { path: "relay", send: (payloads) => relayFrames?.(payloads) };
 
   const activities = new ActivityWatch({
@@ -177,7 +170,6 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
   });
 
   await activities.start();
-  // The finally clause compares host === me, safe if setup threw before assignment because host is never undefined.
   let me!: NonNullable<typeof host>;
   try {
 
@@ -283,7 +275,6 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
       capabilities: [
         ...peerInfo.capabilities,
         ...(activities.liveActivity ? [LIVE_ACTIVITY_PUSH] : []),
-        // liveActivityHostWriter remains reserved; do not advertise it.
         ...(direct?.listening ? [DIRECT] : []),
         ...(relayPushProxy ? [PUSH_PROXY] : []),
       ],
@@ -332,7 +323,6 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
   });
 
   if (opts.directPort !== undefined) {
-    // `local-pair` (#532): one file at a time; whatever an earlier process left is stale, its secret gone with it.
     const local = new LocalPairingFile({
       file: localPairingPath(resolveStateDir()),
       mint: () => mintPairing(true),
@@ -476,7 +466,6 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
               });
             log?.info(`yorozu: registered at relay, room ${keys.room}`);
             opts.onStatus({ connected: true });
-            // The allowlist is the only record of who is paired: this announce rebuilds a room the relay wiped.
             announcer.announce();
             await announcer.idle();
             if (signal.aborted || ws.readyState !== WebSocket.OPEN) return;
@@ -568,7 +557,6 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     await sleepWithAbort(delay, signal).catch(() => {});
   }
   } finally {
-    // Each teardown runs even if an earlier one fails, especially after setup throws.
     for (const close of [() => activities.stop(), () => stopWatching?.(), () => bonjour?.close(),
       () => direct?.close(), () => closeLocal?.()]) {
       try { await close(); } catch (error) {

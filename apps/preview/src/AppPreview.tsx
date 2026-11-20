@@ -8,7 +8,6 @@ export type Props = { locale: "en-US" | "ja" };
 type Timeline = typeof enUS;
 
 const timelines: Record<Props["locale"], Timeline> = { "en-US": enUS, ja };
-// The website's text stack (apps/web/public/styles.css --text); Hiragino Sans for Japanese.
 const fonts: Record<Props["locale"], string> = {
   "en-US": '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif',
   ja: '-apple-system, BlinkMacSystemFont, "Hiragino Sans", "SF Pro Text", "Helvetica Neue", sans-serif',
@@ -21,7 +20,6 @@ const EXIT = 6;
 const END = 870;
 const MARGIN = 40;
 
-/** Soft ease-out in over `ENTER` frames from `from`, shorter ease-in out over `EXIT` frames before `to`; no exit at the end. */
 function presence(frame: number, from: number, to: number): number {
   const clamp = { extrapolateLeft: "clamp", extrapolateRight: "clamp" } as const;
   const enter = interpolate(frame, [from, from + ENTER], [0, 1], { ...clamp, easing: Easing.out(Easing.cubic) });
@@ -29,7 +27,6 @@ function presence(frame: number, from: number, to: number): number {
   return Math.min(enter, exit);
 }
 
-/** One take, full-bleed at normal speed, trimmed by its in-point; every take after the first dissolves in. */
 function Take({ src, inPoint, dissolve }: { src: string; inPoint: number; dissolve: boolean }) {
   const frame = useCurrentFrame();
   const opacity = dissolve ? interpolate(frame, [0, DISSOLVE], [0, 1], { extrapolateRight: "clamp" }) : 1;
@@ -51,7 +48,6 @@ export const AppPreview = ({ locale }: Props) => {
   const frame = useCurrentFrame();
   const timeline = timelines[locale];
   const captions = timeline.captions.map((c) => ({ ...c, from: frames(c.from), to: frames(c.to) }));
-  // The band stays up across back-to-back captions and leaves only at the dissolves.
   const runs = captions.reduce<{ from: number; to: number }[]>((all, c) => {
     const last = all.at(-1);
     if (last && last.to === c.from) last.to = c.to;
@@ -93,7 +89,6 @@ export const AppPreview = ({ locale }: Props) => {
             opacity: presence(frame, run.from, run.to),
           }}
         >
-          {/* A "\n" in a caption is a line break: Japanese has no spaces to wrap at. */}
           {caption && (
             <div
               style={{

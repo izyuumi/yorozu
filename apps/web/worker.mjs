@@ -4,8 +4,6 @@ import { cookieLocale, detectLocale, localePath, pages } from './src/i18n/locale
 const repository = 'izyuumi/yorozu';
 const downloads = `https://github.com/${repository}/releases/download/`;
 
-// _headers does not reach responses the worker makes, so the pages it answers carry the same headers.
-// tests/i18n.test.mjs checks that these match the /* block of public/_headers.
 export const securityHeaders = {
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
@@ -14,7 +12,6 @@ export const securityHeaders = {
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
 };
 
-// Search engines and link previews get the page they asked for, never a language redirect.
 const crawler = /bot|crawl|spider|slurp|facebookexternalhit|embedly|preview|whatsapp|telegram|discord|slack|lighthouse/i;
 
 async function latestRelease(beta) {
@@ -37,13 +34,11 @@ async function latestAsset(beta, names) {
   throw new Error('Release asset unavailable');
 }
 
-/** The English page a path without a language prefix names ('/pair' and '/pair/' are '/pair/'), or null. */
 function englishPage(path) {
   const page = path.endsWith('/') ? path : `${path}/`;
   return pages.includes(page) ? page : null;
 }
 
-/** Whether the visitor followed a link on this site, such as "English version" on a translated policy. */
 function fromThisSite(request) {
   const site = request.headers.get('Sec-Fetch-Site');
   if (site) return site === 'same-origin';
@@ -54,10 +49,6 @@ function fromThisSite(request) {
   }
 }
 
-/**
- * The language for a visit: the switcher's cookie first, then Accept-Language on arrival from elsewhere.
- * Crawlers and links followed within the site get the English page they asked for.
- */
 export function chooseLocale(request) {
   const saved = cookieLocale(request.headers.get('Cookie'));
   if (saved) return saved;
@@ -70,7 +61,6 @@ const vary = 'Accept-Language, Cookie, Sec-Fetch-Site';
 async function page(request, env, english) {
   const locale = ['GET', 'HEAD'].includes(request.method) ? chooseLocale(request) : 'en';
   if (locale !== 'en') {
-    // The query string is kept here; browsers keep the #fragment (the pairing code) across a redirect themselves.
     const location = localePath(locale, english) + new URL(request.url).search;
     return new Response(null, { status: 302, headers: {
       ...securityHeaders, Location: location, Vary: vary, 'Cache-Control': 'private, no-cache',
@@ -83,8 +73,6 @@ async function page(request, env, english) {
   return response;
 }
 
-// The help MCP server (apps/mcp) at /mcp, with its health check at /healthz. It answers from the bundled
-// content alone. The rate limit counts per visitor IP within this isolate.
 const helpMcp = createHandler(handlerDefaults);
 
 export default {

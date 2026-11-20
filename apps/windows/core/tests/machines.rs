@@ -48,7 +48,7 @@ fn pairing_rows_p1_through_p18() {
             ))
         ),
         (confirm.clone(), vec![])
-    ); // P1
+    );
     assert_eq!(
         p::step(PS::Unpaired, PE::LinkSubmitted("bad".into())),
         (PS::Unpaired, vec![PF::Notice(p::S2)])
@@ -56,12 +56,12 @@ fn pairing_rows_p1_through_p18() {
     assert_eq!(
         p::step(confirm.clone(), PE::Confirm),
         (PS::Pairing, vec![PF::Create(l.clone())])
-    ); // P2
-    assert_eq!(p::step(confirm, PE::Cancel), (PS::Unpaired, vec![])); // P3
+    );
+    assert_eq!(p::step(confirm, PE::Cancel), (PS::Unpaired, vec![]));
     assert_eq!(
         p::step(PS::Pairing, PE::SessionOpened(42)),
         (PS::Paired, vec![PF::PersistPaired(42)])
-    ); // P4
+    );
     for (reason, text) in [
         (T::PairingFailed, p::S4),
         (T::Revoked, p::S5),
@@ -71,49 +71,49 @@ fn pairing_rows_p1_through_p18() {
             p::step(PS::Pairing, PE::Terminal(reason)),
             (PS::Unpaired, vec![PF::Stop, PF::Wipe, PF::Notice(text)])
         );
-    } // P5-7
+    }
     assert_eq!(
         p::step(PS::Pairing, PE::Cancel),
         (PS::Unpaired, vec![PF::Stop, PF::Wipe, PF::Notice(p::S7)])
-    ); // P8
+    );
     for reason in [T::Revoked, T::PairingFailed] {
         assert_eq!(
             p::step(PS::Paired, PE::Terminal(reason)),
             (PS::Removed(Removed::Revoked), vec![PF::Stop, PF::Wipe])
         );
-    } // P9
+    }
     assert_eq!(
         p::step(PS::Paired, PE::Terminal(T::UpdateRequired)),
         (PS::Paired, vec![])
-    ); // P10
+    );
     assert_eq!(
         p::step(PS::Paired, PE::Forget),
         (PS::Unpaired, vec![PF::Stop, PF::Wipe, PF::Notice(p::S10)])
-    ); // P11
+    );
     for reason in [Removed::Revoked, Removed::Unreadable] {
         assert_eq!(
             p::step(PS::Removed(reason), PE::PairAgain),
             (PS::Unpaired, vec![PF::Wipe])
         );
-    } // P12
+    }
     for state in [PS::Paired, PS::Pairing, PS::Removed(Removed::Revoked)] {
         assert_eq!(
             p::step(state.clone(), PE::LinkSubmitted("bad".into())),
             (state, vec![PF::Notice(p::S11)])
         );
-    } // P13
+    }
     assert_eq!(
         p::step(PS::Pairing, PE::Joined),
         (PS::Pairing, vec![PF::PersistKnown])
-    ); // P14
+    );
     assert_eq!(
         p::step(PS::Unpaired, PE::Launch(Loaded::Missing)),
         (PS::Unpaired, vec![])
-    ); // P15
+    );
     assert_eq!(
         p::step(PS::Unpaired, PE::Launch(Loaded::Unreadable)),
         (PS::Removed(Removed::Unreadable), vec![])
-    ); // P16
+    );
     let mut record = Pairing::new(&l, [3; 32], [4; 32]);
     for standing in [Standing::CodeOnly, Standing::Known] {
         record.standing = standing;
@@ -121,12 +121,12 @@ fn pairing_rows_p1_through_p18() {
             p::step(PS::Unpaired, PE::Launch(Loaded::Pairing(record.clone()))),
             (PS::Pairing, vec![PF::Start])
         );
-    } // P17
+    }
     record.secret = None;
     assert_eq!(
         p::step(PS::Unpaired, PE::Launch(Loaded::Pairing(record))),
         (PS::Paired, vec![PF::Start])
-    ); // P18
+    );
     assert_eq!(
         p::step(PS::Pairing, PE::SaveFailed { initial: true }),
         (PS::Unpaired, vec![PF::Notice(p::S13)])
@@ -139,9 +139,6 @@ fn pairing_rows_p1_through_p18() {
 }
 #[test]
 fn connection_state_event_grid_every_row_and_default() {
-    // Columns: start stop open nonce joined-off joined-on owner-on owner-off response
-    // peer-good peer-bad update-error update-error-with-messageId other-box ignored accepted unknown-token revoked
-    // transient-close error backoff-timer connect-timer handshake-timer ping-timer pong-timer pong.
     let states = [
         S::Idle(None),
         S::Idle(Some(T::Revoked)),
@@ -218,7 +215,6 @@ fn connection_state_event_grid_every_row_and_default() {
         E::Timer(Timer::Pong),
         E::Pong,
     ];
-    // 0 = explicit default. Each nonzero cell names the spec row, not implementation output.
     let rows: [[_; 26]; 12] = [
         [
             1, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -481,7 +477,6 @@ fn backoff_caps_and_resets_only_after_ten_seconds_open_and_timers_are_stale() {
         );
         assert_eq!(next, m);
         assert!(effects.is_empty());
-        // 7.4: attempt never resets at joined, only after 10 s Open.
         m.state = S::Joining;
         let attempt = m.attempt;
         let (next, _) = step(
@@ -506,7 +501,6 @@ fn backoff_caps_and_resets_only_after_ten_seconds_open_and_timers_are_stale() {
     assert!(effects
         .iter()
         .any(|f| matches!(f, F::Arm(Timer::Backoff, _, 1000))));
-    // A timer from an earlier backoff is stale in a later one: only its generation stops C1.
     let old_generation = m.timer_generations[Timer::Backoff.index()];
     let (m, _) = step(m, E::Start, 0);
     let (m, _) = step(m, E::Error, 0);
@@ -550,7 +544,6 @@ fn status_hints_and_owner_offline_ends_long_open_backoff_streak() {
         Some(p::S9)
     );
     assert_eq!(status::text(&machine(S::Open)), None);
-    // 7.2: the last close shows only on the "Connecting…" row.
     for state in [
         S::Idle(None),
         S::Joined,
@@ -610,7 +603,6 @@ fn token_join_flow_reset_and_handshake_retry_generations() {
         m = next;
         assert_eq!(m.inits, expected);
         assert!(effects.contains(&F::Init));
-        // The timer armed before the C9 re-init is stale while still Handshaking.
         assert_eq!(m.state, S::Handshaking { keys: false });
         assert_eq!(
             c::step(

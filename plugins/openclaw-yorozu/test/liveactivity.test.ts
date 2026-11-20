@@ -16,7 +16,6 @@ import {
   type WireJob,
 } from "../src/liveactivity.ts";
 
-// 2027-01-15T08:00:00Z, the instant the Swift fixture test reads back.
 const T0 = 1_800_000_000_000;
 const CONV = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b";
 const OTHER = "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d";
@@ -89,7 +88,6 @@ test("a needsYou row the host has not been told about is absent from its push", 
 
   assert.ok(push);
   assert.equal(push.state.jobs.find((job) => job.token === TURN)?.steps, 2);
-  // Removing the extension writer now would lose needs-you rows absent from the app's report.
   assert.equal(push.state.jobs.some((job) => job.kind === "needsYou"), false);
 });
 
@@ -136,7 +134,6 @@ test("a report carries only opaque tokens, kinds, states, counts and times", () 
   assert.equal(validReport({ jobs: [], turns: {} }), true);
   assert.equal(validReport({ ...report, pushToken: "xyz" }), false);
   assert.equal(validReport({ ...report, turns: { [TURN]: "not-a-conversation" } }), false);
-  // A job of a kind or state this plugin does not know is valid, and dropped before it reaches the relay.
   const unknown = [{ ...turn(), kind: "tool" }, { ...recording, state: "paused" }] as unknown as WireJob[];
   assert.equal(validReport({ ...report, jobs: [...unknown, turn()] }), true);
   assert.deepEqual(cleanJobs([...unknown, turn()]), [turn()]);

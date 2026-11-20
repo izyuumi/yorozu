@@ -10,7 +10,6 @@ struct PushPreviewTests {
         let preview: Preview
     }
 
-    /// The box in the fixture is sealed by the plugin's `sealPreview` (push-preview.test.ts pins it).
     @Test func opensPluginSealedPreview() throws {
         let url = try #require(Bundle.module.url(forResource: "push-preview", withExtension: "json", subdirectory: "Fixtures"))
         let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))

@@ -86,7 +86,6 @@ def main() -> int:
             hits.append(f"{name} (should have been excluded)")
             continue
         matches = list(IOS.rglob(name))
-        # Generated Tuist bundles live under Derived/; still scan them if present.
         files = [p for p in matches if p.is_file()]
         if not files:
             return fail(f"could not find NSE source {name} under apps/ios")

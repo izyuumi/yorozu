@@ -1,4 +1,3 @@
-//! Executes machine effects. All socket, timer and cryptographic state stays here.
 use crate::{
     connection::{self, Effect, Event, EventKind, Machine, Payload, State, Timer},
     events::{Envelope, PeerInfo},
@@ -172,7 +171,6 @@ impl Driver {
             let input = tokio::select! {
                 input = self.rx.recv() => match input { Some(input) => input, None => break },
                 _ = tick.tick() => {
-                    // Publish only when the tick expires a flight or clears typing.
                     if self.chat.due(self.platform.now_ms()) {
                         self.sync_event(sync::Event::Tick);
                         self.publish();
@@ -289,7 +287,6 @@ impl Driver {
                         continue;
                     }
                     self.record = Some(record);
-                    // Generations carry over, so events queued by the old pairing stay stale.
                     self.conn = Machine {
                         socket_generation: self.conn.socket_generation,
                         timer_generations: self.conn.timer_generations,
@@ -536,7 +533,6 @@ impl Driver {
             .filter(|r| !before.iter().any(|(id, _)| *id == r.message.message_id))
             .map(|r| r.message.clone())
             .collect();
-        // A retried row moved to a new id; its old item goes before the new one is added.
         let gone: Vec<_> = before
             .iter()
             .filter(|(id, _)| !self.outbox.rows.iter().any(|r| r.message.message_id == *id))
@@ -670,7 +666,6 @@ impl Driver {
                 .and_then(Value::as_str)
                 .map(|s| EventKind::Accepted(s.into())),
             Some("frame") => {
-                // Ack at the relay layer before decoding or touching handshake/session state.
                 self.conn_event(
                     EventKind::RelayFrame {
                         flow_bytes: value.get("flowBytes").and_then(Value::as_u64),
@@ -682,8 +677,6 @@ impl Driver {
                     .get("payload")
                     .and_then(Value::as_str)
                     .and_then(Frame::decode);
-                // Decrypt or ignore by state: this is the crypto half of rows C6, C7 and C11,
-                // and tests/machines.rs does not cover it.
                 let payload = match (&self.conn.state, frame.as_ref()) {
                     (State::Handshaking { keys: false }, Some(frame @ Frame::Response { .. })) => {
                         match self.handshake.as_mut().and_then(|h| h.finish(frame)) {

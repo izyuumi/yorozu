@@ -22,7 +22,6 @@ const result = async response => {
   return body.result;
 };
 
-// The help server answers from the bundle alone: any outbound fetch fails the test.
 afterEach(() => mock.restoreAll());
 const noNetwork = () => mock.method(globalThis, 'fetch', async url => assert.fail(`unexpected fetch to ${url}`));
 
@@ -93,7 +92,6 @@ test('only /mcp and /healthz reach the help server; every other path keeps its o
   for (const path of ['/mcp/', '/mcp/x', '/healthz/', '/appcast.xml', '/download/Yorozu.dmg', '/iphone', '/styles.css', '/ja/']) {
     assert.equal(await (await worker.fetch(new Request(`${site}${path}`), { ASSETS: assets })).text(), `asset ${path}`, path);
   }
-  // Language detection still runs on the pages, untouched by the new routes.
   const home = await worker.fetch(new Request(`${site}/`, { headers: { 'Accept-Language': 'ja' } }), { ASSETS: assets });
   assert.equal(home.headers.get('Location'), '/ja/');
 });

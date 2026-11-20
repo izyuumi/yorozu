@@ -12,7 +12,6 @@ type Dispatch = {
   dispatcher: { sendFinalReply: (payload: { text: string }) => unknown };
 };
 
-// Real conversation/runtime modules; only runtime services are synthetic.
 export async function ownerRuntime(source: URL) {
   const conversation = await import(new URL("conversation.ts", source).href);
   const { yorozuRuntime } = await import(new URL("runtime.ts", source).href);

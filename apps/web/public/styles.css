@@ -1,7 +1,5 @@
 :root {
   color-scheme: light dark;
-  /* The app's colors: system backgrounds, the Vermilion accent (AccentColor.colorset, Accent.vermilion)
-     and the app icon's paper and slate (AppIcon.icon). */
   --canvas: #FFFFFF;
   --raised: #F2F2F7;
   --ink: #000000;
@@ -133,8 +131,6 @@ header nav a.button:hover { background: var(--accent); color: var(--on-accent); 
 .fine { font-size: 14px; color: var(--muted); }
 .hero .fine { color: var(--hero-ink); }
 
-/* The phone demo (src/hero): beside the copy on wide screens, under it on narrow ones.
-   Its box is held at the stage's size before the script draws it, so nothing shifts. */
 .hero-demo { container-type: inline-size; width: 100%; max-width: 440px; margin-inline: auto; }
 #hero-demo { aspect-ratio: 440 / 700; }
 @container (max-width: 439px) { #hero-demo { aspect-ratio: 358 / 679; } }
@@ -255,7 +251,6 @@ footer nav a:hover { color: var(--ink); }
 footer nav.languages { flex-basis: 100%; flex-wrap: wrap; gap: 2px 4px; margin-left: -8px; }
 footer nav.languages a[aria-current="true"] { color: var(--ink); font-weight: 650; }
 
-/* Italic and tight tracking suit Latin type, not Chinese, Japanese or Korean. */
 :lang(ja) em, :lang(zh) em, :lang(ko) em { font-style: normal; }
 :lang(ja) :is(h1, h2, h3), :lang(zh) :is(h1, h2, h3), :lang(ko) :is(h1, h2, h3) { letter-spacing: 0; }
 :lang(ja) :is(h1, h2, h3, dt), :lang(ko) :is(h1, h2, h3, dt) { word-break: auto-phrase; }

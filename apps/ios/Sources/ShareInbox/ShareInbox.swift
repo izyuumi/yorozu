@@ -15,7 +15,6 @@ enum ShareInbox {
 
     static let defaultMaxBytes = Attachment.defaultMaxBytes
 
-    /// Tests bind this for their own task, so they never touch the App Group container.
     @TaskLocal static var testContainer: URL?
 
     private static var container: URL? {
@@ -33,8 +32,6 @@ enum ShareInbox {
         #endif
     }
 
-    /// The folder is named for `messageId` and the app sends the share under that id, so a share the
-    /// extension already got to the host is answered `delivered` again rather than run twice.
     static func write(text: String, file: URL?, convId: String?, messageId: String) throws {
         guard let directory else { throw CocoaError(.fileNoSuchFile) }
         let folder = directory.appending(path: messageId, directoryHint: .isDirectory)
@@ -79,8 +76,6 @@ enum ShareInbox {
         return directory
     }
 
-    /// Posted by the extension after it sent a share itself. The host keeps one session per device, so the
-    /// extension's replaced the app's, and an app that is open reconnects.
     static let sentNotification = "to.yumi.yorozu.share-sent"
 
     static func announceSent() {

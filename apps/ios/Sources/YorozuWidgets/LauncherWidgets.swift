@@ -1,7 +1,6 @@
 import SwiftUI
 import WidgetKit
 
-/// Lock Screen launcher: a new conversation with the keyboard up.
 struct AskLauncherWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: Launcher.ask.kind, provider: LauncherProvider()) { _ in
@@ -13,7 +12,6 @@ struct AskLauncherWidget: Widget {
     }
 }
 
-/// One entry that never changes: the launcher shows no data.
 struct LauncherProvider: TimelineProvider {
     func placeholder(in context: Context) -> LauncherEntry { LauncherEntry() }
     func getSnapshot(in context: Context, completion: @escaping (LauncherEntry) -> Void) { completion(LauncherEntry()) }

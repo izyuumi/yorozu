@@ -9,7 +9,6 @@ protocol ClientTransport: Sendable {
     func registerPush(deviceToken: String) async
     @discardableResult func send(_ event: WireEvent) async -> Bool
     @discardableResult func send(_ message: Message) async -> Bool
-    /// After a Local Network change: a new race, unless direct already won.
     func raceAgain() async
 }
 
@@ -119,7 +118,6 @@ actor DemoTransport: ClientTransport {
 
     private func finished(_ messageID: String) { pending[messageID] = nil }
 
-    /// Before delivered, the tool row, the tool's end and the reply.
     private static let pauses: [Duration] = {
         #if DEBUG
         if let scene = PreviewScene.current { return scene.pauses }

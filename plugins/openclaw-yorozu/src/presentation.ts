@@ -45,7 +45,6 @@ const own = (raw: object, key: string, enumerable = true): unknown => {
   } catch { return undefined; }
 };
 
-// Iterate only the bounded prefix; repair lone surrogates before crossing the wire.
 function string(raw: unknown, limit = MAX_STRING_CHARS, marker = true): string {
   if (typeof raw !== "string") return "";
   let result = "";
@@ -86,7 +85,6 @@ function preflight(budget: { chars: number; exhausted: boolean }) {
     if (depth > MAX_DEPTH) return undefined;
     if (typeof value === "string") return copyString(value);
     if (value === null || typeof value === "boolean" || typeof value === "number") return value;
-    // Preserve invalid scalar presence, notably an invalid optional row-header index.
     if (kind === "scalar" && value !== undefined) return null;
     if (typeof value !== "object" || path.has(value)) return undefined;
     path.add(value);
@@ -100,7 +98,6 @@ function preflight(budget: { chars: number; exhausted: boolean }) {
         const result: unknown[] = [];
         for (let i = 0; i < Math.min(length, limit + 1) && !budget.exhausted; i++) {
           const entry = own(value, String(i));
-          // Lookahead counts only: never traverse the overflow entry.
           result.push(i === limit ? undefined : copy(entry, childKind, depth + 1));
         }
         return result;
@@ -145,7 +142,6 @@ function overflow(b: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-// This summary uses only preflight primitives; never SDK renderers or object coercion.
 function omitted(b: Record<string, unknown>, reason: string): Block {
   const primitive = (v: unknown): string => typeof v === "string" ? string(v, 160) : finite(v) ? String(v) : "";
   const lines = [optional(b.caption) || optional(b.title) || optional(b.text)];
@@ -160,7 +156,6 @@ function omitted(b: Record<string, unknown>, reason: string): Block {
     const s = record(entry);
     if (s) lines.push([primitive(s.name), array(s.values) ? s.values.slice(0, 4).map(primitive).filter(Boolean).join(", ") : ""].filter(Boolean).join(": "));
   }
-  // Keep the explicit omission note even when the title consumes its whole cap.
   return context([string(lines.filter(Boolean).join("\n"), MAX_STRING_CHARS - reason.length - 3), `(${reason})`].filter(Boolean).join("\n"));
 }
 
@@ -169,7 +164,6 @@ function labels(raw: unknown): raw is string[] {
     new Set(raw.map((v: unknown) => typeof v === "string" ? v.trim() : "")).size === raw.length;
 }
 
-// Rebuild SDK output through the same allowlist, then validate before native rendering.
 function native(b: Record<string, unknown>): NativeBlock | undefined {
   const type = optional(b.type).toLowerCase();
   if (type === "text" || type === "context") {
@@ -239,7 +233,6 @@ function fallback(parts: string[]): string {
   return result;
 }
 
-// Repair before core normalizes the message tool and silently drops invalid tables.
 export function prepareToolPresentation(raw: unknown): unknown {
   try {
     const encoded = typeof raw === "string";

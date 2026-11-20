@@ -2,8 +2,6 @@
 import AppKit
 import SwiftUI
 
-// Consecutive prose blocks of one message drawn as one read-only NSTextView, so a selection can run across
-// paragraphs, headings, lists and quotes. SwiftUI `Text` selects one view at a time and has no hanging indent.
 struct ProseText: NSViewRepresentable {
     let blocks: [MarkdownBlock]
     @Environment(\.textZoom) private var zoom
@@ -43,13 +41,10 @@ struct ProseText: NSViewRepresentable {
         return CGSize(width: width, height: ceil(layout.usedRect(for: container).height))
     }
 
-    // MARK: Attributed text
-
     private static let blockSpacing: CGFloat = 8
     private static let itemSpacing: CGFloat = 4
     private static let indent: CGFloat = 18
 
-    /// The blocks as plain text, for the SwiftUI accessibility label over the NSTextView (#584).
     static func plainText(_ blocks: [MarkdownBlock]) -> String {
         render(blocks, zoom: 1).string
     }
@@ -114,7 +109,6 @@ struct ProseText: NSViewRepresentable {
         return out
     }
 
-    // The last line of a list takes the spacing of the block that holds it.
     private static func trimSpacing(_ out: NSMutableAttributedString, to spacing: CGFloat) {
         guard out.length > 0, let style = out.attribute(.paragraphStyle, at: out.length - 1, effectiveRange: nil) as? NSParagraphStyle,
               let copy = style.mutableCopy() as? NSMutableParagraphStyle else { return }

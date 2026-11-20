@@ -1,7 +1,5 @@
 import Foundation
 
-/// The composer's caret, kept outside the text view so dictated text lands where the caret was, even though
-/// the voice bar replaced the text view meanwhile; a second dictation goes after the first.
 final class ComposerCursor {
     private enum Caret {
         case following(NSRange?)
@@ -14,7 +12,6 @@ final class ComposerCursor {
         if case .following = caret { caret = .following(range) }
     }
 
-    /// The caret to restore after an insertion, once.
     func take(within length: Int) -> NSRange? {
         guard case .insertAt(let range) = caret else { return nil }
         guard NSMaxRange(range) <= length else {
@@ -25,8 +22,6 @@ final class ComposerCursor {
         return range
     }
 
-    /// Inserts `piece` at the caret (the end if none, after any selection, so nothing typed is replaced), spaced
-    /// from a neighboring Latin word, and moves the caret after it.
     func insert(_ piece: String, into text: inout String) {
         let range: NSRange?
         switch caret {

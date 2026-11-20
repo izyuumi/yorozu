@@ -108,7 +108,6 @@ test("prompt hook returns card guidance as appendSystemContext for Yorozu sessio
   for (const hint of MESSAGE_TOOL_HINTS) assert.ok(CARD_GUIDANCE.includes(hint));
   assert.match(CARD_GUIDANCE, /`presentation`, never a markdown pipe table/);
   assert.match(CARD_GUIDANCE, /never send tables apply to Signal, not to Yorozu cards/);
-  // Records the OpenClaw 2026.9.8 merge order this hook assumes (developerInstructions = prependSystemContext + (first systemPrompt, or the built instructions) + every appendSystemContext). It does not run OpenClaw's merger; isolated-host runs are the evidence for that.
   const replaced = ["# PAIOS Runtime Bridge\nSignal formatting: never send tables.", promptHook(event, ctx)?.appendSystemContext].join("\n\n");
   assert.ok(replaced.includes("## Yorozu app"));
   assert.ok(replaced.endsWith(CARD_GUIDANCE));
@@ -117,7 +116,6 @@ test("prompt hook returns card guidance as appendSystemContext for Yorozu sessio
 test("message-tool table survives hook, pinned core normalization and wire delivery", async () => {
   const fixture = JSON.parse(readFileSync(new URL("fixtures/presentation-sdk-2026.9.8.json", import.meta.url), "utf8"));
   const pin = fixture.cases.find((item: { name: string }) => item.name === "valid table");
-  // The existing SDK fixture pins real core output; core ignores a table's extra title.
   const normalize = (raw: unknown) => {
     const { blocks } = raw as { blocks: Record<string, unknown>[] };
     assert.deepEqual({ blocks: blocks.map(({ title: _, ...block }) => block) }, pin.input);

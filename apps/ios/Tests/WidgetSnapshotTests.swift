@@ -39,7 +39,6 @@ private let fixtures = [
         let snapshot = WidgetSnapshot(conversations: fixtures, previews: false, accent: nil, live: true)
         #expect(snapshot.rows.first { $0.id == "trip" }?.unread == 1)
         #expect(snapshot.rows.first { $0.id == "groceries" }?.unread == 0)
-        // Archived conversations leave the rows but still count, as on the app icon's badge.
         #expect(!snapshot.rows.contains { $0.id == "old" })
         #expect(snapshot.unread == fixtures.reduce(0) { $0 + $1.unreadCount })
         #expect(snapshot.unread == 2)
@@ -99,7 +98,6 @@ private let fixtures = [
     @Test func notificationCountsAReplyOnce() {
         let url = temporaryURL()
         defer { try? FileManager.default.removeItem(at: url) }
-        // No snapshot (unpaired or demo mode): the notification service writes nothing.
         let wrote = WidgetStore.update(at: url) { snapshot in
             snapshot.receive(convId: "trip", title: nil, body: "x", event: "e1", at: .now, previews: true)
         }

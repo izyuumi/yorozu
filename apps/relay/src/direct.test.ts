@@ -1,7 +1,3 @@
-// End to end over the direct path (#532 step 3): the plugin's session core (`hub.ts`) and direct listener (`direct.ts`)
-// on a real `ws` server, a device built on the plugin's own Noise code, and the Node relay as the fallback path. What
-// OpenClaw adds around them (device storage, agent turns, the relay redial loop in `relay.ts`) is replaced by the
-// in-memory allowlist and the small relay host link below.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
@@ -86,7 +82,6 @@ async function host(opts: { direct?: boolean; pendingMs?: number; getRuntime?: (
   }
   const port = servers[0] ? (servers[0].address() as AddressInfo).port : 0;
 
-  // The relay half of `relay.ts`: register, then hand every device frame to the hub.
   const link = client(relay.port, keys.room);
   cleanup.push(() => link.ws.terminate());
   await link.open;
@@ -122,7 +117,6 @@ async function host(opts: { direct?: boolean; pendingMs?: number; getRuntime?: (
 }
 type Host = Awaited<ReturnType<typeof host>>;
 
-/** A device's session over one socket: the relay's after `joined`, or the listener's after the probe. */
 function noise(device: Device, h: Host) {
   const ik = new NoiseIK("initiator", device.static, h.keys.static.publicKey, prologue(h.keys.room, device.signing.publicKey));
   const message = ik.writeMessage(Buffer.from(JSON.stringify({ ts: Date.now() })));
@@ -146,7 +140,6 @@ const open = (session: Session, payload: string): Event | undefined => {
   return event && event.kind !== "invalid" && event.kind !== "unknown" ? event : undefined;
 };
 
-/** Waits for the next host frame on `socket`, checking the host's signature. */
 async function nextFrame(socket: Client, h: Host): Promise<string> {
   for (;;) {
     const msg = await socket.next();
@@ -156,7 +149,6 @@ async function nextFrame(socket: Client, h: Host): Promise<string> {
   }
 }
 
-/** Probes, checks the answer, sends the init and opens the session; null when the listener is not there. */
 async function dialDirect(device: Device, h: Host): Promise<{ socket: Client; session: Session; peer: PeerInfo } | null> {
   if (!h.port) return null;
   const socket = client(`ws://127.0.0.1:${h.port}`);
@@ -196,7 +188,6 @@ async function dialRelay(device: Device, h: Host): Promise<{ socket: Client; ses
   return { socket, session, peer: hello.data };
 }
 
-/** Direct first, the relay when the listener is off or unreachable: the client's race, reduced to its fallback. */
 const connect = async (device: Device, h: Host) => (await dialDirect(device, h)) ?? (await dialRelay(device, h));
 
 const message = (text: string): Message => ({ convId: CONV, messageId: randomUUID(), text });
@@ -225,7 +216,6 @@ test("a paired device probes, opens a session directly, sends a message and gets
 });
 
 test("direct handshakes and messages retain the registered plugin instance runtime", async () => {
-  // Mirrors openclaw/plugin-sdk/runtime-store's instance-scoped slot; the global fallback stays unset.
   type Slot = { runtime?: object };
   const scope = new AsyncLocalStorage<Slot>();
   const instance: Slot = {};
@@ -247,7 +237,7 @@ test("direct handshakes and messages retain the registered plugin instance runti
     },
   };
   const h = await scope.run(instance, async () => {
-    setRuntime({}); // Plugin registration precedes startAccount in the same instance scope.
+    setRuntime({});
     return host({ getRuntime, log });
   });
   expect(() => getRuntime()).toThrow("Yorozu runtime not initialised");
@@ -310,7 +300,6 @@ test("each device gets frames over its own path; relay presence resets leave dir
   expect(h.hub.broadcast([reply])).toBe(2);
   expect(open(direct.session, await nextFrame(direct.socket, h))).toEqual(reply);
   expect(open(relayed.session, await nextFrame(relayed.socket, h))).toEqual(reply);
-  // The relay sends every host frame to every device socket: a second frame here would be the direct device's.
   h.hub.broadcast([{ kind: "typing", data: { convId: CONV, active: false } }]);
   expect(open(relayed.session, await nextFrame(relayed.socket, h))).toMatchObject({ data: { active: false } });
   expect(open(direct.session, await nextFrame(direct.socket, h))).toMatchObject({ data: { active: false } });

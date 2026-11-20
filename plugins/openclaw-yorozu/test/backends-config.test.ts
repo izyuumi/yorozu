@@ -34,7 +34,6 @@ function logger(lines: string[]) {
   };
 }
 
-/** The account startup from presentations.test.ts, using the given Gateway config. */
 async function channel(cfg: object, log: ReturnType<typeof logger>) {
   const { yorozuPlugin } = await import("../src/channel.ts");
   const plugin = yorozuPlugin as unknown as { base: { gateway: { startAccount(ctx: unknown): Promise<void> } } };

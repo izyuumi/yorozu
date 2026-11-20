@@ -2,7 +2,6 @@ import Foundation
 import Testing
 @testable import YorozuWire
 
-/// The pairing link's direct hints and the hello proof (#532 step 5: offline pairing).
 struct PairingTests {
     let key = Data(repeating: 7, count: 32).base64URLEncodedString()
     let base = "yorozu://pair?v=3&relay=wss://relay.example/ws&key=\(Data(repeating: 7, count: 32).base64URLEncodedString())&token=tok&room=room&secret=sec"
@@ -53,7 +52,6 @@ struct PairingTests {
         #expect(try JSONDecoder().decode(QrPayload.self, from: Data(withBadEntry.utf8)).hints == DirectHints(port: 8738))
     }
 
-    /// The init a pairing sends, on the relay or the direct path, proves the QR's secret; a paired device's doesn't.
     @Test func aPairingsInitCarriesTheProof() throws {
         let host = YorozuCrypto.generateKeypair()
         let identity = PhoneIdentity.generate()

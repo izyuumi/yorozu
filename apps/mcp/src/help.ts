@@ -1,4 +1,3 @@
-// What each tool answers, as pure functions over the bundle. The MCP wiring is in server.ts.
 import type { AppSetting, Content, HostSetting, Platform } from "./content.ts";
 
 const stopwords = new Set(
@@ -15,7 +14,6 @@ function count(haystack: string, term: string): number {
   return n;
 }
 
-/** Heading hits weigh 5, body hits 1 (capped at 5 per term); matching every term doubles the score. */
 function score(query: string[], heading: string, body: string): number {
   const h = heading.toLowerCase();
   const b = body.toLowerCase();

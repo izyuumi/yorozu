@@ -1,8 +1,6 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
-// llama.cpp's Apple build for on-device voice input; b11954 is the first release that runs LFM3-Audio.
-// It has no iOS Simulator slice, so the app builds for devices and the Mac only.
 let package = Package(
     name: "Llama",
     platforms: [.macOS(.v15), .iOS(.v18)],

@@ -12,8 +12,6 @@ permissions:
   contents: read
 
 jobs:
-  # The whole plugin typechecks only against an OpenClaw source checkout (tsconfig.json extends it).
-  # The files that import only node built-ins are checked here with the same strictness, no install of OpenClaw.
   standalone:
     runs-on: ubuntu-latest
     steps:

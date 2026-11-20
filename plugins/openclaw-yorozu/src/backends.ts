@@ -11,7 +11,6 @@ export type HermesSection = { enabled?: boolean };
 export type HermesBackend = { url: URL; key: string };
 export const KEY_FILE = join(homedir(), ".hermes-yorozu-test", "yorozu-plugin.key");
 
-/** `channels.yorozu.backends.hermes`, or undefined when any section is absent. */
 export function hermesSection(cfg: OpenClawConfig): HermesSection | undefined {
   const yorozu = (cfg.channels as Record<string, unknown> | undefined)?.[CHANNEL_ID] as
     { backends?: { hermes?: HermesSection } } | undefined;

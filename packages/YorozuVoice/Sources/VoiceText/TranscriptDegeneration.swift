@@ -1,21 +1,13 @@
 import Foundation
 
-/// How a transcript decoded with vocabulary hints can go wrong: on audio the model can't make out, hints
-/// give it something to say, so it loops or reads the vocabulary back instead of transcribing.
 public enum TranscriptDegeneration: Equatable, Sendable {
-    /// The same word or run of words three or more times in a row ("万事屋万事屋万事屋…").
     case repetition
-    /// Most of the transcript is hint terms, at least two different ones.
     case hintEcho
-    /// The instruction's "Vocabulary:" list came back as the transcript.
     case promptEcho
 
-    /// Repeats in a row that count as a loop. "no no" is speech; a third time in a row is treated as a loop.
     public static let repeatLimit = 3
-    /// The longest run of words checked for repeats.
     public static let longestRun = 12
 
-    /// What went wrong with `transcript`, decoded with `hints`; nil when it reads like a transcript.
     public static func detect(in transcript: String, hints: [String]) -> TranscriptDegeneration? {
         if transcript.range(of: "Vocabulary:", options: .caseInsensitive) != nil { return .promptEcho }
         if repeats(words(in: transcript)) { return .repetition }
@@ -23,7 +15,6 @@ public enum TranscriptDegeneration: Equatable, Sendable {
         return nil
     }
 
-    /// Words as the system splits them, Japanese and Chinese included; punctuation and spaces dropped.
     static func words(in text: String) -> [String] {
         var words: [String] = []
         text.enumerateSubstrings(in: text.startIndex..., options: [.byWords, .localized]) { word, _, _, _ in
@@ -32,7 +23,6 @@ public enum TranscriptDegeneration: Equatable, Sendable {
         return words
     }
 
-    /// True when some run of 1…`longestRun` words appears `repeatLimit` times back to back.
     static func repeats(_ words: [String]) -> Bool {
         let limit = repeatLimit
         guard words.count >= limit else { return false }
@@ -45,8 +35,6 @@ public enum TranscriptDegeneration: Equatable, Sendable {
         return false
     }
 
-    /// True when two or more different hint terms cover more than half the transcript's letters and digits.
-    /// One term alone may be all someone said ("Yorozu"), or said twice to get attention.
     static func mostlyHints(_ transcript: String, hints: [String]) -> Bool {
         let total = letterCount(transcript)
         guard total > 0 else { return false }

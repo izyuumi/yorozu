@@ -1,7 +1,4 @@
 # shellcheck shell=sh
-# App Store Connect API helpers, sourced by scripts/upload_ios.sh and scripts/testflight_metadata.sh. Needs
-# ASC_KEY_ID and ASC_ISSUER_ID; the key is ASC_KEY_PATH or ~/.appstoreconnect/private_keys/AuthKey_<id>.p8. The
-# key and the signed token go only to openssl and curl's standard input, never into arguments or output.
 : "${ASC_KEY_ID:?ASC_KEY_ID is required}" "${ASC_ISSUER_ID:?ASC_ISSUER_ID is required}"
 KEY=${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8}
 case "$KEY" in /*) ;; *) KEY="$PWD/$KEY" ;; esac
@@ -27,9 +24,6 @@ asc_get() {
     printf 'header = "Authorization: Bearer %s"\n' "$(jwt)" | curl -fsS --config - "$1"
 }
 
-# asc_send <method> <url> <json>: prints the response body on a 2xx. Otherwise it prints App Store Connect's errors
-# (status, code, title and detail of each) to standard error and returns 22, like curl -f; a transport failure
-# returns curl's own exit code. The response body never holds the key or the token.
 asc_send() {
     asc_body=$(mktemp) || return 1
     asc_status=$(printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "$(jwt)" \

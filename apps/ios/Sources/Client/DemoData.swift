@@ -8,7 +8,6 @@ enum DemoData {
     static let archiveID = "d0000000-0000-4000-8000-000000000004"
     #if DEBUG
     static let longChatID = "d0000000-0000-4000-8000-000000000006"
-    /// `--demo --long-chat N`: a seeded N-message thread for reproducing long-timeline bugs.
     static let longChatCount: Int? = {
         let arguments = ProcessInfo.processInfo.arguments
         guard let flag = arguments.firstIndex(of: "--long-chat"), flag + 1 < arguments.count,
@@ -71,7 +70,6 @@ enum DemoData {
         #if DEBUG
         if PreviewScene.current != nil { histories[PreviewScene.tidyID] = thread(PreviewScene.tidy, age: 90_000, toolRow: true) }
         if let card = PreviewScene.card(at: now - 60_000) { histories[PreviewScene.cardID] = card }
-        // `thread` spaces items 30 s apart, so the age grows with the count: the last message is a minute old, the newest of all.
         if let count = longChatCount { histories[longChatID] = thread(longChat(count), age: Int64(count + 1) * 30_000) }
         #endif
         return histories
@@ -119,7 +117,6 @@ enum DemoData {
 
 #if DEBUG
 private extension DemoData {
-    /// Deterministic filler, user first: lengths from one line to about thirty, with Markdown and code.
     static func longChat(_ count: Int) -> [(HistoryItem.Kind, String)] {
         (0..<count).map { index -> (HistoryItem.Kind, String) in
             let turn = index / 2, number = turn + 1

@@ -20,8 +20,6 @@ struct RootView: View {
             if let failure = model.submit(url.absoluteString) { model.pairingError = failure }
         }
         .deviceAddingAlerts(model)
-        // #532: once, after the first session with a pairing or, while pairing, when the relay can't be reached and the code
-        // names LAN addresses; it stays up if the session drops, and a swipe away counts as Not Now.
         .onChange(of: model.showLocalNetworkExplainer, initial: true) { _, due in if due { explainingLocalNetwork = true } }
         .sheet(isPresented: $explainingLocalNetwork, onDismiss: { model.explainLocalNetwork() }) {
             LocalNetworkExplainer(model: model).yorozuTint()
@@ -55,10 +53,8 @@ struct RootView: View {
                 #endif
             case .inactive:
                 #if os(iOS)
-                // Still in the foreground: the last moment a Live Activity can start.
                 if previous == .active { YorozuActivities.shared?.leaving() }
                 #endif
-                // On the way back to the foreground: race before the scene is active.
                 if previous == .background { model.prewarm() }
             default: break
             }
@@ -67,7 +63,6 @@ struct RootView: View {
             switch phase {
             case .active: model.setActive(true)
             case .inactive: model.setActive(false)
-            // iOS skips this to preserve the background visit set by enterBackground().
             #if !os(iOS)
             case .background: model.setActive(false)
             #endif

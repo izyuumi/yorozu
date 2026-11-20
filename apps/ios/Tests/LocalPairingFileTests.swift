@@ -3,7 +3,6 @@ import Foundation
 import Testing
 import YorozuWire
 
-/// The local pairing file (#532 `local-pair`): read only when it is this user's private regular file for the proven room.
 @Suite struct LocalPairingFileTests {
     let dir: URL
     let room = Data(SHA256.hash(data: Data(repeating: 7, count: 32))).base64URLEncodedString()

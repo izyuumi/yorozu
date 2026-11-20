@@ -2,10 +2,6 @@ import Foundation
 import Testing
 @testable import YorozuWire
 
-/// The plugin's card replies (capability `presentation`), replayed through the decoders: the card rides along and
-/// the text and every other field decode as they do without it. The fixture is the exact JSON the plugin puts in a
-/// sealed box (`GenUIFixture`; `plugins/openclaw-yorozu/test/presentations.test.ts`
-/// pins it). `PresentationTests` covers the card.
 struct GenUIReplayTests {
     private func event(_ name: String) throws -> WireEvent { try GenUIFixture.event(name) }
 
@@ -21,7 +17,6 @@ struct GenUIReplayTests {
         #expect(reply.presentation != nil)
         reply.presentation = nil
         #expect(reply == expected)
-        // A session without the capability gets the same reply with the field left out.
         #expect(try event("replyOldApp") == .reply(expected))
     }
 

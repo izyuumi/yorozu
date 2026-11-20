@@ -6,7 +6,6 @@ license.workspace = true
 publish = false
 
 [features]
-# Gates the test-only plaintext key store (PlainProtector). Stays off in the app.
 insecure-plaintext-store = []
 
 [dependencies]

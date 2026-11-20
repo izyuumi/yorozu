@@ -21,7 +21,6 @@ struct StoredNamesFileManager: StoredNamesFileOperations {
         var files: [URL] = []
         for case let url as URL in enumerator {
             let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey])
-            // Do not follow links or delete an old tree containing unhandled entries.
             guard values.isSymbolicLink != true else { throw CocoaError(.fileReadUnsupportedScheme) }
             if values.isRegularFile == true { files.append(url) }
             else if values.isDirectory != true { throw CocoaError(.fileReadUnknown) }
@@ -52,8 +51,6 @@ struct StoredNamesFileManager: StoredNamesFileOperations {
     func remove(_ url: URL) throws { try FileManager.default.removeItem(at: url) }
 }
 
-/// Shared by the background migration and foreground reads/deletes. Copies happen outside the lock;
-/// committing and deleting share it so a wipe cannot resurrect a staged file.
 final class StoredNames: @unchecked Sendable {
     enum Name: String, CaseIterable { case conversations = "Conversations", attachments = "Attachments" }
     static let shared = StoredNames(root: clientSupportDirectory, completion: .standard)
@@ -73,7 +70,6 @@ final class StoredNames: @unchecked Sendable {
         isComplete(name) ? nil : root.appending(path: "\(name.rawValue)-v3", directoryHint: .isDirectory)
     }
 
-    /// Old-first listing + new-first reads also cover a file committed between the two listings.
     func fileNames(_ name: Name) -> Set<String> {
         let legacy = legacyDirectory(name)
         var names = Set<String>()
@@ -101,7 +97,6 @@ final class StoredNames: @unchecked Sendable {
         }
     }
 
-    /// Retry once at a new URL if a failed open lost its file to the migration.
     func withLocal<T>(_ relative: String, in name: Name, _ body: (URL) throws -> T?) rethrows -> T? {
         guard let url = local(relative, in: name) else { return nil }
         if let result = try body(url) { return result }
@@ -112,7 +107,6 @@ final class StoredNames: @unchecked Sendable {
 
     func remove(_ relative: String? = nil, in name: Name) throws {
         try lock.withLock {
-            // Old first: if deletion fails, retain the new copy too rather than resurrecting old data.
             for directory in [legacyDirectory(name), directory(name)].compactMap({ $0 }) {
                 let url = relative.map { directory.appending(path: $0) } ?? directory
                 if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
@@ -131,7 +125,6 @@ final class StoredNames: @unchecked Sendable {
         var moved = 0, kept = 0, failed = 0
         var bytes: Int64 = 0, movedBytes: Int64 = 0
         do {
-            // No old directory: no filesystem changes, including creation of the new directory.
             guard files.exists(old) else {
                 completion.set(true, forKey: "yorozu.storedNames.\(name.rawValue)")
                 logger.info("\(name.rawValue, privacy: .public): 0 files, 0 bytes; complete")
@@ -173,7 +166,6 @@ final class StoredNames: @unchecked Sendable {
                         } else {
                             do { try files.move(staged, to: destination) }
                             catch {
-                                // moveItem never overwrites: a concurrent writer may have won the name.
                                 guard files.exists(destination) else { throw error }
                                 _ = try files.size(destination)
                                 if files.exists(staged) { try files.remove(staged) }

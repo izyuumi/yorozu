@@ -118,7 +118,6 @@ struct ConversationsView: View {
                 }
             }
         }
-        // A Mac sidebar drops a row font equal to the one the list inherits; with none inherited, the rows' zoomed fonts stand.
         .font(nil)
         .alert(String(localized: "Rename Conversation"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }),
             presenting: renaming) { conversation in

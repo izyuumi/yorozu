@@ -11,7 +11,6 @@ import { callEveryTool, toolNames } from "./calls.ts";
 
 const pkgDir = fileURLToPath(new URL("..", import.meta.url));
 const repoRoot = realpathSync(fileURLToPath(new URL("../../..", import.meta.url)));
-// Node's permission model: read files under the repository, nothing else (no network, no writes, no child processes).
 const sandbox = ["--permission", `--allow-fs-read=${repoRoot}`];
 
 async function run(args: string[]) {
@@ -30,11 +29,9 @@ test("stdio: every tool, a resource and the prompt, end to end", async () => {
   await client.close();
 });
 
-// Node 24 has no network permission (--allow-net came in Node 25), so there the sandbox does not block connections.
 const netPermission = process.allowedNodeEnvironmentFlags.has("--allow-net");
 
 test("the sandbox denies network access (control)", { skip: !netPermission && "this Node has no network permission (--allow-net needs Node 25 or later)" }, async () => {
-  // A listening server, so a refused connection cannot pass for a denied one.
   const server = createNetServer((socket) => socket.end()).listen(0, "127.0.0.1");
   await once(server, "listening");
   const { port } = server.address() as AddressInfo;

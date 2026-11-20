@@ -5,7 +5,6 @@ import Testing
 struct AudioWindowPlanTests {
     private let rate = 16_000
 
-    /// A clip of `seconds`, a 440 Hz tone everywhere except the silent `gaps` (start and length in seconds).
     private func clip(seconds: Double, gaps: [(Double, Double)] = []) -> [Float] {
         var samples = (0..<Int(seconds * Double(rate))).map { Float(0.3 * sin(2 * Double.pi * 440 * Double($0) / 16_000)) }
         for (start, length) in gaps {
@@ -73,7 +72,6 @@ struct AudioWindowPlanTests {
     }
 
     @Test func aTenMinuteClipIsCutIntoWindowsOfAtMostNinetySeconds() {
-        // Pauses of 0.6 s every 15 s, plus a longer one at 75 s, within the first window's last 20 s.
         let gaps = stride(from: 7.0, to: 600, by: 15).map { ($0, 0.6) } + [(75.0, 0.8)]
         let samples = clip(seconds: 600, gaps: gaps)
         let windows = plan(samples)
@@ -85,11 +83,9 @@ struct AudioWindowPlanTests {
         for (previous, next) in zip(windows, windows.dropFirst()) {
             #expect(next.range.lowerBound > previous.range.lowerBound)
             #expect(previous.range.upperBound - next.range.lowerBound == rate)
-            // Each cut lands in the middle of a pause.
             let cut = Double(previous.range.upperBound) / Double(rate)
             #expect(gaps.contains { cut > $0.0 && cut < $0.0 + $0.1 })
         }
-        // The longest pause wins: the first cut is at 75.4 s, not 82.3 s.
         #expect(windows[0].range.upperBound == Int(75.4 * Double(rate)))
     }
 
@@ -111,18 +107,15 @@ struct AudioWindowPlanTests {
     }
 
     @Test func aWindowCountsItsSpeech() {
-        // 40 s of tone with 10 s of silence from 10 s.
         let samples = clip(seconds: 40, gaps: [(10, 10)])
         let activity = VoiceActivity(samples: samples, sampleRate: rate)
         #expect(abs(activity.speechSeconds(in: 0..<samples.count) - 30) < 0.001)
         #expect(abs(activity.speechSeconds(in: 5 * rate..<25 * rate) - 10) < 0.001)
         #expect(activity.speechSeconds(in: 11 * rate..<19 * rate) == 0)
-        // Part of a frame counts as that part.
         #expect(abs(activity.speechSeconds(in: 800..<1_600) - 0.05) < 0.0001)
     }
 
     @Test func aWindowSplitsAtTheQuietestPointOfItsMiddle() {
-        // A pause at 40 s (in the middle half) and a longer one at 5 s (outside it).
         let samples = clip(seconds: 100, gaps: [(5, 3), (40, 0.6)])
         let activity = VoiceActivity(samples: samples, sampleRate: rate)
         let window = AudioWindow(range: 0..<samples.count, activity: activity)
@@ -149,7 +142,6 @@ struct AudioWindowPlanTests {
     @Test func aShortWindowDoesNotSplit() {
         let samples = clip(seconds: 60)
         let activity = VoiceActivity(samples: samples, sampleRate: rate)
-        // Halves of 15 s need 30 s, less the 1 s both hear.
         #expect(AudioWindowPlan.split(AudioWindow(range: 0..<28 * rate, activity: activity), sampleRate: rate, activity: activity) == nil)
         #expect(AudioWindowPlan.split(AudioWindow(range: 0..<30 * rate, activity: activity), sampleRate: rate, activity: activity) != nil)
         #expect(AudioWindowPlan.split(AudioWindow(range: 0..<0, activity: activity), sampleRate: rate, activity: activity) == nil)
@@ -163,19 +155,14 @@ struct AudioWindowPlanTests {
     }
 
     @Test func theOverlapCountsOnlyItsSpeech() {
-        // Tone with a pause from 10 s to 12 s.
         let samples = clip(seconds: 30, gaps: [(10, 2)])
         let activity = VoiceActivity(samples: samples, sampleRate: rate)
         func window(_ from: Double, _ to: Double) -> AudioWindow {
             AudioWindow(range: Int(from * Double(rate))..<Int(to * Double(rate)), activity: activity)
         }
-        // A cut in the pause: the second it shares is silent.
         #expect(AudioWindowPlan.overlapSpeechSeconds(window(0, 11.5), window(10.5, 30), activity: activity) == 0)
-        // A cut in speech: all of it is speech.
         #expect(abs(AudioWindowPlan.overlapSpeechSeconds(window(0, 6), window(5, 30), activity: activity) - 1) < 0.001)
-        // Half of it in the pause.
         #expect(abs(AudioWindowPlan.overlapSpeechSeconds(window(0, 10.5), window(9.5, 30), activity: activity) - 0.5) < 0.001)
-        // Windows that don't meet share nothing.
         #expect(AudioWindowPlan.overlapSpeechSeconds(window(0, 5), window(6, 30), activity: activity) == 0)
     }
 
