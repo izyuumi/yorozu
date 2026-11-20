@@ -47,8 +47,10 @@ final class AppModel {
 
     @ObservationIgnored private var connection: (any ClientTransport)?
     @ObservationIgnored private var listener: Task<Void, Never>?
-    @ObservationIgnored private var typingTimers: [String: Task<Void, Never>] = [:]
-    @ObservationIgnored private var stallTimers: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private(set) var typingTimers: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private(set) var stallTimers: [String: Task<Void, Never>] = [:]
+    /// When each turn's hold through a connection gap began; a turn held past `awaitingWindow` is dropped.
+    @ObservationIgnored private var heldSince: [String: ContinuousClock.Instant] = [:]
     @ObservationIgnored private let cache: ConversationCache
     @ObservationIgnored private let storage: any PairingStorage
     @ObservationIgnored private let migration: PairingMigration.State
@@ -100,8 +102,14 @@ final class AppModel {
     private static let logger = Logger(subsystem: "to.yumi.yorozu", category: "Demo")
     private static let connectionLog = Logger(subsystem: "to.yumi.yorozu", category: "Connection")
 
-    static let typingTimeout: Duration = .seconds(30)
-    static let stallTimeout: Duration = .seconds(5 * 60)
+    /// Turn timing; tests shorten these, production keeps the defaults.
+    @ObservationIgnored var typingTimeout: Duration = .seconds(30)
+    @ObservationIgnored var stallTimeout: Duration = .seconds(5 * 60)
+    @ObservationIgnored var awaitingWindow: Int64 = 10 * 60 * 1000
+    /// Milliseconds since 1970; tests set the time.
+    @ObservationIgnored var now: () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }
+    /// Monotonic time for how long a turn is held; tests set it.
+    @ObservationIgnored var clock: () -> ContinuousClock.Instant = { .now }
     static let requestTimeout: Duration = .seconds(30)
 
     typealias Transport = @MainActor (Pairing, PeerInfo) throws -> any ClientTransport
@@ -243,6 +251,7 @@ final class AppModel {
         guard !isDemo else { return }
         pendingPairing = nil
         disconnect()
+        clearTurns()
         if let room = pairing?.pairing.roomId { forgetDirectPath(room: room) }
         cache.wipe()
         AttachmentFiles.wipe()
@@ -293,7 +302,7 @@ final class AppModel {
         pairing = nil
         pairingSaveError = nil
         conversations = [:]
-        typing = []
+        clearTurns()
         unplacedReads = [:]
         updateBadge()
         crons = nil
@@ -354,13 +363,19 @@ final class AppModel {
         for conversation in cache.loadAll() { conversations[conversation.id] = conversation }
     }
 
-    private func resetTransientState() {
+    /// Typing and stalls with their timers, so a late timeout can't bring either back.
+    private func clearTurns() {
         for timer in typingTimers.values { timer.cancel() }
         typingTimers = [:]
         typing = []
+        heldSince = [:]
         for timer in stallTimers.values { timer.cancel() }
         stallTimers = [:]
         stalled = []
+    }
+
+    private func resetTransientState() {
+        clearTurns()
         inFlightTimer?.cancel()
         inFlightTimer = nil
         queue = RequestQueue()
@@ -610,7 +625,10 @@ final class AppModel {
         case .state(let new):
             Self.connectionLog.info("state \(String(describing: new), privacy: .public)")
             state = new
-            if new != .ready { transfers.sessionLost() }
+            if new != .ready {
+                transfers.sessionLost()
+                for convId in typing { holdTyping(convId) }
+            }
             outageMemory.apply(new)
             switch new {
             case .pairingFailed:
@@ -636,6 +654,8 @@ final class AppModel {
             if pairing?.unversionedWire != unversionedWire { updatePairing { $0.unversionedWire = unversionedWire } }
             hostInfo = host
             sessionsOpened += 1
+            // Turns held through the gap get one timeout to send a keepalive; silence then ends them.
+            for convId in typing { setTyping(convId, true) }
             transfers.resumable = host.capabilities.contains(Attachment.resumeCapability)
             if !paired { updatePairing { $0.paired = true; $0.pairedAt = Date(); $0.pairing.secret = nil } }
             requestNotifications()
@@ -682,7 +702,7 @@ final class AppModel {
         guard !isDemo || attachments.isEmpty else { return }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !attachments.isEmpty, WireEvent.isId(convId), WireEvent.isId(messageId) else { return }
-        var item = ChatItem(id: messageId, kind: .user, text: text, ts: Self.now, status: .queued,
+        var item = ChatItem(id: messageId, kind: .user, text: text, ts: now(), status: .queued,
             attachments: attachments.isEmpty ? nil : attachments, replyTo: target.map { ReplyTo(messageId: $0.id, text: $0.summary) })
         if attachments.count > Attachment.maxPerMessage {
             item.rejected = String(localized: "A message can carry up to \(Attachment.maxPerMessage) attachments.")
@@ -838,7 +858,7 @@ final class AppModel {
             let text = error.code == "run_failed"
                 ? String(localized: "The agent run failed: \(error.message)")
                 : String(localized: "The host couldn’t handle this: \(error.message)")
-            append(ChatItem(id: id, kind: .error, text: text, ts: Self.now), to: convId)
+            append(ChatItem(id: id, kind: .error, text: text, ts: now()), to: convId)
             setTyping(convId, false)
         case .convList(let list):
             guard let summaries = list.conversations else { return }
@@ -989,7 +1009,7 @@ final class AppModel {
 
     private func history(_ page: History) {
         guard WireEvent.isId(page.convId) else { return }
-        let now = Self.now
+        let now = self.now()
         var conversation = conversations[page.convId] ?? Conversation(id: page.convId, createdAt: now, updatedAt: 0,
             read: unplacedReads.removeValue(forKey: page.convId))
         conversation.merge(page.items.map(ChatItem.init))
@@ -1048,7 +1068,7 @@ final class AppModel {
 
     private func append(_ item: ChatItem, to convId: String) {
         guard WireEvent.isId(convId) else { return }
-        let now = Self.now
+        let now = self.now()
         var conversation = conversations[convId]
             ?? Conversation(id: convId, createdAt: now, updatedAt: now, read: unplacedReads.removeValue(forKey: convId))
         guard !conversation.items.contains(where: { $0.id == item.id }) else { return }
@@ -1061,7 +1081,7 @@ final class AppModel {
         let id = "tools:\(tool.messageId)"
         var conversation = conversations[tool.convId]
         if conversation?.items.contains(where: { $0.id == id }) != true {
-            append(ChatItem(id: id, kind: .tools, text: "", ts: Self.now, tools: []), to: tool.convId)
+            append(ChatItem(id: id, kind: .tools, text: "", ts: now(), tools: []), to: tool.convId)
             conversation = conversations[tool.convId]
         }
         guard var conversation, let index = conversation.items.firstIndex(where: { $0.id == id }) else { return }
@@ -1100,7 +1120,7 @@ final class AppModel {
                 do {
                     files.append(try AttachmentStaging.stage(file: folder.appending(path: name), limit: mediaMaxBytes))
                 } catch {
-                    append(ChatItem(id: "error:\(messageId)", kind: .error, text: error.localizedDescription, ts: Self.now), to: convId)
+                    append(ChatItem(id: "error:\(messageId)", kind: .error, text: error.localizedDescription, ts: now()), to: convId)
                     continue
                 }
             }
@@ -1124,15 +1144,13 @@ final class AppModel {
     /// Conversations whose turn has no answer yet: the agent is typing, or the owner's last message went
     /// out in the last `awaitingWindow` with nothing after it.
     var awaitingReply: [String] {
-        let since = Self.now - Self.awaitingWindow
+        let since = now() - awaitingWindow
         return conversations.values.filter { conversation in
             if typing.contains(conversation.id) { return true }
             guard let last = conversation.items.last(where: { $0.kind != .tools }), last.kind == .user, last.rejected == nil else { return false }
             return (last.status ?? .queued) >= .sending && last.ts >= since
         }.map(\.id)
     }
-
-    private static let awaitingWindow: Int64 = 10 * 60 * 1000
 
     /// The widgets' snapshot (`WidgetSnapshot`); nothing in demo mode or before pairing.
     func publishWidgets() {
@@ -1176,7 +1194,7 @@ final class AppModel {
     }
 
     func setPinned(_ convId: String, _ pinned: Bool) {
-        patch(ConvPatch(convId: convId, pinned: pinned)) { $0.pinnedAt = pinned ? $0.pinnedAt ?? Self.now : nil }
+        patch(ConvPatch(convId: convId, pinned: pinned)) { $0.pinnedAt = pinned ? $0.pinnedAt ?? self.now() : nil }
     }
 
     @discardableResult
@@ -1203,7 +1221,7 @@ final class AppModel {
     private func apply(_ update: ConvUpdate) {
         if update.deleted == true { return forget(update.convId) }
         var conversation = conversations[update.convId]
-            ?? Conversation(id: update.convId, createdAt: Self.now, updatedAt: Self.now, read: unplacedReads.removeValue(forKey: update.convId))
+            ?? Conversation(id: update.convId, createdAt: now(), updatedAt: now(), read: unplacedReads.removeValue(forKey: update.convId))
         conversation.title = update.title
         conversation.archived = update.archived == true ? true : nil
         conversation.pinnedAt = update.pinnedAt
@@ -1303,17 +1321,44 @@ final class AppModel {
         typingTimers[convId] = nil
         guard active else {
             typing.remove(convId)
+            heldSince[convId] = nil
             stallTimers.removeValue(forKey: convId)?.cancel()
             stalled.remove(convId)
             return
         }
         typing.insert(convId)
+        heldSince[convId] = nil
         if stallTimers[convId] == nil { progressed(convId) }
+        armTypingTimer(convId)
+    }
+
+    private func armTypingTimer(_ convId: String) {
+        typingTimers[convId]?.cancel()
+        let timeout = typingTimeout
         typingTimers[convId] = Task { [weak self] in
-            try? await Task.sleep(for: Self.typingTimeout)
+            try? await Task.sleep(for: timeout)
             guard !Task.isCancelled else { return }
-            self?.setTyping(convId, false)
+            self?.typingTimerFired(convId)
         }
+    }
+
+    /// No keepalive can arrive without a session, so a turn is held through a gap, up to `awaitingWindow` from the gap's start.
+    func typingTimerFired(_ convId: String) {
+        guard typing.contains(convId) else { return }
+        if state != .ready, clock() - holdTyping(convId) < .milliseconds(awaitingWindow) {
+            armTypingTimer(convId)
+        } else {
+            setTyping(convId, false)
+        }
+    }
+
+    /// When the turn's hold began; the first call in a gap starts it, later ones keep it.
+    @discardableResult
+    private func holdTyping(_ convId: String) -> ContinuousClock.Instant {
+        if let since = heldSince[convId] { return since }
+        let since = clock()
+        heldSince[convId] = since
+        return since
     }
 
     /// Restarts the stall clock of a running turn; typing keepalives alone don't count as progress.
@@ -1321,14 +1366,18 @@ final class AppModel {
         guard typing.contains(convId) else { return }
         stallTimers[convId]?.cancel()
         stalled.remove(convId)
+        let timeout = stallTimeout
         stallTimers[convId] = Task { [weak self] in
-            try? await Task.sleep(for: Self.stallTimeout)
+            try? await Task.sleep(for: timeout)
             guard !Task.isCancelled else { return }
-            self?.stalled.insert(convId)
+            self?.stallTimerFired(convId)
         }
     }
 
-    private static var now: Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
+    func stallTimerFired(_ convId: String) {
+        guard typing.contains(convId) else { return }
+        stalled.insert(convId)
+    }
 }
 
 extension RelayConnection.State {
