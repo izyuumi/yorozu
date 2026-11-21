@@ -22,6 +22,89 @@ import YorozuWire
     private func openFirstSession() async throws -> AppModel { try await harness.openFirstSession() }
     private func stored() -> Pairing? { harness.stored() }
 
+    private func macAddCode(box: UInt8 = 1) -> DeviceCode {
+        let key = Data(repeating: 7, count: 32).base64URLEncodedString()
+        return DeviceCode(relayUrl: "wss://relay.example/ws",
+            box: Data(repeating: box, count: 16).base64URLEncodedString(), key: key, name: "Mac")
+    }
+
+    private func hostLink() -> String {
+        let key = Data(repeating: 7, count: 32).base64URLEncodedString()
+        return "yorozu://pair?v=3&relay=wss://relay.example/ws&key=\(key)&token=tok&room=room&secret=sec"
+    }
+
+    @Test func aPendingHostPairingHidesTheDeviceCode() {
+        let model = makeModel()
+        let code = macAddCode()
+        model.deviceCode = code
+
+        #expect(model.submit(hostLink()) == nil)
+        #expect(model.pendingPairing != nil)
+        #expect(model.deviceCode == code)
+        #expect(!model.showsDeviceCode)
+    }
+
+    @Test func cancellingAPastedHostPairingShowsTheDeviceCodeAgain() {
+        let model = makeModel()
+        let code = macAddCode()
+        model.deviceCode = code
+
+        #expect(model.submit(hostLink()) == nil)
+        #expect(model.pendingPairing != nil)
+        #expect(model.deviceCode == code)
+        #expect(!model.showsDeviceCode)
+        model.dismissPendingPairing()
+        #expect(model.pendingPairing == nil)
+        #expect(model.deviceCode == code)
+        #expect(model.showsDeviceCode)
+    }
+
+    @Test func aDroppedMailboxLetterMintsAFreshCodeOncePendingClears() {
+        let original = macAddCode(box: 1)
+        var offer = DeviceCodeOffer(code: original)
+        #expect(offer.isVisible(pendingHostPairing: false, connecting: false))
+        #expect(!offer.isVisible(pendingHostPairing: true, connecting: false))
+        #expect(offer.code == original)
+        #expect(!offer.shouldMint(pendingHostPairing: true, connecting: false))
+
+        offer.letterDropped()
+        #expect(!offer.shouldMint(pendingHostPairing: true, connecting: false))
+        #expect(!offer.isVisible(pendingHostPairing: true, connecting: false))
+        #expect(offer.shouldMint(pendingHostPairing: false, connecting: false))
+
+        let fresh = macAddCode(box: 2)
+        offer.code = fresh
+        offer.spent = false
+        #expect(offer.code != original)
+        #expect(offer.isVisible(pendingHostPairing: false, connecting: false))
+        #expect(!offer.shouldMint(pendingHostPairing: false, connecting: false))
+    }
+
+    @Test func anAcceptedMailboxLetterMintsAFreshCodeOncePendingClears() {
+        let original = macAddCode(box: 1)
+        var offer = DeviceCodeOffer(code: original)
+        offer.letterReceived(accepted: true)
+        #expect(offer.spent)
+        #expect(!offer.isVisible(pendingHostPairing: true, connecting: false))
+        #expect(!offer.shouldMint(pendingHostPairing: true, connecting: false))
+        #expect(offer.shouldMint(pendingHostPairing: false, connecting: false))
+
+        let fresh = macAddCode(box: 2)
+        offer.code = fresh
+        offer.spent = false
+        #expect(offer.code != original)
+        #expect(offer.isVisible(pendingHostPairing: false, connecting: false))
+        #expect(!offer.shouldMint(pendingHostPairing: false, connecting: false))
+    }
+
+    @Test func aDeviceCodeWithoutAKeyIsMintedAgain() {
+        let leftover = macAddCode()
+        let offer = DeviceCodeOffer(code: leftover)
+        #expect(!offer.shouldMint(pendingHostPairing: false, connecting: false, hasKey: true))
+        #expect(offer.shouldMint(pendingHostPairing: false, connecting: false, hasKey: false))
+        #expect(!offer.shouldMint(pendingHostPairing: true, connecting: false, hasKey: false))
+    }
+
     @Test(arguments: [true, false]) func aFailedConnectKeepsTheStoredPairing(paired: Bool) throws {
         let pairing = try store(paired: paired)
         let model = makeModel()
