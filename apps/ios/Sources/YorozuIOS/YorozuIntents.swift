@@ -32,7 +32,8 @@ struct ConversationEntity: IndexedEntity {
     }
 
     func lines(matching query: String) -> [String] {
-        recentText.split(separator: "\n").map(String.init).filter { $0.localizedCaseInsensitiveContains(query) }
+        let search = ConversationSearch(query)
+        return recentText.split(separator: "\n").map(String.init).filter { search.matches(ConversationSearch.plain($0)) }
     }
 }
 
@@ -169,12 +170,9 @@ struct SearchYorozuIntent: AppIntent {
 
 extension AppModel {
     func search(_ query: String) -> [Conversation] {
-        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return [] }
-        return conversations.values.filter { conversation in
-            conversation.archived != true && (conversation.displayTitle.localizedCaseInsensitiveContains(query)
-                || conversation.items.contains { $0.summary.localizedCaseInsensitiveContains(query) })
-        }.sorted { $0.updatedAt > $1.updatedAt }
+        let search = ConversationSearch(query)
+        guard !search.isEmpty else { return [] }
+        return conversations.values.filter { $0.archived != true && search.matches($0) }.sorted { $0.updatedAt > $1.updatedAt }
     }
 }
 

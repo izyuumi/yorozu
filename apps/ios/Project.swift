@@ -237,7 +237,7 @@ let project = Project(
                 "Sources/Client/WidgetPublisher.swift", "Sources/Client/ActivityReports.swift", "Sources/Client/CronSchedule.swift",
                 "Sources/Client/ConnectionRoute.swift", "Sources/Client/LocalPairingFile.swift", "Sources/Client/PairingEntry.swift",
                 "Sources/Client/SceneLifecycle.swift", "Sources/Client/RequestQueue.swift", "Sources/Client/ConversationActions.swift",
-                "Sources/Client/ComposerFocus.swift", "Sources/Client/OutageMemory.swift",
+                "Sources/Client/ComposerFocus.swift", "Sources/Client/OutageMemory.swift", "Sources/Client/ConversationSearch.swift",
                 "Sources/WidgetShared/Model/**", "Sources/WidgetShared/Interface/WidgetLink.swift",
                 "Sources/WidgetShared/Interface/Launcher.swift", "Sources/YorozuIOS/LaunchColumns.swift", "Sources/YorozuIOS/ChatPair.swift",
                 "Sources/YorozuIOS/ComposerCursor.swift",

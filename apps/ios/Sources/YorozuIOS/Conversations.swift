@@ -18,6 +18,17 @@ struct ConversationsView: View {
     @State private var renaming: Conversation?
     @State private var newTitle = ""
     @State private var deleting: Conversation?
+    #if DEBUG
+    @State private var query = PreviewScene.searchQuery ?? ""
+    #else
+    @State private var query = ""
+    #endif
+    @State private var found: ConversationSearch.Result?
+
+    private struct SearchInput: Equatable {
+        let query: String
+        let conversations: [String: Conversation]?
+    }
 
     var body: some View {
         list.sheet(isPresented: $showingSettings) { SettingsSheet(model: model) }
@@ -78,47 +89,89 @@ struct ConversationsView: View {
                         .zoomedFont()
                 }
             }
-            if showsCrons {
-                Label(String(localized: "Automations"), systemImage: "clock").zoomedFont().tag(Pane.crons)
-            }
-            let pinned = conversations.filter { $0.pinnedAt != nil }.sorted { ($0.pinnedAt ?? 0) > ($1.pinnedAt ?? 0) }
-            if !pinned.isEmpty {
-                Section {
-                    ForEach(pinned, content: row)
-                } header: {
-                    Text("Pinned").zoomedFont(.subheadline)
-                }
-            }
-            Section {
-                ForEach(conversations.filter { $0.pinnedAt == nil }, content: row)
-            } header: {
-                if showsCrons || !pinned.isEmpty { Text("Chats").zoomedFont(.subheadline) }
-            }
-            let archived = model.archivedList
-            if !archived.isEmpty {
-                Section {
-                    Button {
-                        withAnimation { showingArchived.toggle() }
-                    } label: {
-                        Label {
-                            Text("Archived")
-                        } icon: {
-                            Image(systemName: "archivebox")
+            if let found {
+                ForEach(found.groups) { group in
+                    Section {
+                        ForEach(group.hits) { hit in
+                            Button {
+                                model.requestedMessage = hit.messageId
+                                pane.wrappedValue = .chat(hit.convId)
+                            } label: {
+                                SearchHitRow(hit: hit)
+                            }
+                            .foregroundStyle(.primary)
+                            #if os(macOS)
+                            .buttonStyle(.plain)
+                            #endif
+                            .accessibilityIdentifier("search.result.\(hit.id)")
                         }
-                        .badge(archived.count)
+                    } header: {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(group.title).lineLimit(1)
+                            if group.archived {
+                                Spacer(minLength: LayoutMetrics.inner)
+                                Label(String(localized: "Archived"), systemImage: "archivebox").textStyle(.caption)
+                            }
+                        }
+                        .zoomedFont(.subheadline)
                     }
-                    .zoomedFont()
-                    .foregroundStyle(.primary)
-                    #if os(macOS)
-                    .buttonStyle(.plain)
-                    #endif
-                    .accessibilityValue(showingArchived ? Text("Shown") : Text("Hidden"))
-                    .accessibilityIdentifier("conversations.archived")
-                    if showingArchived { ForEach(archived, content: row) }
+                }
+            } else {
+                if showsCrons {
+                    Label(String(localized: "Automations"), systemImage: "clock").zoomedFont().tag(Pane.crons)
+                }
+                let pinned = conversations.filter { $0.pinnedAt != nil }.sorted { ($0.pinnedAt ?? 0) > ($1.pinnedAt ?? 0) }
+                if !pinned.isEmpty {
+                    Section {
+                        ForEach(pinned, content: row)
+                    } header: {
+                        Text("Pinned").zoomedFont(.subheadline)
+                    }
+                }
+                Section {
+                    ForEach(conversations.filter { $0.pinnedAt == nil }, content: row)
+                } header: {
+                    if showsCrons || !pinned.isEmpty { Text("Chats").zoomedFont(.subheadline) }
+                }
+                let archived = model.archivedList
+                if !archived.isEmpty {
+                    Section {
+                        Button {
+                            withAnimation { showingArchived.toggle() }
+                        } label: {
+                            Label {
+                                Text("Archived")
+                            } icon: {
+                                Image(systemName: "archivebox")
+                            }
+                            .badge(archived.count)
+                        }
+                        .zoomedFont()
+                        .foregroundStyle(.primary)
+                        #if os(macOS)
+                        .buttonStyle(.plain)
+                        #endif
+                        .accessibilityValue(showingArchived ? Text("Shown") : Text("Hidden"))
+                        .accessibilityIdentifier("conversations.archived")
+                        if showingArchived { ForEach(archived, content: row) }
+                    }
                 }
             }
         }
         .font(nil)
+        .searchable(text: $query, prompt: Text("Search Conversations"))
+        .task(id: SearchInput(query: query, conversations: ConversationSearch(query).isEmpty ? nil : model.conversations)) {
+            let search = ConversationSearch(query)
+            guard !search.isEmpty else {
+                found = nil
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled else { return }
+            let conversations = Array(model.conversations.values)
+            let result = await Task.detached(priority: .userInitiated) { search.run(conversations) }.value
+            if !Task.isCancelled { found = result }
+        }
         .alert(String(localized: "Rename Conversation"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }),
             presenting: renaming) { conversation in
             TextField(String(localized: "Title"), text: $newTitle)
@@ -140,7 +193,9 @@ struct ConversationsView: View {
             Text("It is deleted on the host and on every device, with its history.")
         }
         .overlay {
-            if conversations.isEmpty && model.archivedList.isEmpty {
+            if let found {
+                if found.groups.isEmpty { ContentUnavailableView.search(text: query).zoomedFont() }
+            } else if conversations.isEmpty && model.archivedList.isEmpty {
                 ContentUnavailableView {
                     Label("No conversations yet", systemImage: "bubble.left.and.bubble.right").zoomedFont(.title3)
                 } description: {
@@ -303,9 +358,36 @@ private struct ConversationRow: View {
         return conversation.unreadCount > 0 ? .blue : nil
     }
 
-    private static func time(_ ms: Int64) -> String {
+    static func time(_ ms: Int64) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000)
         return Calendar.current.isDateInToday(date) ? date.formatted(date: .omitted, time: .shortened) : date.formatted(date: .abbreviated, time: .omitted)
+    }
+}
+
+private struct SearchHitRow: View {
+    let hit: ConversationSearch.Hit
+    @Environment(\.accent) private var accent
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(snippet).lineLimit(2)
+            Spacer(minLength: LayoutMetrics.inner)
+            Text(ConversationRow.time(hit.ts))
+                .textStyle(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .zoomedFont()
+        .accessibilityElement(children: .combine)
+    }
+
+    private var snippet: AttributedString {
+        var text = AttributedString(hit.snippet)
+        for range in hit.highlights {
+            guard let range = Range(range, in: text) else { continue }
+            text[range].inlinePresentationIntent = .stronglyEmphasized
+            text[range].foregroundColor = accent.tint
+        }
+        return text
     }
 }
 

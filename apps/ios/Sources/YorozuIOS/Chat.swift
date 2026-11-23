@@ -92,6 +92,11 @@ struct ChatView: View {
             try? await Task.sleep(for: .seconds(1.5))
             withAnimation { highlighted = nil }
         }
+        .task(id: model.requestedMessage) {
+            guard let id = model.requestedMessage, items.contains(where: { $0.id == id }) else { return }
+            model.requestedMessage = nil
+            show(id)
+        }
         .onChange(of: typing) { if atBottom { scrollToEnd() } }
         .onAppear {
             model.markRead(convId, explicit: true)
