@@ -139,20 +139,21 @@ test("H2 3: a 2xx without run_id is bad_response", async (t) => {
     errorOf("http", "POST", runs, 202, "bad_response"));
 });
 
-test("H2 4: status maps the recorded failed run", async (t) => {
+test("H2 4: status maps the recorded failed run with empty usage as undefined", async (t) => {
   const server = await fakeHermes(t, [{ method: "GET", path: run, reply: { fixture: "10-run-status" } }]);
   const recorded = JSON.parse(readFileSync(new URL("10-run-status.body", fixtureDir), "utf8"));
-  assert.deepEqual(await client(server.url).status(runId), {
+  const status = await client(server.url).status(runId);
+  assert.equal(status.usage, undefined);
+  assert.deepEqual(status, {
     status: "failed",
     admissionId: "admission_fixture_01",
     generation: 1,
     output: recorded.output,
-    usage: {},
     pendingControls: [],
   });
 });
 
-test("H2 4/6: a recorded pending approval maps the prompt ID and command and sends the recorded deny body", async (t) => {
+test("H2 4/6: a recorded pending approval maps the prompt ID and description and sends the recorded deny body", async (t) => {
   const id = "run_6a1f4c2ee8664c2cacb6fd94c92a1131";
   const path = runs + "/" + id;
   const recording = (name: string) => readFileSync(new URL("307-" + name, fixtureDir), "utf8");
@@ -167,7 +168,7 @@ test("H2 4/6: a recorded pending approval maps the prompt ID and command and sen
   assert.deepEqual(status.pendingControls, [{
     id: "56736a710b5b46fc954e460ecfe47c2c",
     kind: "approval",
-    tool: "chmod 777 /tmp/yorozu-h0-x",
+    tool: "world/other-writable permissions",
   }]);
   await hermes.deny(id, status.pendingControls[0]!.id, status.generation);
   assert.deepEqual(JSON.parse((await server.request(2)).body.toString()), JSON.parse(recording("deny.request")));

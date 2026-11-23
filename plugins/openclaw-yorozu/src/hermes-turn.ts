@@ -402,6 +402,11 @@ async function byStatus(
   }
 }
 
+function deniedLabel(label: string | undefined, apiKey: string): string {
+  const text = redact(label ?? "", apiKey).replace(/\s+/g, " ").trim();
+  return text.length > 120 ? `${text.slice(0, 119)}…` : text || "a tool";
+}
+
 async function approve(r: Run, run?: RunStatus): Promise<"ended" | "open"> {
   const { client, log } = r.deps;
   const failed = async () => {
@@ -412,7 +417,7 @@ async function approve(r: Run, run?: RunStatus): Promise<"ended" | "open"> {
   let current = run;
   try {
     current ??= await live(r, () => client.status(r.runId));
-    r.tally.usage = current.usage;
+    r.tally.usage = current.usage ?? r.tally.usage;
   } catch (error) {
     log?.warn(`yorozu: hermes approval not read ${r.runId}: ${tagOf(error)}`);
     return failed();
@@ -429,7 +434,7 @@ async function approve(r: Run, run?: RunStatus): Promise<"ended" | "open"> {
       return failed();
     }
     r.deniedIds.add(control.id);
-    r.denied.push(`Denied: ${redact(control.tool ?? "a tool", r.deps.apiKey)} needed an approval Yorozu can't show yet.`);
+    r.denied.push(`Denied: ${deniedLabel(control.tool, r.deps.apiKey)} needed an approval Yorozu can't show yet.`);
   }
   return "open";
 }
@@ -531,7 +536,7 @@ async function attach(r: Run): Promise<void> {
         return;
       }
       if (run === CAP) return await capped();
-      r.tally.usage = run.usage;
+      r.tally.usage = run.usage ?? r.tally.usage;
       const approvals = run.pendingControls.some((control) => control.kind === APPROVAL_KIND && !r.deniedIds.has(control.id));
       const approved = approvals ? await within(approve(r, run)) : "open";
       if (approved === CAP) return await capped();

@@ -71,7 +71,7 @@ export function mapRunUsage(value: unknown): RunStatus["usage"] {
   if (typeof usage.input_tokens === "number") result.inputTokens = usage.input_tokens;
   if (typeof usage.output_tokens === "number") result.outputTokens = usage.output_tokens;
   if (typeof usage.total_tokens === "number") result.totalTokens = usage.total_tokens;
-  return result;
+  return Object.keys(result).length ? result : undefined;
 }
 
 function mapStatus(data: Record<string, unknown>, status: string): RunStatus {
@@ -87,7 +87,7 @@ function mapStatus(data: Record<string, unknown>, status: string): RunStatus {
       if (typeof control?.kind !== "string") continue;
       const id = string(control.prompt_id) ?? string(control.request_id);
       if (id === undefined) continue;
-      const tool = string(control.command) ?? string(control.description) ?? string(control.tool);
+      const tool = string(control.description) ?? string(control.command) ?? string(control.tool);
       run.pendingControls.push({ id, kind: control.kind, ...(tool !== undefined && { tool }) });
     }
   }
