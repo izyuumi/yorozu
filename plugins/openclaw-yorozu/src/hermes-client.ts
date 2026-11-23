@@ -38,6 +38,7 @@ const RUNS = "/v1/runs";
 const TERMINAL = new Set(["run.completed", "run.failed", "run.cancelled", "run.interrupted"]);
 const runPath = (runId: string): string => RUNS + "/" + encodeURIComponent(runId);
 type Method = "GET" | "POST";
+const LOOPBACK = new Set(["127.0.0.1", "[::1]", "localhost"]);
 
 function object(value: unknown): Record<string, unknown> | undefined {
   if (value !== null && typeof value === "object" && !Array.isArray(value)) {
@@ -89,6 +90,9 @@ export function createHermesClient(
   { url, key }: { url: URL; key: string },
   { timeoutMs = 30_000, idleMs = 60_000 }: { timeoutMs?: number; idleMs?: number } = {},
 ): HermesClient {
+  if (url.protocol !== "http:" || !LOOPBACK.has(url.hostname) || url.username || url.password) {
+    throw new Error("The Hermes base URL must be http on loopback (127.0.0.1, [::1] or localhost).");
+  }
   function failure(kind: HermesErrorKind, method: Method, path: string, status?: number, code?: string): HermesError {
     const safePath = key ? path.replaceAll(encodeURIComponent(key), "[redacted]") : path;
     const safeCode = key && code?.includes(key) ? undefined : code;

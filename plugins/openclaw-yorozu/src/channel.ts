@@ -15,7 +15,7 @@ import { chunkMarkdownText } from "openclaw/plugin-sdk/reply-runtime";
 import { resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
 import { channelReadyPatch, channelStoppedPatch } from "openclaw/plugin-sdk/gateway-runtime";
 import { loadAttachmentIndex, mediaMaxBytes } from "./attachments.js";
-import { resolveHermesBackend } from "./backends.js";
+import { hermesKeys, hermesSection, openHermesState, resolveHermesBackend, warnBackendClaims } from "./backends.js";
 import { channelCard, MESSAGE_TOOL_HINTS, PRESENTATION_CAPABILITIES, renderedPayload } from "./cards.js";
 import {
   DEFAULT_CHUNK_LIMIT,
@@ -33,12 +33,13 @@ import { isId } from "./envelope.js";
 import { answerRequest } from "./history.js";
 import { listCronJobs } from "./cron.js";
 import { DIRECT_PORT } from "./direct.js";
+import { hermesClients, routedRerun, routeMessage, type HermesDeps } from "./hermes-turn.js";
 import { loadHostKeys } from "./keys.js";
 import { notifyReply, runRelayHost } from "./relay.js";
 import { loadMessageTimes } from "./activity.js";
 import { loadReactions, reactionActions, userReaction } from "./reactions.js";
 import { loadReplies } from "./replies.js";
-import { runParked } from "./retry.js";
+import { park, runParked } from "./retry.js";
 import { openLedger } from "./runs.js";
 import { yorozuRuntime } from "./runtime.js";
 import { applyPatch, setThreadBase, watchSessions } from "./sessions.js";
@@ -98,7 +99,6 @@ const deliveryReplyTo = (cfg: OpenClawConfig, threadId?: string | number | null,
 async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<void> {
   const { account, abortSignal } = ctx;
   outboundLog = ctx.log;
-  resolveHermesBackend(ctx.cfg, ctx.log);
   const route = resolveOwnerRoute(ctx.cfg, account.agent, account.accountId);
   const agent = route.agentId;
   setThreadBase(agent, route.sessionKey);
@@ -113,7 +113,18 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
   ctx.setStatus({ accountId: account.accountId, running: true, connected: false, lifecycle: "starting" });
   watchSessions(agent, abortSignal, ctx.log);
   const turn = { cfg: ctx.cfg, accountId: account.accountId, log: ctx.log, agent, mediaMaxBytes: maxBytes, presentationSdk };
-  runParked(abortSignal, (message, attempt) => void handleMessage(turn, message, attempt));
+  const hermesCfg = hermesSection(ctx.cfg);
+  const hermes = resolveHermesBackend(ctx.cfg, ctx.log);
+  if (hermesCfg) void warnBackendClaims(ctx.cfg, ctx.log);
+  const hermesKeyStore = hermesCfg ? hermesKeys() : undefined;
+  const state = hermes && (await openHermesState(ctx.log));
+  const deps: HermesDeps | undefined = hermes && hermesKeyStore && state
+    ? { client: hermesClients.create(hermes), apiKey: hermes.key, state, keys: hermesKeyStore, turn, park, log: ctx.log }
+    : undefined;
+  runParked(abortSignal, (message, attempt) =>
+    void (hermesKeyStore
+      ? routedRerun({ keys: hermesKeyStore, turn, deps, log: ctx.log }, message, attempt)
+      : handleMessage(turn, message, attempt)));
   void announceGatewayState(turn, agent).catch((error: unknown) => ctx.log?.warn?.(`yorozu: gateway notice failed: ${String(error)}`));
   try {
     await runRelayHost({
@@ -127,7 +138,7 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
       ...(account.directPort !== null && { directPort: account.directPort }),
       directBonjour: account.directBonjour,
       claim,
-      onMessage: (message) => void handleMessage(turn, message),
+      onMessage: (message) => void (deps ? routeMessage(deps, message) : handleMessage(turn, message)),
       liveTurn,
       onReaction: (reaction) => {
         const { sessionKey } = resolveThreadSessionKeys({ baseSessionKey: route.sessionKey, threadId: reaction.convId });
