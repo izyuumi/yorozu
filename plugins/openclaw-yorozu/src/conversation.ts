@@ -91,7 +91,7 @@ export function mediaUrls(...urls: (string | null | undefined)[]): string[] {
   return [...new Set(urls.map((url) => url?.trim()).filter((url): url is string => !!url))];
 }
 
-type TurnContext = Pick<ChannelGatewayContext, "cfg" | "accountId" | "log"> & {
+export type ConversationContext = Pick<ChannelGatewayContext, "cfg" | "accountId" | "log"> & {
   agent: string;
   mediaMaxBytes: number;
   presentationSdk: PresentationSdk;
@@ -121,7 +121,7 @@ export function liveTurn(convId: string): Readonly<LiveTurn> | undefined {
   return newest ? { ...newest } : undefined;
 }
 
-export async function handleMessage(ctx: TurnContext, message: Message, attempt = 0): Promise<void> {
+export async function handleMessage(ctx: ConversationContext, message: Message, attempt = 0): Promise<void> {
   const ledger = currentLedger();
   const owner = registerTurn(message);
   let ended: "failed" | "retrying" | undefined;
@@ -333,6 +333,87 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
       if (!terminalEmitted) activityTurn(convId, { kind: ended === "failed" ? "failed" : "settled" });
     }
   }
+}
+
+export type ExternalTurn = {
+  handing(): Promise<void>;
+  started(): void;
+  tool(callId: string, name: string, status: ToolStatus): void;
+  fail(text: string): boolean;
+  parked(): void;
+  done(): boolean;
+};
+
+export function externalTurn(_ctx: ConversationContext, message: Message, attempt: number): ExternalTurn {
+  const ledger = currentLedger();
+  const owner = registerTurn(message);
+  const { convId, messageId } = message;
+  const send = (...events: Event[]) => void broadcast(events);
+  const calls = new Set<string>();
+  let ended = false;
+  let started = false;
+  let typing = false;
+  let keepalive: ReturnType<typeof setInterval> | undefined;
+  let cap: ReturnType<typeof setTimeout> | undefined;
+  const typingOff = () => {
+    if (keepalive) clearInterval(keepalive);
+    if (cap) clearTimeout(cap);
+    keepalive = cap = undefined;
+    if (!typing) return;
+    typing = false;
+    send({ kind: "typing", data: { convId, active: false } });
+  };
+  const finish = (kind: "done" | "failed") => {
+    ended = true;
+    typingOff();
+    removeTurn(message, owner);
+    activityTurn(convId, { kind });
+    ledger?.turnEnded(messageId, convId, { parked: false, queued: false });
+  };
+  return {
+    handing: async () => {
+      if (ledger) await ledger.handing(messageId, convId);
+    },
+    started() {
+      if (ended || started) return;
+      started = true;
+      send({ kind: "run_started", data: { convId, messageId } });
+      typing = true;
+      send({ kind: "typing", data: { convId, active: true } });
+      keepalive = setInterval(() => send({ kind: "typing", data: { convId, active: true } }), TYPING_KEEPALIVE_MS);
+      cap = setTimeout(() => {
+        cap = undefined;
+        typingOff();
+      }, TYPING_MAX_MS);
+      ledger?.runStarted(messageId, attempt, false);
+    },
+    tool(callId, name, status) {
+      const n = name.trim();
+      if (ended || !callId || !n) return;
+      send({ kind: "tool", data: { convId, messageId, callId: callId.slice(0, 128), name: n.slice(0, 128), status } });
+      if (calls.has(callId)) return;
+      calls.add(callId);
+      owner.steps = calls.size;
+      activityTurn(convId, { kind: "step", steps: calls.size });
+    },
+    fail(text) {
+      if (ended) return false;
+      send({ kind: "error", data: { code: "run_failed", message: text, convId, messageId } });
+      finish("failed");
+      return true;
+    },
+    parked() {
+      if (ended) return;
+      ended = true;
+      typingOff();
+      ledger?.turnEnded(messageId, convId, { parked: true, queued: false });
+    },
+    done() {
+      if (ended) return false;
+      finish("done");
+      return true;
+    },
+  };
 }
 
 export const NO_CONVERSATION = "yorozu: no conversation reference found; a delivery needs the conversation id as threadId";

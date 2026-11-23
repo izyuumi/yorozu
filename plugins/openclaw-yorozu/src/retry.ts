@@ -16,11 +16,13 @@ export function isTemporary(error: unknown): boolean {
   );
 }
 
-export async function park(message: Message, attempt: number): Promise<boolean> {
+export async function park(message: Message, attempt: number, keep: () => boolean = () => true): Promise<boolean> {
   const delay = DELAYS_MS[attempt];
-  if (delay === undefined) return false;
+  if (delay === undefined || !keep()) return false;
   await store().register(message.messageId, { message, attempt: attempt + 1, due: Date.now() + delay });
-  return true;
+  if (keep()) return true;
+  await store().delete(message.messageId);
+  return false;
 }
 
 export function runParked(signal: AbortSignal, run: (message: Message, attempt: number) => void): void {
@@ -31,8 +33,13 @@ export function runParked(signal: AbortSignal, run: (message: Message, attempt: 
     try {
       const now = Date.now();
       for (const { value } of await store().entries()) {
+        if (signal.aborted) break;
         if (value.due > now) continue;
-        await store().delete(value.message.messageId);
+        if ((await store().delete(value.message.messageId)) === false) continue;
+        if (signal.aborted) {
+          await store().register(value.message.messageId, value);
+          break;
+        }
         run(value.message, value.attempt);
       }
     } finally {

@@ -12,16 +12,29 @@ export const host = {
   entries: undefined,
   calls: undefined,
   lookup: undefined,
+  delete: undefined,
+  batches: [],
+  batchStatus: undefined,
+  batchHold: undefined,
+  mirrors: [],
+  mirror: undefined,
+  relay: undefined,
+  rerun: undefined,
+  chatCommands: undefined,
+  skillCommands: undefined,
+  pluginMatch: undefined,
+  claimThrows: false,
 };
 
 const openKeyedStore = ({ namespace, maxEntries }) => {
   const rows = host.stores.get(namespace) ?? host.stores.set(namespace, new Map()).get(namespace);
   return {
-    register: async (key, value) => {
+    register: async (key, value, opts) => {
       if (typeof host.register === "function") await host.register(namespace, key, value);
       if (host.register === "reject") throw new Error("store down");
       if (host.register === "hang") await new Promise(() => {});
       if (host.register === "slow") await new Promise((resolve) => setImmediate(resolve));
+      opts?.assertCurrent?.();
       rows.delete(key);
       rows.set(key, value);
       const cap = host.cap ?? maxEntries;
@@ -39,8 +52,13 @@ const openKeyedStore = ({ namespace, maxEntries }) => {
       if (host.lookup === "hang" || (host.lookup === "cards-hang" && namespace === "presentations")) await new Promise(() => {});
       return rows.get(key);
     },
-    delete: async (key) => rows.delete(key),
+    delete: async (key, opts) => {
+      if (typeof host.delete === "function") await host.delete(namespace, key);
+      opts?.assertCurrent?.();
+      return rows.delete(key);
+    },
     entries: async () => {
+      if (typeof host.entries === "function") await host.entries(namespace);
       if (host.entries === "reject") throw new Error("store down");
       return [...rows].map(([key, value]) => ({ key, value }));
     },
@@ -95,8 +113,42 @@ export const channelStoppedPatch = () => ({});
 export const loadHostKeys = async () => ({ room: "room" });
 export const listCronJobs = async () => [];
 export const announceGatewayState = async () => {};
-export const runRelayHost = async () => {};
-export const runParked = () => {};
+export const runRelayHost = async (options) => {
+  host.relay = options;
+};
+export const runParked = (_signal, run) => {
+  host.rerun = run;
+};
+let batchId = 0;
+export const sendDurableMessageBatch = async (params) => {
+  host.batches.push(params);
+  if (typeof host.batchHold === "function") await host.batchHold(params);
+  return { status: host.batchStatus ?? "sent", results: [{ messageId: `batch-${++batchId}` }] };
+};
+export const appendSessionTranscriptMessageByIdentity = async (params) => {
+  host.mirrors.push(params);
+  if (host.mirror === "reject") throw new Error("mirror down");
+  if (host.mirror === "hang") await new Promise(() => {});
+  return { appended: true, message: params.message, messageId: params.message?.__openclaw?.transport?.messageId };
+};
+const claimCheck = () => {
+  if (host.claimThrows) throw Object.assign(new Error("claim check down"), { code: "CLAIM_DOWN" });
+};
+export const listSkillCommandsForAgents = () => {
+  claimCheck();
+  return host.skillCommands ?? [];
+};
+export const listChatCommands = ({ skillCommands = [] } = {}) => {
+  claimCheck();
+  return [
+    ...(host.chatCommands ?? []),
+    ...skillCommands.map((spec) => ({ key: `skill:${spec.skillName}`, nativeName: spec.name, textAliases: [`/${spec.name}`] })),
+  ];
+};
+export const matchPluginCommand = () => {
+  claimCheck();
+  return host.pluginMatch ?? null;
+};
 export const loadAttachmentIndex = async () => {};
 export const mediaMaxBytes = () => 1;
 export const loadMessageTimes = async () => {};
