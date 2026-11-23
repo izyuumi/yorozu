@@ -152,6 +152,27 @@ test("H2 4: status maps the recorded failed run", async (t) => {
   });
 });
 
+test("H2 4/6: a recorded pending approval maps the prompt ID and command and sends the recorded deny body", async (t) => {
+  const id = "run_6a1f4c2ee8664c2cacb6fd94c92a1131";
+  const path = runs + "/" + id;
+  const recording = (name: string) => readFileSync(new URL("307-" + name, fixtureDir), "utf8");
+  const server = await fakeHermes(t, [
+    { method: "GET", path, reply: { body: recording("status-pending.body") } },
+    { method: "POST", path: path + "/approval", reply: { body: recording("deny.body") } },
+  ]);
+  const hermes = client(server.url);
+  const status = await hermes.status(id);
+  assert.equal(status.status, "waiting_for_approval");
+  assert.equal(status.generation, 1);
+  assert.deepEqual(status.pendingControls, [{
+    id: "56736a710b5b46fc954e460ecfe47c2c",
+    kind: "approval",
+    tool: "chmod 777 /tmp/yorozu-h0-x",
+  }]);
+  await hermes.deny(id, status.pendingControls[0]!.id, status.generation);
+  assert.deepEqual(JSON.parse((await server.request(2)).body.toString()), JSON.parse(recording("deny.request")));
+});
+
 test("H2 4/7: an unknown run is not_found", async (t) => {
   const path = runs + "/run_does_not_exist";
   const server = await fakeHermes(t, [{ method: "GET", path, reply: { fixture: "16-run-status-unknown" } }]);
@@ -248,6 +269,5 @@ test("H2 8: fixtures contain no auth headers, keys, or personal home paths", () 
 });
 
 test.todo("H2 9: completed run usage and tool call IDs and success field (operator step 8)");
-test.todo("H2 9: approval pendingControls IDs, kinds and tools (operator step 9.3)");
 test.todo("H2 9: run.interrupted event and stream close (operator step 11)");
 test.todo("H2 9: unknown run status and resolveUnknown (operator step 11)");

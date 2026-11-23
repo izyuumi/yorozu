@@ -1,0 +1,49 @@
+: open
+
+id: 0
+data: {"event": "tool.started", "run_id": "run_6a1f4c2ee8664c2cacb6fd94c92a1131", "timestamp": 1795465939.704093, "tool": "terminal", "preview": "chmod 777 /tmp/yorozu-h0-x", "tool_call_id": "call_I3TlRQ6sE8rhcONVBi9Jsabb", "seq": 0}
+
+id: 1
+data: {"event": "approval.request", "run_id": "run_6a1f4c2ee8664c2cacb6fd94c92a1131", "timestamp": 1795465942.029483, "kind": "approval", "prompt_id": "56736a710b5b46fc954e460ecfe47c2c", "execution_generation": 1, "command": "chmod 777 /tmp/yorozu-h0-x", "description": "world/other-writable permissions", "choices": ["once", "deny", "session", "always"], "seq": 1}
+
+id: 2
+data: {"event": "approval.settled", "run_id": "run_6a1f4c2ee8664c2cacb6fd94c92a1131", "timestamp": 1795465942.57241, "prompt_id": "56736a710b5b46fc954e460ecfe47c2c", "execution_generation": 1, "seq": 2}
+
+id: 3
+data: {"event": "tool.completed", "run_id": "run_6a1f4c2ee8664c2cacb6fd94c92a1131", "timestamp": 1795465942.5805051, "tool": "terminal", "duration": 0, "error": true, "tool_call_id": "call_I3TlRQ6sE8rhcONVBi9Jsabb", "preview": "", "seq": 3}
+
+id: 4
+data: {"event": "message.delta", "run_id": "run_6a1f4c2ee8664c2cacb6fd94c92a1131", "timestamp": 1795465944.516644, "delta": "\n\nThe", "seq": 4}
+
+id: 5
+data: {"event": "message.delta", "run_id": "run_6a1f4c2ee8664c2cacb6fd94c92a1131", "timestamp": 1795465944.524616, "delta": " command", "seq": 5}
+
+id: 6
+data: {"event": "message.delta", "run_id": "run_6a1f4c2ee8664c2cacb6fd94c92a1131", "timestamp": 1795465944.5253818, "delta": " did", "seq": 6}
+
+id: 7
+data: {"event": "message.delta", "run_id": "run_6a1f4c2ee8664c2cacb6fd94c92a1131", "timestamp": 1795465944.526104, "delta": " not", "seq": 7}
+
+id: 8
+data: {"event": "message.delta", "run_id": "run_6a1f4c2ee8664c2cacb6fd94c92a1131", "timestamp": 1795465944.5299048, "delta": " run", "seq": 8}
+
+id: 9
+data: {"event": "message.delta", "run_id": "run_6a1f4c2ee8664c2cacb6fd94c92a1131", "timestamp": 1795465944.6347048, "delta": " because", "seq": 9}
+
+id: 10
+data: {"event": "message.delta", "run_id": "run_6a1f4c2ee8664c2cacb6fd94c92a1131", "timestamp": 1795465944.6350698, "delta": " approval", "seq": 10}
+
+id: 11
+data: {"event": "message.delta", "run_id": "run_6a1f4c2ee8664c2cacb6fd94c92a1131", "timestamp": 1795465944.638138, "delta": " was", "seq": 11}
+
+id: 12
+data: {"event": "message.delta", "run_id": "run_6a1f4c2ee8664c2cacb6fd94c92a1131", "timestamp": 1795465944.638309, "delta": " denied", "seq": 12}
+
+id: 13
+data: {"event": "message.delta", "run_id": "run_6a1f4c2ee8664c2cacb6fd94c92a1131", "timestamp": 1795465944.638443, "delta": ".", "seq": 13}
+
+id: 14
+data: {"event": "run.completed", "run_id": "run_6a1f4c2ee8664c2cacb6fd94c92a1131", "timestamp": 1795465944.948694, "output": "The command did not run because approval was denied.", "usage": {"input_tokens": 29777, "output_tokens": 43, "total_tokens": 29820}, "runtime": {"provider": "", "model": "", "route_source": "global"}, "completed": true, "partial": false, "interrupted": false, "seq": 14}
+
+: stream closed
+

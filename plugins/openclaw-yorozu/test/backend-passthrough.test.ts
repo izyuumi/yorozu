@@ -128,6 +128,7 @@ test("with the Hermes backend off, /backend hermes reaches the agent verbatim an
       },
     },
     plugins: { enabled: false },
+    skills: { load: { watch: false } },
   };
   await writeFile(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify(cfg, null, 2));
 

@@ -39,6 +39,7 @@ const TERMINAL = new Set(["run.completed", "run.failed", "run.cancelled", "run.i
 const runPath = (runId: string): string => RUNS + "/" + encodeURIComponent(runId);
 type Method = "GET" | "POST";
 const LOOPBACK = new Set(["127.0.0.1", "[::1]", "localhost"]);
+const string = (value: unknown) => (typeof value === "string" ? value : undefined);
 
 function object(value: unknown): Record<string, unknown> | undefined {
   if (value !== null && typeof value === "object" && !Array.isArray(value)) {
@@ -63,24 +64,31 @@ function errorKind(status: number, code: unknown): HermesErrorKind {
   return "http";
 }
 
+export function mapRunUsage(value: unknown): RunStatus["usage"] {
+  const usage = object(value);
+  if (!usage) return undefined;
+  const result: NonNullable<RunStatus["usage"]> = {};
+  if (typeof usage.input_tokens === "number") result.inputTokens = usage.input_tokens;
+  if (typeof usage.output_tokens === "number") result.outputTokens = usage.output_tokens;
+  if (typeof usage.total_tokens === "number") result.totalTokens = usage.total_tokens;
+  return result;
+}
+
 function mapStatus(data: Record<string, unknown>, status: string): RunStatus {
   const run: RunStatus = { status, pendingControls: [] };
   if (typeof data.admission_id === "string") run.admissionId = data.admission_id;
   if (typeof data.execution_generation === "number") run.generation = data.execution_generation;
   if (typeof data.output === "string") run.output = data.output;
-  const usage = object(data.usage);
-  if (usage) {
-    run.usage = {};
-    if (typeof usage.input_tokens === "number") run.usage.inputTokens = usage.input_tokens;
-    if (typeof usage.output_tokens === "number") run.usage.outputTokens = usage.output_tokens;
-    if (typeof usage.total_tokens === "number") run.usage.totalTokens = usage.total_tokens;
-  }
+  const usage = mapRunUsage(data.usage);
+  if (usage) run.usage = usage;
   if (Array.isArray(data.pending_controls)) {
     for (const item of data.pending_controls) {
       const control = object(item);
-      if (typeof control?.request_id !== "string" || typeof control.kind !== "string") continue;
-      const { request_id: id, kind, tool } = control;
-      run.pendingControls.push({ id, kind, ...(typeof tool === "string" && { tool }) });
+      if (typeof control?.kind !== "string") continue;
+      const id = string(control.prompt_id) ?? string(control.request_id);
+      if (id === undefined) continue;
+      const tool = string(control.command) ?? string(control.description) ?? string(control.tool);
+      run.pendingControls.push({ id, kind: control.kind, ...(tool !== undefined && { tool }) });
     }
   }
   return run;
