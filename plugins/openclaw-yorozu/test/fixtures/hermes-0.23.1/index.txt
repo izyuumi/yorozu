@@ -1,0 +1,19 @@
+session_id=yorozu-fixture-session messageId=fixture-message-01
+01-caps-nokey GET /v1/capabilities (no key) -> 401
+02-health GET /health -> 200
+03-health-detailed GET /health/detailed -> 200
+04-capabilities GET /v1/capabilities -> 200
+05-models GET /v1/models -> 200
+06-toolsets GET /v1/toolsets -> 200
+07-sessions-list GET /api/sessions -> 200
+08-run-create POST /v1/runs -> 202
+run_id=run_fixture_01
+09-run-events GET /v1/runs/{id}/events (SSE, 25 s cap) -> exit 0
+10-run-status GET /v1/runs/run_fixture_01 -> 200
+11-run-replay-same POST /v1/runs -> 202
+12-run-replay-diffbody POST /v1/runs -> 409
+13-run-next-attempt POST /v1/runs -> 202
+14-session-get GET /api/sessions/yorozu-fixture-session -> 200
+15-session-messages GET /api/sessions/yorozu-fixture-session/messages?include_compacted=true -> 200
+16-run-status-unknown GET /v1/runs/run_does_not_exist -> 404
+17-session-unknown GET /api/sessions/yorozu-fixture-missing -> 404
