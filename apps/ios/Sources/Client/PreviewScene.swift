@@ -9,7 +9,7 @@ import UIKit
 enum PreviewScene: String {
     case hook, lockscreen, approve, talk, list
     case needsYou = "needs-you"
-    case genui
+    case genui, search
 
     var locked: Bool { self == .lockscreen || self == .needsYou }
 
@@ -70,6 +70,8 @@ enum PreviewScene: String {
         """
         return (try? JSONDecoder().decode(History.self, from: Data(json.utf8)))?.items
     }
+
+    static var searchQuery: String? { current == .search ? (ja ? "週末" : "weekend") : nil }
 
     private static var ask: String { ja ? "昨夜のバックアップは終わった？" : "Did last night’s backup finish?" }
     private static var goAhead: String { ja ? "お願い" : "Go ahead" }
@@ -142,7 +144,7 @@ enum PreviewScene: String {
                 #endif
             case .genui:
                 model.requestedConversation = Self.cardID
-            case .list:
+            case .list, .search:
                 break
             }
         }
