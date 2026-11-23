@@ -38,6 +38,16 @@ async function collect(events: AsyncIterable<RunEvent>): Promise<RunEvent[]> {
   return received;
 }
 
+test("H2: the client accepts only an http loopback base URL", () => {
+  for (const base of ["http://127.0.0.1:8652", "http://[::1]:8652", "http://localhost", "http://LOCALHOST:1/"]) {
+    assert.doesNotThrow(() => createHermesClient({ url: new URL(base), key }), base);
+  }
+  for (const base of ["https://127.0.0.1:8652", "http://10.0.0.5:8652", "http://example.com", "http://127.0.0.2",
+    "http://localhost.example.com", "http://user:pass@127.0.0.1:8652"]) {
+    assert.throws(() => createHermesClient({ url: new URL(base), key }), /loopback/, base);
+  }
+});
+
 test("H2 1/7: a closed port is unavailable", async (t) => {
   const server = await fakeHermes(t, []);
   await server.close();
