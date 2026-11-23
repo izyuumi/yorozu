@@ -78,9 +78,35 @@ struct ConversationSearch: Sendable {
         !terms.isEmpty && terms.allSatisfy { Self.find($0, in: text) != nil }
     }
 
+    func matchesAny(_ text: String) -> Bool {
+        terms.contains { Self.find($0, in: text) != nil }
+    }
+
+    static func text(of item: ChatItem) -> String? {
+        switch item.kind {
+        case .user: item.summary
+        case .agent: plain(item.summary)
+        default: nil
+        }
+    }
+
+    static func revision(_ conversations: some Sequence<Conversation>) -> Int {
+        conversations.reduce(0) { total, conversation in
+            var hasher = Hasher()
+            hasher.combine(conversation.id)
+            hasher.combine(conversation.updatedAt)
+            hasher.combine(conversation.items.count)
+            hasher.combine(conversation.items.last?.id)
+            hasher.combine(conversation.items.last?.text.count)
+            hasher.combine(conversation.title)
+            hasher.combine(conversation.archived)
+            return total &+ hasher.finalize()
+        }
+    }
+
     func matches(_ conversation: Conversation) -> Bool {
         matches(conversation.displayTitle) || conversation.items.contains { item in
-            (item.kind == .user || item.kind == .agent) && matches(Self.plain(item.summary))
+            Self.text(of: item).map(matches) ?? false
         }
     }
 
@@ -88,12 +114,12 @@ struct ConversationSearch: Sendable {
         guard !terms.isEmpty else { return Result() }
         var result = Result()
         for conversation in conversations {
+            guard !Task.isCancelled else { break }
             let title = conversation.displayTitle
             let archived = conversation.archived == true
             var hits: [Hit] = []
-            for item in conversation.items.reversed() where item.kind == .user || item.kind == .agent {
-                let text = Self.plain(item.summary)
-                guard matches(text) else { continue }
+            for item in conversation.items.reversed() {
+                guard let text = Self.text(of: item), matches(text) else { continue }
                 guard hits.count < perConversation else {
                     result.truncated = true
                     break

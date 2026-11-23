@@ -24,10 +24,11 @@ struct ConversationsView: View {
     @State private var query = ""
     #endif
     @State private var found: ConversationSearch.Result?
+    @State private var foundQuery = ""
 
     private struct SearchInput: Equatable {
         let query: String
-        let conversations: [String: Conversation]?
+        let revision: Int?
     }
 
     var body: some View {
@@ -94,7 +95,7 @@ struct ConversationsView: View {
                     Section {
                         ForEach(group.hits) { hit in
                             Button {
-                                model.requestedMessage = hit.messageId
+                                model.requestedMessage = hit.messageId.map { AppModel.MessageRequest(convId: hit.convId, messageId: $0) }
                                 pane.wrappedValue = .chat(hit.convId)
                             } label: {
                                 SearchHitRow(hit: hit)
@@ -160,7 +161,7 @@ struct ConversationsView: View {
         }
         .font(nil)
         .searchable(text: $query, prompt: Text("Search Conversations"))
-        .task(id: SearchInput(query: query, conversations: ConversationSearch(query).isEmpty ? nil : model.conversations)) {
+        .task(id: SearchInput(query: query, revision: ConversationSearch(query).isEmpty ? nil : ConversationSearch.revision(model.conversations.values))) {
             let search = ConversationSearch(query)
             guard !search.isEmpty else {
                 found = nil
@@ -169,8 +170,11 @@ struct ConversationsView: View {
             try? await Task.sleep(for: .milliseconds(200))
             guard !Task.isCancelled else { return }
             let conversations = Array(model.conversations.values)
-            let result = await Task.detached(priority: .userInitiated) { search.run(conversations) }.value
-            if !Task.isCancelled { found = result }
+            let worker = Task.detached(priority: .userInitiated) { search.run(conversations) }
+            let result = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
+            guard !Task.isCancelled else { return }
+            found = result
+            foundQuery = query
         }
         .alert(String(localized: "Rename Conversation"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }),
             presenting: renaming) { conversation in
@@ -194,7 +198,7 @@ struct ConversationsView: View {
         }
         .overlay {
             if let found {
-                if found.groups.isEmpty { ContentUnavailableView.search(text: query).zoomedFont() }
+                if found.groups.isEmpty { ContentUnavailableView.search(text: foundQuery).zoomedFont() }
             } else if conversations.isEmpty && model.archivedList.isEmpty {
                 ContentUnavailableView {
                     Label("No conversations yet", systemImage: "bubble.left.and.bubble.right").zoomedFont(.title3)

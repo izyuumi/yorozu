@@ -26,7 +26,12 @@ final class AppModel {
     var pairingError: String?
     private var pairingSaveError: String?
     var requestedConversation: String?
-    var requestedMessage: String?
+    struct MessageRequest: Equatable {
+        let convId: String
+        let messageId: String
+    }
+
+    var requestedMessage: MessageRequest?
     var composeRequest: ComposeRequest?
     private(set) var foreground: String?
     private(set) var crons: [CronJob]?

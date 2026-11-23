@@ -79,6 +79,31 @@ import Testing
         #expect(result.groups.first?.hits.first?.snippet == "Some bold text here")
     }
 
+    @Test func userMessagesMatchAsTypedAndAgentMessagesAsShown() {
+        let user = ConversationSearch("example.com").run([conversation("a", title: "Links", [(.user, "See [docs](https://example.com)", 1)])])
+        let agent = ConversationSearch("example.com").run([conversation("b", title: "Links", [(.agent, "See [docs](https://example.com)", 1)])])
+        #expect(user.groups.first?.hits.first?.snippet == "See [docs](https://example.com)")
+        #expect(agent.groups.isEmpty)
+    }
+
+    @Test func matchesAnyNeedsOneWord() {
+        #expect(ConversationSearch("garden hose").matchesAny("the hose is short"))
+        #expect(!ConversationSearch("garden hose").matchesAny("the tap is short"))
+    }
+
+    @Test func theRevisionChangesOnlyWithSearchableContent() {
+        let base = conversation("a", [(.user, "Water the garden", 1)])
+        var read = base
+        read.readPending = true
+        var longer = base
+        longer.items.append(ChatItem(id: "a-new", kind: .agent, text: "Done", ts: 2))
+        var streamed = base
+        streamed.items[0].text += " today"
+        #expect(ConversationSearch.revision([base]) == ConversationSearch.revision([read]))
+        #expect(ConversationSearch.revision([base]) != ConversationSearch.revision([longer]))
+        #expect(ConversationSearch.revision([base]) != ConversationSearch.revision([streamed]))
+    }
+
     @Test func searchesOnlyUserAndAgentMessages() {
         let result = ConversationSearch("failed").run([conversation("a", title: "Notes", [(.error, "It failed", 1)])])
         #expect(result.groups.isEmpty)

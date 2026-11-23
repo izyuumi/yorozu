@@ -33,7 +33,9 @@ struct ConversationEntity: IndexedEntity {
 
     func lines(matching query: String) -> [String] {
         let search = ConversationSearch(query)
-        return recentText.split(separator: "\n").map(String.init).filter { search.matches(ConversationSearch.plain($0)) }
+        let lines = recentText.split(separator: "\n").map { ConversationSearch.plain(String($0)) }
+        let every = lines.filter(search.matches)
+        return every.isEmpty ? lines.filter(search.matchesAny) : every
     }
 }
 

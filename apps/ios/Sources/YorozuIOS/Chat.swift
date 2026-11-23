@@ -89,13 +89,13 @@ struct ChatView: View {
         .task(id: model.state == .ready) { model.open(convId) }
         .task(id: highlighted) {
             guard highlighted != nil else { return }
-            try? await Task.sleep(for: .seconds(1.5))
+            guard (try? await Task.sleep(for: .seconds(1.5))) != nil else { return }
             withAnimation { highlighted = nil }
         }
         .task(id: model.requestedMessage) {
-            guard let id = model.requestedMessage, items.contains(where: { $0.id == id }) else { return }
+            guard let request = model.requestedMessage, request.convId == convId else { return }
             model.requestedMessage = nil
-            show(id)
+            if items.contains(where: { $0.id == request.messageId }) { show(request.messageId) }
         }
         .onChange(of: typing) { if atBottom { scrollToEnd() } }
         .onAppear {
