@@ -1,0 +1,6 @@
+: open
+
+id: 0
+data: {"event": "run.failed", "run_id": "run_fixture_01", "timestamp": 1795047526.109324, "error": "Hermes is not connected to any AI provider yet. Run `hermes model` to pick one, type `/login` in chat, or add a key with `hermes auth add <provider>`. (Advanced: put an API key such as OPENROUTER_API_KEY in ~/.hermes-yorozu-test/.env.)", "completed": false, "partial": false, "interrupted": false, "seq": 0}
+
+: stream closed
