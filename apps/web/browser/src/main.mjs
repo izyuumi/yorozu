@@ -9,7 +9,8 @@ function takeInvitation() {
   if (!location.hash) return null;
   const hash = new URLSearchParams(location.hash.slice(1));
   window.history.replaceState(null, '', location.pathname);
-  const link = hash.get('pair');
+  const values = hash.getAll('pair');
+  const link = values.length === 1 ? values[0] : null;
   return link && link.length <= 4096 ? link : null;
 }
 let incoming = takeInvitation();
@@ -36,6 +37,7 @@ function showPairing() {
   $('onboarding').hidden = false;
   $('chat').hidden = $('settings-button').hidden = true;
   $('confirm').hidden = true;
+  $('pair-error').hidden = true;
   $('pair-form').hidden = false;
   $('settings').close();
   if (incoming) {
@@ -179,8 +181,21 @@ function start(device, isPending) {
   render();
 }
 
-$('pair-form').addEventListener('submit', (event) => {
+function continuePairing(event) {
   event.preventDefault();
+  const input = $('pair-link');
+  const error = $('pair-error');
+  const setError = (message) => {
+    error.textContent = message;
+    error.hidden = !message;
+    input.setAttribute('aria-invalid', message ? 'true' : 'false');
+  };
+  setError('');
+  if (!input.value.trim()) {
+    setError('Paste a pairing invitation first, or open the original invite link in Safari.');
+    input.focus();
+    return;
+  }
   try {
     draftPairing = parsePairing($('pair-link').value, import.meta.env.DEV ? import.meta.env.VITE_YOROZU_TEST_RELAY : undefined, import.meta.env.DEV);
     $('pair-link').value = '';
@@ -189,8 +204,23 @@ $('pair-form').addEventListener('submit', (event) => {
     $('fingerprint').textContent = fingerprint(draftPairing.hostKey);
     $('pair-form').hidden = true;
     $('confirm').hidden = false;
+    input.blur();
+    $('confirm-heading').focus();
+    $('confirm').scrollIntoView({block:'nearest'});
     notify();
-  } catch { notify('On your Mac run openclaw yorozu pair-browser to make a browser pairing link for the standard Yorozu relay.'); }
+  } catch (error) {
+    setError(error.code === 'expired'
+      ? 'This invitation expired. Ask for a new browser pairing link.'
+      : 'This is not a valid browser invitation. Copy the entire original link and try again.');
+  }
+}
+$('pair-form').addEventListener('submit', continuePairing);
+$('continue').addEventListener('click', continuePairing);
+$('pair-link').addEventListener('paste', (event) => {
+  const text = event.clipboardData?.getData('text/plain');
+  if (!text) return;
+  event.preventDefault();
+  $('pair-link').value = text;
 });
 $('pair-now').addEventListener('click', async () => {
   const g = ++generation;
@@ -241,6 +271,7 @@ $('composer').addEventListener('submit', async (event) => {
   render();
 });
 
+$('boot-hint').hidden = true;
 window.addEventListener('hashchange', () => {
   const link = takeInvitation();
   if (!link || pairing || pending) return;

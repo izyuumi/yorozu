@@ -15,16 +15,19 @@
     <button id="settings-button" type="button" hidden>Settings</button>
   </header>
   <p id="notice" role="status" hidden></p>
+  <p id="boot-hint" role="status">Opening Yorozu… If this message stays, open the original invitation in a Safari tab with JavaScript enabled.</p>
   <section id="onboarding" hidden>
     <p class="eyebrow">SET UP YOROZU</p><h1>Connect to your Mac</h1>
     <p>Run <code>openclaw yorozu pair-browser</code> on your Mac to create a browser invitation. Open the link here and compare the host fingerprint to connect.</p>
-    <form id="pair-form">
+    <form id="pair-form" novalidate>
       <label for="pair-link">Pairing link</label><p id="pair-hint"></p>
-      <input id="pair-link" type="password" autocomplete="off" spellcheck="false" required maxlength="4096">
+      <textarea id="pair-link" rows="1" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="pair-error" maxlength="8192"></textarea>
       <label><input id="remember" type="checkbox" checked> Remember this browser</label>
-      <button>Continue</button>
+      <p id="pair-error" role="alert" hidden></p>
+      <button id="continue" type="button">Continue</button>
     </form>
     <div id="confirm" hidden>
+      <h2 id="confirm-heading" tabindex="-1">Confirm host fingerprint</h2>
       <p>Check that this key matches the fingerprint shown with the pairing link.</p>
       <code id="fingerprint"></code>
       <p>Yorozu can keep up to 16 paired devices. If it is full, pairing removes the oldest device.</p>

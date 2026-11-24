@@ -116,7 +116,7 @@ async function mintPairing(directOnly = false, browser = false): Promise<Omit<Pa
   const { token, expiresAt } = code;
   const browserOrigin = new URL(relayUrl).href === BROWSER_PREVIEW_RELAY ? BROWSER_PREVIEW_ORIGIN : "https://app.yorozu.yumi.to";
   const secret = pending.add(expiresAt, Date.now(), browser);
-  const query = pairingQuery({ relayUrl, hostStatic: keys.static.publicKey, token, room: keys.room, secret, hints, browser });
+  const query = pairingQuery({ relayUrl, hostStatic: keys.static.publicKey, token, room: keys.room, secret, hints, browser }) + (browser ? '&exp=' + expiresAt : '');
   return {
     link: `yorozu://pair?${query}`,
     webLink: browser ? browserOrigin + "/#pair=" + encodeURIComponent("yorozu://pair?" + query) : `${PAIR_WEB_LINK}#${query}`,

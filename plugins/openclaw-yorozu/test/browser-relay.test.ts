@@ -69,6 +69,7 @@ test("real plugin registers v4 browser through the relay, resumes after restart,
     status = null;
     const controller = new AbortController();
     const task = runRelayHost({
+      log: process.env.YOROZU_BROWSER_TEST_DEBUG ? {info:(v)=>{if (!/registered at relay/.test(v)) console.error(v);},warn:(v)=>console.error(v)} : undefined,
       relayUrl:relayURL, keys, signal:controller.signal, mediaMaxBytes:1024,
       onStatus(value) { status = value; },
       onMessage(message) {
@@ -151,14 +152,31 @@ test("real plugin registers v4 browser through the relay, resumes after restart,
       try {
         context = await launch();
         let page = context.pages()[0];
+        const pageDiagnostics: string[] = [];
+        page.on("pageerror",e=>pageDiagnostics.push(e.name+":"+e.message));
+        page.on("console",m=>{if(m.type()==="error")pageDiagnostics.push(m.text());});
         const response = await page.goto(webLink);
         assert.equal(response?.status(),200);
         assert.match(response.headers()["content-security-policy"], /connect-src wss:\/\/yorozu-browser-test-relay\.yumi-f4f\.workers\.dev;/);
         await visible(page,"Pairing link ready.");
         assert.equal(new URL(page.url()).hash,"");
-        await page.getByRole("button",{name:"Continue"}).click();
+        await page.getByRole("button",{name:"Continue"}).tap();
+        await page.getByRole("heading",{name:"Confirm host fingerprint"}).waitFor();
+        await page.getByRole("button",{name:"Cancel"}).tap();
+        const input = page.getByLabel("Pairing link");
+        await input.tap();
+        await input.evaluate((field, link) => {
+          const contents = new DataTransfer();
+          contents.setData("text/plain", ["```text", link, "```"].join("\n"));
+          field.dispatchEvent(new ClipboardEvent("paste", { clipboardData: contents, bubbles:true, cancelable:true }));
+        }, webLink);
+        await page.getByRole("button",{name:"Continue"}).tap();
+        await page.getByRole("heading",{name:"Confirm host fingerprint"}).waitFor();
         await page.getByRole("button",{name:"Pair",exact:true}).click();
-        await visible(page,"Connected");
+        try { await visible(page,"Connected"); } catch(error) {
+          console.error({origin:new URL(page.url()).origin, state:await page.evaluate(() => ({title:document.title, status:document.querySelector("#connection")?.textContent, notice:document.querySelector("#notice")?.textContent})).catch(() => ({})),pageDiagnostics});
+          throw error;
+        }
         await page.getByLabel("Message",{exact:true}).fill("Hosted browser transport");
         await page.getByRole("button",{name:"Send",exact:true}).click();
         await visible(page,"Preview received: Hosted browser transport");

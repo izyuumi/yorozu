@@ -21,11 +21,13 @@ button, select { min-height: 44px; padding: .4rem .85rem; border-radius: 1.5rem;
 button { cursor: pointer; }
 button:disabled { opacity: .48; cursor: not-allowed; }
 form button:not(:disabled), #pair-now:not(:disabled) { background: var(--accent); color: var(--white); border-color: transparent; font-weight: 640; }
-textarea, input[type=password] { width: 100%; min-height: 44px; border: 1px solid var(--stroke); background: var(--page); color: var(--text); border-radius: .9rem; padding: .65rem .85rem; }
+textarea, input[type=text] { width: 100%; min-height: 44px; border: 1px solid var(--stroke); background: var(--page); color: var(--text); border-radius: .9rem; padding: .65rem .85rem; }
 #onboarding { width: min(100%, 27rem); margin: clamp(1.5rem, 10dvh, 6rem) auto; background: var(--surface); border: 1px solid var(--stroke); border-radius: 1.35rem; padding: clamp(1rem, 5vw, 2rem); }
 .eyebrow { margin: 0; color: var(--accent); font-size: .73rem; font-weight: 660; letter-spacing: .09em; }
 h1 { font-size: clamp(1.75rem, 5vw, 2.35rem); line-height: 1.1; margin: .5rem 0; letter-spacing: -.04em; }
 h2 { margin-top: 0; }
+#pair-link { -webkit-text-security: disc; resize: none; }
+#pair-error { color: var(--accent); margin: 0; }
 #pair-hint:empty { display: none; }
 #pair-hint { margin: 0; color: var(--subtle); font-size: .9rem; }
 #fingerprint { font: 650 1.2rem ui-monospace, monospace; letter-spacing: .07em; }
