@@ -97,6 +97,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::snapshot,
             commands::submit_link,
+            commands::start_device_code,
+            commands::stop_device_code,
             commands::confirm_pairing,
             commands::cancel_pairing,
             commands::forget_pairing,

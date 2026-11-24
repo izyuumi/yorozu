@@ -135,6 +135,17 @@ test('browser pairs, survives full browser restart, chats, waits for the offline
   await page.getByRole('button', {name:'Send'}).click();
   await found(page, 'echo: Hello from a synthetic Windows client');
   assert.equal(host.messages.length, 1);
+  await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+  await page.getByRole('button', {name:'Settings'}).press('Enter');
+  const settingsDialog = page.getByRole('dialog', {name:'Settings'});
+  await settingsDialog.waitFor();
+  const target = await settingsDialog.getByRole('button', {name:'Forget this browser'}).boundingBox();
+  assert.ok(target.height >= 44, 'forget has an adequate touch target at 200% text');
+  assert.equal(await settingsDialog.evaluate(node => node.scrollWidth <= node.clientWidth + 1), true, 'Settings does not overflow horizontally with larger text');
+  await page.keyboard.press('Escape');
+  await settingsDialog.waitFor({state:'hidden'});
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Settings');
+  await page.evaluate(() => { document.documentElement.style.removeProperty('font-size'); });
   assert.deepEqual(await page.evaluate(async () => {
     const db = await new Promise((resolve) => {
       const req = indexedDB.open('yorozu-pairing');

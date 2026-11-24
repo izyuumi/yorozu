@@ -774,6 +774,7 @@ public struct DevicePatch: Codable, Equatable, Sendable {
 
 public enum Invite {
     public static let capability = "invite"
+    public static let browserCapability = "pair-browser-invite"
 }
 
 public enum Direct {
@@ -836,6 +837,10 @@ public struct DirectHints: Codable, Equatable, Sendable {
 }
 
 public struct PairInvite: Codable, Equatable, Sendable {
+    public enum Target: String, Codable, Sendable { case browser }
+
+    public var target: Target?
+    public var requestId: String?
     public var link: String?
     public var webLink: String?
     public var fingerprint: String?

@@ -31,6 +31,7 @@ export function registerYorozuCli(program: Program): void {
     async (opts: GatewayRpcOpts) => {
       const pairing = await call<Pairing>("yorozu.pair.browser", opts);
       print(pairing.webLink);
+      print(await renderQrTerminal(pairing.webLink, { small: true }));
       print("Host fingerprint: " + pairing.fingerprint + ". One browser, until " + time(pairing.expiresAt) + ".");
     },
   );

@@ -249,6 +249,7 @@ let project = Project(
                 "Sources/YorozuIOS/ChatScrollEdge.swift",
                 "Sources/YorozuIOS/VoiceInput.swift", "Sources/YorozuIOS/VoiceRecorder.swift", "Sources/YorozuIOS/VoiceSetup.swift",
                 "Sources/YorozuIOS/VoiceModel.swift", "Sources/YorozuIOS/Transcriber.swift", "Sources/YorozuIOS/Metrics.swift",
+                "Sources/YorozuIOS/YorozuDesignTokens.swift",
                 "Sources/YorozuIOS/Zoom.swift", "Sources/YorozuIOS/YorozuTheme.swift",
             ],
             dependencies: [.package(product: "YorozuWire"), .package(product: "VoiceText"), .package(product: "SpeechEngines")],

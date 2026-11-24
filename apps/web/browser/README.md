@@ -47,7 +47,7 @@ turn on Cloudflare Web Analytics or script injection on the client hostname.
 Freezing a Web Crypto key against export does not prevent JavaScript running at
 the app origin from using it; a trusted delivery origin is part of the web
 client's threat model. The staging origin is separately paired and cannot read
-or reuse production device keys. No relay or native pairing protocol change is needed. Do not merge Gateway/plugin changes without coordinating the repository’s existing Mac beta workflow, which runs when plugin paths land on main.
+or reuse production device keys. The updated browser supports existing v4 hosts. Displaying its QR for another device to scan also requires the updated, browser-enabled Gateway plugin and an already paired Apple client that supports browser invitations. Coordinate Gateway/plugin changes with the repository’s existing Mac beta workflow.
 
 ## Durable browser credentials (v4)
 
@@ -55,6 +55,14 @@ Production browser builds only accept explicit v4 browser invitations via
 `openclaw yorozu pair-browser`. Legacy native links and key binding are unchanged.
 With the feature disabled (the default), the Gateway will not issue or accept
 v4 browser pairing. Browser invitations are relay only.
+
+To pair by QR, scan the browser invitation shown by the Gateway command, or
+choose **Show QR code** and, on an already paired iPhone or iPad that
+supports browser invites, go to **Settings › Add a Device › Scan QR Code**. The reverse QR is a one-time encrypted
+mailbox request, not a pairing invitation. Both methods ask you to compare the
+host fingerprint before pairing. Pasting the invitation link still works.
+Scanning asks for camera access only when selected, uses no microphone, and
+can also read a local PNG, JPEG, or WebP image.
 
 A browser stores a non-extractable Ed25519 signing key, the pinned host key,
 and its connection metadata. Each reconnect makes fresh X25519 keys for the

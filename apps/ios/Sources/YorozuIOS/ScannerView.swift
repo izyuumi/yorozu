@@ -5,6 +5,7 @@ import VisionKit
 
 struct ScannerView: View {
     var prompt: LocalizedStringKey = "On the host, open Settings › Devices › Pair a Client Device and scan its QR code."
+    var manualLabel: LocalizedStringKey = "Enter code manually"
     let onScan: (String) -> String?
     let onManualEntry: () -> Void
 
@@ -20,21 +21,21 @@ struct ScannerView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 16) {
+                VStack(spacing: LayoutMetrics.gutter) {
                     Text(prompt)
                         .textStyle(.headline)
                         .multilineTextAlignment(.center)
 
                     if authorization == .denied {
-                        unavailable("Camera access is off", detail: "Allow camera access in Settings to scan, or enter the pairing code manually.")
+                        unavailable("Camera access is off", detail: "Allow camera access in Settings to scan, or paste the link instead.")
                         Button("Open Settings") {
                             if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
                         }
                         .buttonStyle(.borderedProminent)
                     } else if authorization == .restricted {
-                        unavailable("Camera access is restricted", detail: "This device does not allow camera access. Enter the pairing code manually.")
+                        unavailable("Camera access is restricted", detail: "This device does not allow camera access. Paste the link instead.")
                     } else if !DataScannerViewController.isSupported {
-                        unavailable("Scanning unavailable", detail: "This device cannot scan pairing codes. You can enter the code manually instead.")
+                        unavailable("Scanning unavailable", detail: "This device cannot scan pairing codes. Paste the link instead.")
                     } else if authorization == .notDetermined {
                         ProgressView("Waiting for camera access…")
                     } else if available && !scannerFailed {
@@ -46,7 +47,7 @@ struct ScannerView: View {
                         .frame(height: 300)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     } else {
-                        unavailable("Camera unavailable", detail: "Try the camera again, or enter the pairing code manually.")
+                        unavailable("Camera unavailable", detail: "Try the camera again, or paste the link instead.")
                         Button("Try camera again") {
                             scannerFailed = false
                             scannerGeneration += 1
@@ -55,7 +56,7 @@ struct ScannerView: View {
                         .buttonStyle(.bordered)
                     }
 
-                    Text("Scan a code from a host you trust. Pairing codes are secret.")
+                    Text("Scan a code only from a host or device you trust.")
                         .textStyle(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -65,11 +66,11 @@ struct ScannerView: View {
                         }
                         .textStyle(.footnote)
                     }
-                    Button("Enter code manually", action: onManualEntry)
-                        .frame(minHeight: 44)
+                    Button(manualLabel, action: onManualEntry)
+                        .frame(minHeight: controlTarget)
                         .accessibilityIdentifier("pairing.scanner.manual")
                 }
-                .padding(16)
+                .padding(LayoutMetrics.gutter)
             }
             .navigationTitle("Scan pairing code")
             .navigationBarTitleDisplayMode(.inline)

@@ -15,6 +15,12 @@ pub enum LinkError {
 }
 impl Link {
     pub fn parse(text: &str) -> Result<Self, LinkError> {
+        Self::parse_with_version(text, false)
+    }
+    pub(crate) fn parse_native(text: &str) -> Result<Self, LinkError> {
+        Self::parse_with_version(text, true)
+    }
+    fn parse_with_version(text: &str, require_v3: bool) -> Result<Self, LinkError> {
         use LinkError::*;
         let url = Url::parse(text.trim()).map_err(|_| Invalid)?;
         let query = match (url.scheme(), url.host_str(), url.path()) {
@@ -74,7 +80,7 @@ impl Link {
                         .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
             })
             .ok_or(Invalid)?;
-        if get("v").is_some_and(|v| v != "3") {
+        if get("v").map_or(require_v3, |v| v != "3") {
             return Err(Unusable);
         }
         let secret = get("secret").ok_or(Unusable)?;

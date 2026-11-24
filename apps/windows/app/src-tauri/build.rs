@@ -7,6 +7,8 @@ fn main() {
     let manifest = tauri_build::AppManifest::new().commands(&[
         "snapshot",
         "submit_link",
+        "start_device_code",
+        "stop_device_code",
         "confirm_pairing",
         "cancel_pairing",
         "forget_pairing",

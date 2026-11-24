@@ -1,14 +1,14 @@
 import CoreGraphics
 
 public enum LayoutMetrics {
-    public static let hair: CGFloat = 2
-    public static let tight: CGFloat = 4
-    public static let inner: CGFloat = 8
-    public static let stack: CGFloat = 12
-    public static let gutter: CGFloat = 16
-    public static let section: CGFloat = 24
-    public static let readingWidth: CGFloat = 700
-    public static let composerWidth: CGFloat = 640
+    public static let hair: CGFloat = YorozuDesignTokens.hair
+    public static let tight: CGFloat = YorozuDesignTokens.tight
+    public static let inner: CGFloat = YorozuDesignTokens.inner
+    public static let stack: CGFloat = YorozuDesignTokens.stack
+    public static let gutter: CGFloat = YorozuDesignTokens.gutter
+    public static let section: CGFloat = YorozuDesignTokens.section
+    public static let readingWidth: CGFloat = YorozuDesignTokens.readingWidth
+    public static let composerWidth: CGFloat = YorozuDesignTokens.composerWidth
     public static let controlCircle: CGFloat = 32
 
     #if os(macOS)
@@ -31,5 +31,5 @@ public enum LayoutMetrics {
 #if os(macOS)
     public let controlTarget: CGFloat = 28
 #else
-    public let controlTarget: CGFloat = 44
+    public let controlTarget: CGFloat = YorozuDesignTokens.target
 #endif

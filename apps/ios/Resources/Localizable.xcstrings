@@ -27128,6 +27128,306 @@
           }
         }
       }
+    },
+    "A new code appears every 10 minutes." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コードは10分ごとに更新されます。"
+          }
+        }
+      }
+    },
+    "Allow camera access in Settings to scan, or paste the link instead." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定でカメラへのアクセスを許可するか、リンクを貼り付けてください。"
+          }
+        }
+      }
+    },
+    "Asks the host to revoke access and clears the pairing and cached chats here." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストにアクセス権の取り消しを要求し、このデバイスのペアリング情報とチャットのキャッシュを削除します。"
+          }
+        }
+      }
+    },
+    "Clears the pairing and cached chats here. It does not revoke access on the host." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このデバイスのペアリング情報とチャットのキャッシュを削除します。ホスト側のアクセス権は取り消されません。"
+          }
+        }
+      }
+    },
+    "Compare this fingerprint with the one shown by your host or the device that sent the invite.\n\nHost fingerprint: %@\nRelay: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストまたは招待を送ったデバイスに表示されているフィンガープリントと照合してください。\n\nホストのフィンガープリント：%1$@\nリレー：%2$@"
+          }
+        }
+      }
+    },
+    "Forget clears this device only. Revoke removes access on the host and requires a new pairing." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリングを解除すると、このデバイスの情報だけが消去されます。アクセス権を取り消すと、ホストに接続するには再度ペアリングが必要です。"
+          }
+        }
+      }
+    },
+    "Forget This Device" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このデバイスのペアリング情報を消去"
+          }
+        }
+      }
+    },
+    "Forget this device?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このデバイスのペアリング情報を消去しますか？"
+          }
+        }
+      }
+    },
+    "Getting a QR code…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "QR コードを準備中…"
+          }
+        }
+      }
+    },
+    "Host Fingerprint" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストのフィンガープリント"
+          }
+        }
+      }
+    },
+    "In Yorozu on a paired iPhone or iPad, open Settings › Devices › Add a Device and scan this code." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリング済みの iPhone または iPad で Yorozu の「設定 › デバイス › デバイスを追加」を開き、「QR コードをスキャン」を選んでください。"
+          }
+        }
+      }
+    },
+    "Invite link" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "招待リンク"
+          }
+        }
+      }
+    },
+    "Need an invite?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "招待リンクがない場合"
+          }
+        }
+      }
+    },
+    "On your host, run `openclaw yorozu pair` to create a QR code and invite link." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストで `openclaw yorozu pair` を実行すると、QR コードと招待リンクが作成されます。"
+          }
+        }
+      }
+    },
+    "Pairing QR code" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリング用 QR コード"
+          }
+        }
+      }
+    },
+    "Paste Device Link" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "デバイスのリンクを貼り付け"
+          }
+        }
+      }
+    },
+    "Paste Invite Link" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "招待リンクを貼り付け"
+          }
+        }
+      }
+    },
+    "Paste the link from your host or another paired device." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストまたはペアリング済みのデバイスから受け取ったリンクを貼り付けてください。"
+          }
+        }
+      }
+    },
+    "Revoke Access" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アクセス権を取り消す"
+          }
+        }
+      }
+    },
+    "Revoke access for this device?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このデバイスのアクセス権を取り消しますか？"
+          }
+        }
+      }
+    },
+    "Revoke Access…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アクセス権を取り消す…"
+          }
+        }
+      }
+    },
+    "Revoke This Device’s Access" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このデバイスのアクセス権を取り消す"
+          }
+        }
+      }
+    },
+    "Revoke this device’s access?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このデバイスのアクセス権を取り消しますか？"
+          }
+        }
+      }
+    },
+    "Scan a code only from a host or device you trust." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "信頼できるホストやデバイスのコードだけをスキャンしてください。"
+          }
+        }
+      }
+    },
+    "Scan the pairing QR code from your host or another paired device." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストまたは別のペアリング済みデバイスに表示された QR コードをスキャンしてください。"
+          }
+        }
+      }
+    },
+    "Show QR Code" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "QR コードを表示"
+          }
+        }
+      }
+    },
+    "This device cannot scan pairing codes. Paste the link instead." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このデバイスではコードをスキャンできません。リンクを貼り付けてください。"
+          }
+        }
+      }
+    },
+    "This device does not allow camera access. Paste the link instead." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このデバイスではカメラを使用できません。リンクを貼り付けてください。"
+          }
+        }
+      }
+    },
+    "This isn’t a Yorozu device code. Open Yorozu on the new device and use the code it shows." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu のデバイスコードではありません。新しいデバイスで Yorozu を開き、表示されるコードを使用してください。"
+          }
+        }
+      }
+    },
+    "Try the camera again, or paste the link instead." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "カメラをもう一度試すか、リンクを貼り付けてください。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

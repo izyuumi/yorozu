@@ -5,10 +5,14 @@ import { Message } from "../components/Message";
 import { ChatHeader } from "../components/shared/ClientUI";
 import { strings } from "../strings";
 
-export function Conversation({ conversation: c, act, actions, status, navigation }: {
-  conversation: OpenConv; act: (task: Promise<void>) => void; actions: ReactNode; status: ReactNode; navigation: ReactNode;
+type ReadingPosition = { id?: string; offset: number; top: number; follows: boolean };
+export type ConversationMemory = { draft: string; draftListeners?: Set<() => void>; scroll?: ReadingPosition };
+
+export function Conversation({ conversation: c, memory, act, actions, status, navigation }: {
+  conversation: OpenConv; memory: ConversationMemory; act: (task: Promise<void>) => void; actions: ReactNode; status: ReactNode; navigation: ReactNode;
 }) {
   const scroll = useRef<HTMLDivElement>(null);
+  const opened = useRef(false);
   const previous = useRef<{ first?: string; last?: string; height: number; bottom: boolean; offset: number }>({ height: 0, bottom: true, offset: 0 });
   const [loading, setLoading] = useState(false);
   const [showLatest, setShowLatest] = useState(false);
@@ -35,12 +39,25 @@ export function Conversation({ conversation: c, act, actions, status, navigation
     pageTimer.current = setTimeout(finishPage, 10_000);
     act(command("load_older", { convId: c.convId }).catch(error => { finishPage(); throw error; }));
   };
+  const storeReadingPosition = (node: HTMLDivElement) => {
+    if (!c.items.length) return;
+    const edge = node.getBoundingClientRect().top;
+    const row = Array.from(node.querySelectorAll<HTMLElement>("[data-message-anchor]")).find(el => el.getBoundingClientRect().bottom > edge);
+    memory.scroll = { id: row?.dataset.messageAnchor, offset: row ? row.getBoundingClientRect().top - edge : 0,
+      top: node.scrollTop, follows: node.scrollHeight - node.scrollTop - node.clientHeight < 48 };
+  };
   useLayoutEffect(() => {
     const node = scroll.current;
     if (!node) return;
     const first = c.items[0]?.id, last = c.items.at(-1)?.id;
     const old = previous.current;
-    if (old.first && first !== old.first && c.items.some(item => item.id === old.first)) {
+    if (!opened.current && first) {
+      opened.current = true;
+      const saved = memory.scroll;
+      const same = saved?.id && Array.from(node.querySelectorAll<HTMLElement>("[data-message-anchor]")).find(row => row.dataset.messageAnchor === saved.id);
+      if (saved && !saved.follows) node.scrollTop = same ? same.getBoundingClientRect().top - node.getBoundingClientRect().top + node.scrollTop - saved.offset : saved.top;
+      else node.scrollTop = node.scrollHeight;
+    } else if (old.first && first !== old.first && c.items.some(item => item.id === old.first)) {
       const mark = anchor.current;
       const element = mark && Array.from(node.querySelectorAll<HTMLElement>("[data-message-anchor]")).find(row => row.dataset.messageAnchor === mark.id);
       node.scrollTop += element && mark ? element.getBoundingClientRect().top - mark.top : node.scrollHeight - old.height;
@@ -51,6 +68,7 @@ export function Conversation({ conversation: c, act, actions, status, navigation
     const distance = node.scrollHeight - node.scrollTop - node.clientHeight;
     previous.current = { first, last, height: node.scrollHeight, bottom: distance < 48, offset: node.scrollTop };
     setShowLatest(distance >= 140);
+    storeReadingPosition(node);
   }, [c.items, c.olderMore]);
   return <section className="conversation" aria-label={c.title}>
     <ChatHeader title={c.title || "New chat"} status={status} actions={actions} navigation={navigation} />
@@ -62,6 +80,7 @@ export function Conversation({ conversation: c, act, actions, status, navigation
       previous.current.bottom = distance < 48;
       previous.current.offset = top;
       setShowLatest(distance >= 140);
+      storeReadingPosition(node);
     }}>
       <div className="reading-column">
         {c.olderMore && <div className="history-control"><button disabled={loading} onClick={loadEarlier}>{loading ? "Loading earlier messages…" : "Load earlier messages"}</button></div>}
@@ -77,7 +96,7 @@ export function Conversation({ conversation: c, act, actions, status, navigation
           scroll.current.focus({ preventScroll: true });
         }
       }}>↓</button>}
-      <Composer convId={c.convId} act={act} />
+      <Composer convId={c.convId} memory={memory} act={act} />
     </div></div>
   </section>;
 }

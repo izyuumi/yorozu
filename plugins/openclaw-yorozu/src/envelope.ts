@@ -16,6 +16,7 @@ export type PeerInfo = {
 export const ATTACHMENTS = "attachments";
 export const DEVICES = "devices";
 export const INVITE = "invite";
+export const BROWSER_INVITE = "pair-browser-invite";
 export const REPLIES = "replies";
 export const REACTIONS = "reactions";
 export const LIVE_ACTIVITY_PUSH = "liveActivityPush";
@@ -76,7 +77,7 @@ export type Foreground = { convId?: string | null; active?: boolean };
 export type DeviceInfo = { id: string; name?: string; pairedAt: number; push: boolean; current: boolean };
 export type DeviceList = { devices?: DeviceInfo[]; error?: string };
 export type DevicePatch = { id: string; push?: boolean; removed?: boolean };
-export type PairInvite = { link?: string; webLink?: string; fingerprint?: string; expiresAt?: number; error?: string };
+export type PairInvite = { target?: "browser"; requestId?: string; link?: string; webLink?: string; fingerprint?: string; expiresAt?: number; error?: string };
 export type CronJob = {
   id: string;
   name: string;
@@ -186,7 +187,8 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
     (d.convId === undefined || d.convId === null || isId(d.convId)) && (d.active === undefined || typeof d.active === "boolean"),
   cron_list: (d) => (d.jobs === undefined || Array.isArray(d.jobs)) && optStr(d.error),
   device_list: (d) => (d.devices === undefined || Array.isArray(d.devices)) && optStr(d.error),
-  pair_invite: (d) => optStr(d.link) && optStr(d.webLink) && optStr(d.fingerprint) && optInt(d.expiresAt) && optStr(d.error),
+  pair_invite: (d) => (d.target === undefined || d.target === "browser") &&
+    (d.requestId === undefined || (d.target === "browser" && typeof d.requestId === "string" && /^[A-Za-z0-9_-]{22}$/.test(d.requestId))) && optStr(d.link) && optStr(d.webLink) && optStr(d.fingerprint) && optInt(d.expiresAt) && optStr(d.error),
   device_patch: (d) =>
     label(d.id, 64) && optBool(d.push) && optBool(d.removed),
   upload: (d) =>

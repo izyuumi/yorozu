@@ -1,6 +1,7 @@
+mod device_code;
 mod snapshot;
 
-pub use snapshot::{ConvSummary, Item, Notice, OpenConv, PairingView, Snapshot};
+pub use snapshot::{ConvSummary, DeviceCodeView, Item, Notice, OpenConv, PairingView, Snapshot};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

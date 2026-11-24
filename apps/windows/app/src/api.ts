@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { ReceiverCode } from "./components/shared/PairingQr";
 export type PairingView =
   | { state: "unpaired" | "pairing" | "paired" }
   | { state: "confirming"; fingerprint: string; relayHost: string }
@@ -9,6 +10,7 @@ export type Item = { id: string; kind: "user" | "agent" | "tools" | "reset"; tex
 export type OpenConv = { convId: string; title: string; items: Item[]; olderMore: boolean; typing: boolean };
 export type Snapshot = {
   pairing: PairingView;
+  deviceCode?: ReceiverCode | null;
   status: string | null;
   lastClose?: string;
   updateRequired?: boolean;
@@ -19,7 +21,7 @@ export type Snapshot = {
   build: string;
 };
 export const fetchSnapshot = () => invoke<Snapshot>("snapshot");
-export type Command = "submit_link" | "confirm_pairing" | "cancel_pairing" | "forget_pairing" | "pair_again" | "retry_connection" | "open_conversation" | "new_conversation" | "load_older" | "send_message" | "retry_message";
+export type Command = "submit_link" | "confirm_pairing" | "cancel_pairing" | "forget_pairing" | "pair_again" | "retry_connection" | "open_conversation" | "new_conversation" | "load_older" | "send_message" | "retry_message" | "start_device_code" | "stop_device_code";
 export const command = (name: Command, args?: { link?: string; convId?: string | null; text?: string; messageId?: string }) => invoke<void>(name, args);
 export function onChanged(callback: () => void): () => void {
   let active = true;

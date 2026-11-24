@@ -53,7 +53,7 @@ test("real plugin registers v4 browser through the relay, resumes after restart,
   const signing = ed25519Keypair();
   const keys = { signing, static: x25519Keypair(), room: roomId(signing.publicKey) };
   let host;
-  let connection;
+  let connection, nativeConnection;
   let status, browserStatus, saved, removed;
   const hostEvents: string[] = [];
   const threads = new Map();
@@ -98,7 +98,36 @@ test("real plugin registers v4 browser through the relay, resumes after restart,
   try {
     host = start();
     await waitFor(() => status?.connected, "register");
-    const invite = await beginPairing(true);
+    const endpoint = new URL(relayURL).href;
+    const nativeInvite = await beginPairing();
+    const native = { ...parsePairing(nativeInvite.link, endpoint, true), identity: await makeIdentity(false) };
+    let nativeStatus;
+    const nativeEvents: any[] = [];
+    nativeConnection = connect(native, {
+      status(value) { nativeStatus = value; },
+      event(value) { nativeEvents.push(value); },
+      async paired() {},
+      removed(reason) { assert.fail(reason); },
+    });
+    await waitFor(() => nativeStatus === "Connected", "native scanner connected");
+    assert.ok(nativeEvents.find((event) => event.kind === "peer_info").data.capabilities.includes("pair-browser-invite"));
+    await nativeConnection.send("pair_invite", {});
+    await waitFor(() => nativeEvents.some((event) => event.kind === "pair_invite" && !event.data.target), "legacy invite");
+    const nativeAnswer = nativeEvents.find((event) => event.kind === "pair_invite" && !event.data.target).data;
+    assert.equal(new URL(nativeAnswer.link).searchParams.get("v"), "3");
+    const requestId = Buffer.alloc(16, 9).toString("base64url");
+    process.env.YOROZU_BROWSER_EPHEMERAL = "0";
+    await nativeConnection.send("pair_invite", { target: "browser", requestId });
+    await waitFor(() => nativeEvents.some((event) => event.kind === "pair_invite" && event.data.target === "browser" && event.data.error), "disabled browser invite rejected");
+    process.env.YOROZU_BROWSER_EPHEMERAL = "1";
+    await nativeConnection.send("pair_invite", { target: "browser", requestId });
+    await waitFor(() => nativeEvents.some((event) => event.kind === "pair_invite" && event.data.target === "browser" && event.data.link), "native scanner's browser invite");
+    const invite = nativeEvents.find((event) => event.kind === "pair_invite" && event.data.target === "browser" && event.data.link).data;
+    assert.equal(new URL(invite.link).searchParams.get("v"), "4");
+    assert.equal(invite.requestId, requestId);
+    assert.ok(invite.fingerprint);
+    assert.ok(invite.expiresAt > Date.now());
+    nativeConnection.close();
     const device = { ...parsePairing(invite.link, new URL(relayURL).href), identity: await makeIdentity(true) };
     const signingPub = b64u(device.identity.signingPublic);
     const browserHooks = {
@@ -121,7 +150,7 @@ test("real plugin registers v4 browser through the relay, resumes after restart,
     await connection.send("message",allowed);
     await waitFor(() => hostEvents.length === 1,"chat at host");
     await connection.send("device_patch",denied);
-    await connection.send("pair_invite",{});
+    await connection.send("pair_invite", { target: "browser" });
     await connection.send("message", {...allowed, messageId:"055890de-de0f-48be-88f3-5e009fd04494",
       attachments:[{id:"055890de-de0f-48be-88f3-5e009fd04495",name:"synthetic.txt",mime:"text/plain",size:10}]});
     await connection.send("message", {...allowed, messageId:"055890de-de0f-48be-88f3-5e009fd04496", replyTo:{messageId:allowed.messageId}});
@@ -204,6 +233,7 @@ test("real plugin registers v4 browser through the relay, resumes after restart,
     }
   } finally {
     connection?.close();
+    nativeConnection?.close();
     await host?.stop();
     await server?.close();
     await owner.close();

@@ -4,6 +4,8 @@ use serde::Serialize;
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     pub pairing: PairingView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_code: Option<DeviceCodeView>,
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_close: Option<String>,
@@ -14,6 +16,13 @@ pub struct Snapshot {
     pub open: Option<OpenConv>,
     pub version: String,
     pub build: String,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceCodeView {
+    pub link: String,
+    pub expires_at: u64,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -71,6 +80,7 @@ impl Snapshot {
     pub fn initial(version: &str, build: &str) -> Self {
         Self {
             pairing: PairingView::Unpaired,
+            device_code: None,
             status: None,
             last_close: None,
             update_required: false,

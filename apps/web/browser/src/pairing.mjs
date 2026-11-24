@@ -1,7 +1,7 @@
 import { unb64 } from './wire.mjs';
 
 const mode = import.meta.env?.MODE;
-const officialRelay = mode === "staging" || mode === "shared-preview" ? "wss://yorozu-browser-test-relay.yumi-f4f.workers.dev/" : "wss://relay.yumi.to/";
+export const officialRelay = mode === "staging" || mode === "shared-preview" ? "wss://yorozu-browser-test-relay.yumi-f4f.workers.dev/" : "wss://relay.yumi.to/";
 const previewOrigin = "https://yorozu-v4-staging.yumi-f4f.workers.dev";
 const appOrigin = "https://app.yorozu.yumi.to";
 const currentApp = mode === "shared-preview" ? "https://yorozu-shared-ui-preview.yumi-f4f.workers.dev" : mode === "staging" ? previewOrigin : appOrigin;

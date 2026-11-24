@@ -13,6 +13,7 @@
   <p id="notice" role="status" hidden></p>
   <p id="boot-hint" role="status">Opening Yorozu… If this message stays, open the original invitation in a Safari tab with JavaScript enabled.</p>
   <section id="onboarding" class="pair-card" hidden>
+    <div id="pair-methods"></div>
     <div id="pair-fields"></div>
     <div id="pair-confirmation"></div>
   </section>
@@ -56,10 +57,10 @@
         <div><dt>Host fingerprint</dt><dd><code id="host-key"></code></dd></div></dl>
     </section>
     <section aria-labelledby="device-heading">
-      <h3 id="device-heading">This browser</h3><p id="storage-mode"></p>
+      <h3 id="device-heading">This device</h3><p id="storage-mode"></p>
       <div id="forget-action"></div>
       <div id="forget-confirmation" class="pair-actions" hidden><button id="keep-pairing" type="button">Cancel</button><button id="confirm-forget" class="danger-button" type="button">Forget pairing</button></div>
-      <p class="help">This clears access on this browser. To also revoke its pairing, remove Yorozu Web from Devices on your Mac.</p>
+      <p class="help">Forgetting removes access in this browser only. To revoke access on the host, remove Yorozu Web in Devices on an already-paired device.</p>
     </section>
   </dialog>
 </main>

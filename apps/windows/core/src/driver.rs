@@ -1,5 +1,6 @@
 use crate::{
     connection::{self, Effect, Event, EventKind, Machine, Payload, State, Timer},
+    device_code,
     events::{Envelope, PeerInfo},
     events::{Message as ChatMessage, ReadCursor},
     frame::{b64, Frame},
@@ -11,7 +12,7 @@ use crate::{
     store::{FileStore, Loaded, Pairing, Protector, Standing},
     sync,
     wire::{self, ClientHandshake, Session},
-    Notice, PairingView, Snapshot,
+    DeviceCodeView, Notice, PairingView, Snapshot,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -29,6 +30,8 @@ use tokio_tungstenite::{
 #[derive(Clone, Debug)]
 pub enum Command {
     SubmitLink(String),
+    StartDeviceCode,
+    StopDeviceCode,
     Confirm,
     Cancel,
     Forget,
@@ -92,6 +95,7 @@ pub struct Options {
 enum Input {
     Command(Command),
     Socket(u64, SocketEvent),
+    DeviceCode(u64, device_code::Outcome),
     Timer(Timer, u64),
 }
 enum SocketEvent {
@@ -99,6 +103,16 @@ enum SocketEvent {
     Json(Value),
     Close(u16, String),
     Error,
+}
+struct Receiver {
+    view: DeviceCodeView,
+    deadline: tokio::time::Instant,
+    task: JoinHandle<()>,
+}
+impl Drop for Receiver {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 pub struct Driver {
     platform: Arc<dyn Platform>,
@@ -108,6 +122,8 @@ pub struct Driver {
     handle: Handle,
     rx: mpsc::UnboundedReceiver<Input>,
     pairing: pairing::State,
+    receiver: Option<Receiver>,
+    receiver_generation: u64,
     conn: Machine,
     record: Option<Pairing>,
     socket: Option<JoinHandle<()>>,
@@ -142,6 +158,8 @@ impl Driver {
             handle: handle.clone(),
             rx,
             pairing: pairing::State::Unpaired,
+            receiver: None,
+            receiver_generation: 0,
             conn: Machine::new(Standing::CodeOnly),
             record: None,
             socket: None,
@@ -181,7 +199,12 @@ impl Driver {
             match input {
                 Input::Command(Command::Quit) => break,
                 Input::Command(cmd) => match cmd {
-                    Command::SubmitLink(link) => self.pair_event(PairEvent::LinkSubmitted(link)),
+                    Command::SubmitLink(link) => {
+                        self.receiver = None;
+                        self.pair_event(PairEvent::LinkSubmitted(link));
+                    }
+                    Command::StartDeviceCode => self.start_device_code(),
+                    Command::StopDeviceCode => self.receiver = None,
                     Command::Confirm => self.pair_event(PairEvent::Confirm),
                     Command::Cancel => self.pair_event(PairEvent::Cancel),
                     Command::Forget => self.pair_event(PairEvent::Forget),
@@ -240,6 +263,9 @@ impl Driver {
                     Command::Focus(focused) => self.read_event(reads::Event::Focus(focused)),
                     Command::Quit => unreachable!(),
                 },
+                Input::DeviceCode(generation, result) => {
+                    self.device_code_finished(generation, result)
+                }
                 Input::Timer(timer, generation) => {
                     self.conn_event(EventKind::Timer(timer), Some(generation))
                 }
@@ -267,10 +293,49 @@ impl Driver {
             task.abort();
         }
     }
+    fn start_device_code(&mut self) {
+        if self.pairing != pairing::State::Unpaired {
+            return;
+        }
+        self.receiver_generation = self.receiver_generation.wrapping_add(1);
+        let generation = self.receiver_generation;
+        let code = device_code::Code::new(self.platform.as_ref());
+        let view = code.view.clone();
+        let deadline = tokio::time::Instant::now() + device_code::TTL;
+        let tx = self.handle.tx.clone();
+        self.receiver = Some(Receiver {
+            view,
+            deadline,
+            task: tokio::spawn(async move {
+                let result = code.receive(deadline).await;
+                let _ = tx.send(Input::DeviceCode(generation, result));
+            }),
+        });
+    }
+    fn device_code_finished(&mut self, generation: u64, result: device_code::Outcome) {
+        if generation != self.receiver_generation || self.pairing != pairing::State::Unpaired {
+            return;
+        }
+        let Some(receiver) = self.receiver.take() else {
+            return;
+        };
+        if tokio::time::Instant::now() >= receiver.deadline {
+            self.notice("This pairing code expired. Show a new code to try again.");
+            return;
+        }
+        match result {
+            device_code::Outcome::Invite(link) => self.pair_event(PairEvent::LinkSubmitted(link)),
+            device_code::Outcome::Invalid => self.notice("This code did not receive a valid Windows pairing link. Show a new code and try again."),
+            device_code::Outcome::Expired => self.notice("This pairing code expired. Show a new code to try again."),
+        }
+    }
     fn pair_event(&mut self, event: PairEvent) {
         let before = self.pairing.clone();
         let (state, effects) = pairing::step(self.pairing.clone(), event);
         self.pairing = state;
+        if self.pairing != pairing::State::Unpaired {
+            self.receiver = None;
+        }
         if self.pairing != before {
             (self.notify)(Notification::Pairing(self.pairing.name()));
         }
@@ -832,6 +897,7 @@ impl Driver {
             older_more: o.older_more,
             typing: o.typing_until.is_some(),
         });
+        snapshot.device_code = self.receiver.as_ref().map(|receiver| receiver.view.clone());
         snapshot.pairing = match &self.pairing {
             pairing::State::Unpaired => PairingView::Unpaired,
             pairing::State::Confirming(link) => PairingView::Confirming {
@@ -856,5 +922,80 @@ impl Driver {
         (self.notify)(Notification::Changed("pairing"));
         (self.notify)(Notification::Changed("status"));
         (self.notify)(Notification::Changed("chat"));
+    }
+}
+
+#[cfg(test)]
+mod device_code_tests {
+    use super::*;
+    use crate::{frame::b64, platform::SystemPlatform};
+
+    struct NoWrites;
+    impl Protector for NoWrites {
+        fn protect(&self, _: &[u8]) -> std::io::Result<Vec<u8>> {
+            panic!("device code must not persist a pairing before confirmation")
+        }
+        fn unprotect(&self, _: &[u8]) -> std::io::Result<Vec<u8>> {
+            panic!("device code must not read stored pairing data")
+        }
+    }
+    fn install_receiver(driver: &mut Driver, generation: u64, deadline: tokio::time::Instant) {
+        driver.receiver_generation = generation;
+        driver.receiver = Some(Receiver {
+            view: DeviceCodeView {
+                link: "https://example.invalid/demo".into(),
+                expires_at: 1000,
+            },
+            deadline,
+            task: tokio::spawn(std::future::pending()),
+        });
+    }
+    fn invite() -> device_code::Outcome {
+        device_code::Outcome::Invite(format!(
+            "yorozu://pair?v=3&relay=wss%3A%2F%2Frelay.example.invalid&key={}&token=AAAA&room={}&secret=AAAA",
+            b64([0x44; 32]), b64([0x55; 32]),
+        ))
+    }
+    #[tokio::test]
+    async fn stale_stopped_and_expired_receivers_cannot_confirm_or_overwrite_new_receivers() {
+        let (handle, mut driver) = Driver::new(
+            Arc::new(SystemPlatform {
+                dir: std::env::temp_dir(),
+            }),
+            Box::new(NoWrites),
+            Options::default(),
+            "test",
+            |_| {},
+        );
+        let end = tokio::time::Instant::now() + Duration::from_secs(60);
+        install_receiver(&mut driver, 2, end);
+        driver.device_code_finished(1, invite());
+        driver.publish();
+        assert!(matches!(handle.snapshot().pairing, PairingView::Unpaired));
+        assert!(handle.snapshot().device_code.is_some());
+
+        driver.receiver = None;
+        driver.device_code_finished(2, invite());
+        driver.publish();
+        assert!(matches!(handle.snapshot().pairing, PairingView::Unpaired));
+        assert!(handle.snapshot().device_code.is_none());
+
+        install_receiver(&mut driver, 3, tokio::time::Instant::now());
+        driver.device_code_finished(3, invite());
+        driver.publish();
+        assert!(matches!(handle.snapshot().pairing, PairingView::Unpaired));
+        assert!(handle.snapshot().notice.unwrap().text.contains("expired"));
+        assert!(handle.snapshot().device_code.is_none());
+
+        install_receiver(&mut driver, 4, end);
+        driver.device_code_finished(4, invite());
+        driver.publish();
+        let snapshot = handle.snapshot();
+        assert!(
+            matches!(snapshot.pairing, PairingView::Confirming {fingerprint, ..} if fingerprint == "4444 4444 4444 4444")
+        );
+        assert!(snapshot.device_code.is_none());
+        assert!(driver.record.is_none());
+        assert!(driver.socket.is_none());
     }
 }
