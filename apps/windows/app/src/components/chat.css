@@ -1,24 +1,47 @@
-main:has(.chat) { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; padding: 1rem 2rem; overflow: hidden; min-height: 0; gap: .5rem; }
-.chat { display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; max-width: 60rem; align-self: center; }
-.chat button, .chat textarea { font: inherit; }
-.chat button { padding: .35rem .75rem; cursor: pointer; }
-.chat button:disabled { cursor: default; }
-.chat button:focus-visible, .chat textarea:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
-.chat header { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; padding-block: .75rem; }
-.chat h1 { font-size: 1.25rem; margin: 0; overflow-wrap: anywhere; }
-.conversations { overflow: auto; }
+main:has(.chat) { align-items: stretch; padding: 0; overflow: hidden; gap: 0; background: var(--yorozu-page); }
+main:has(.chat) > .app-notice { align-self: center; margin: .4rem; }
+.chat { display: grid; grid-template-columns: clamp(13rem,22vw,16rem) minmax(0,1fr); flex: 1; min-height: 0; }
+#win-sidebar { background: var(--yorozu-panel); border-inline-end: 1px solid var(--yorozu-border); overflow: auto; min-height: 0; }
+.conversations { padding: 1rem .85rem; }
+.conversations .client-brand { margin: .2rem .5rem 1.25rem; }
+.new-chat { width: 100%; text-align: start; font-weight: 650; }
+.new-chat span { color: var(--yorozu-accent); margin-inline-end: .3rem; }
+.conversations h2 { margin: 1.25rem .5rem .32rem; color: var(--yorozu-subtle); font-size: .82rem; }
+.conversations p { margin: .25rem .5rem; color: var(--yorozu-subtle); font-size: .88rem; }
 .conversations ul, .transcript ol, .tools ul { padding: 0; list-style: none; margin: 0; }
-.conversations li button { width: 100%; text-align: left; margin-block: .25rem; overflow-wrap: anywhere; }
-.conversation { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.transcript { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; padding: .5rem; }
-.message { margin-block: 1rem; padding: .75rem 1rem; max-width: 72ch; overflow-wrap: anywhere; }
-.message.user { margin-left: 2rem; background: var(--yorozu-muted-fill); border: 1px solid GrayText; border-radius: var(--yorozu-bubble-radius); }
-.message p { white-space: pre-wrap; margin: .25rem 0; }
-.speaker { font-weight: 600; }
+.conversations li button { display: block; width: 100%; text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: transparent; border-color: transparent; padding-inline: .55rem; }
+.conversations li button[aria-current=true] { background: var(--yorozu-muted-fill); font-weight: 650; }
+.chat-content, .conversation { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+.chat-heading { min-height: 64px; padding: .5rem 1rem; border-block-end: 1px solid var(--yorozu-border); }
+.icon-button { display: inline-grid; place-items: center; flex: none; height: 44px; width: 44px; padding: 0; font-size: 1.35rem; background: transparent; border-color: transparent; }
+.mobile-chats-toggle { display: none; }
+.transcript { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; overflow-anchor: none; }
+.reading-column { width: min(100%,var(--yorozu-column)); margin-inline: auto; padding-inline: clamp(.85rem,3vw,1.65rem); }
+.transcript .reading-column { min-height: 100%; display: flex; flex-direction: column; padding-block: .9rem 1.35rem; }
+.history-control { text-align: center; }
+.history-control button { border-color: transparent; color: var(--yorozu-subtle); font-size: .84rem; margin-bottom: .65rem; }
+.transcript ol { display: flex; flex-direction: column; gap: 1rem; }
+.message { max-width: min(92%,38rem); overflow-wrap: anywhere; }
+.message.user { align-self: end; padding: .55rem .75rem; background: var(--yorozu-user-fill); border-radius: var(--yorozu-bubble-radius); }
+.message p { white-space: pre-wrap; margin: .15rem 0 0; }
+.speaker { font-weight: 610; font-size: .76rem; color: var(--yorozu-subtle); }
 .mark, .tools { font-size: .85rem; }
 .tools { padding: .5rem 1rem; overflow-wrap: anywhere; }
-.session-divider { text-align: center; margin-block: 1.5rem; border-block: 1px solid GrayText; padding: .5rem; }
-.composer { display: flex; flex-direction: column; gap: .5rem; padding-top: var(--yorozu-chat-gap); }
-.composer textarea { box-sizing: border-box; width: 100%; resize: vertical; min-height: 4rem; max-height: 25vh; padding: .5rem; }
-.composer button { align-self: flex-end; }
-.composer p { margin: 0; }
+.session-divider { text-align: center; margin-block: .6rem; border-block: 1px solid var(--yorozu-border); padding: .5rem; }
+.empty-chat { margin: auto; padding: 2rem 1rem; text-align: center; color: var(--yorozu-subtle); }
+.empty-chat h2 { font-size: 1.25rem; color: var(--yorozu-text); margin: 0; }
+.empty-chat p { margin: .25rem 0 .8rem; }
+.composer-area { position: relative; padding: .42rem 0 .75rem; }
+.latest { position: absolute; z-index: 1; left: 50%; bottom: calc(100% + .35rem); transform: translateX(-50%); width: 44px; min-height: 44px; padding: 0; border-radius: 50%; box-shadow: 0 3px 12px #0002; }
+.settings-dialog { width: min(calc(100% - 2rem),29rem); max-height: calc(100% - 2rem); padding: .85rem 1.15rem 1rem; border: 1px solid var(--yorozu-border); border-radius: 1.05rem; color: var(--yorozu-text); background: var(--yorozu-page); }
+.settings-dialog::backdrop { background: #0006; }
+.settings-dialog header { display: flex; align-items: center; justify-content: space-between; }
+.settings-dialog h2 { margin: 0; font-size: 1.2rem; }
+.settings-dialog h3 { color: var(--yorozu-subtle); font-size: .85rem; margin: .75rem 0 .3rem; }
+.settings-dialog p { margin: .35rem 0 .55rem; }
+@media (max-width: 43rem) {
+  .chat { grid-template-columns: minmax(0,1fr); position: relative; }
+  #win-sidebar { display: none; }
+  .mobile-chats-toggle { display: inline-grid; }
+  #win-sidebar.shown { display: block; position: absolute; z-index: 2; inset: 64px auto 0 0; width: min(80%,18rem); box-shadow: 8px 0 18px #0002; }
+}

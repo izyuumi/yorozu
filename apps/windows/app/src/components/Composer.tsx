@@ -7,12 +7,12 @@ export function Composer({ convId, act }: { convId: string; act: (task: Promise<
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const tooLong = text.length > 60_000;
-  return <ComposerFields rows={3} label={strings.message} sendLabel={strings.send} value={text}
+  return <ComposerFields rows={1} label={strings.message} sendLabel={strings.send} value={text}
     disabled={tooLong || !text.trim() || sending} limit={tooLong ? strings.tooLong : undefined}
     onChange={e => setText(e.target.value)} onSubmit={e => {
       e.preventDefault();
       if (!text.trim() || tooLong || sending) return;
       setSending(true);
-      act(command("send_message", { convId, text }).then(() => setText("")).finally(() => setSending(false)));
+      act(command("send_message", { convId, text }).then(() => setText(current => current === text ? "" : current)).finally(() => setSending(false)));
     }} />;
 }
