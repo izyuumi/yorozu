@@ -53,7 +53,8 @@ export default defineChannelPluginEntry({
       return presentation !== params.presentation ? { params: { ...params, presentation } } : undefined;
     });
     const admin = { scope: "operator.admin" } as const;
-    api.registerGatewayMethod("yorozu.pair.begin", method(beginPairing), admin);
+    api.registerGatewayMethod("yorozu.pair.begin", method(() => beginPairing()), admin);
+    api.registerGatewayMethod("yorozu.pair.browser", method(() => beginPairing(true)), admin);
     api.registerGatewayMethod(
       "yorozu.devices.list",
       method(async () => ({

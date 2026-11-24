@@ -1,8 +1,7 @@
 import { yorozuRuntime } from "./runtime.js";
 
-export type Device = {
+export type Device = ({ staticPub: string; browser?: never } | { browser: true; staticPub?: never }) & {
   signingPub: string;
-  staticPub: string;
   name?: string;
   pairedAt: number;
   push?: boolean;
@@ -28,3 +27,10 @@ export async function putDevice(device: Device): Promise<string[]> {
 }
 
 export const removeDevice = (signingPub: string): Promise<boolean> => store().delete(signingPub);
+
+let deviceMutations: Promise<void> = Promise.resolve();
+export function mutateDevices<T>(fn: () => Promise<T>): Promise<T> {
+  const call = deviceMutations.then(fn);
+  deviceMutations = call.then(() => undefined, () => undefined);
+  return call;
+}

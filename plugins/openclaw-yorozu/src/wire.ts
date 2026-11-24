@@ -13,6 +13,7 @@ import {
 } from "node:crypto";
 
 export const LEGACY_VERSION = 3;
+const BROWSER_INIT = 0x21;
 const FRAME_TYPE = { init: 0x11, response: 0x12, box: 0x13 } as const;
 export const PROTOCOL_NAME = "Noise_IK_25519_ChaChaPoly_SHA256";
 export const SID_BYTES = 8;
@@ -78,8 +79,8 @@ export const helloProof = (secret: string, pub: string, spub: string): string =>
 export const fingerprint = (hostStaticPub: Uint8Array): string =>
   (Buffer.from(hostStaticPub).subarray(0, 8).toString("hex").toUpperCase().match(/.{1,4}/g) ?? []).join(" ");
 
-export const prologue = (room: string, deviceSigningPub: Uint8Array, legacy = false): Buffer =>
-  Buffer.from(`${legacy ? "yorozu-v3" : "yorozu"}|${room}|${b64u(deviceSigningPub)}`, "utf8");
+export const prologue = (room: string, deviceSigningPub: Uint8Array, legacy = false, browser = false): Buffer =>
+  Buffer.from(`${browser ? "yorozu-browser-v1" : legacy ? "yorozu-v3" : "yorozu"}|${room}|${b64u(deviceSigningPub)}`, "utf8");
 
 const hmac = (key: Uint8Array, data: Uint8Array): Buffer => createHmac("sha256", key).update(data).digest();
 
@@ -241,7 +242,7 @@ export class NoiseIK {
 }
 
 export type Frame = { legacy?: boolean } & (
-  | { type: "init"; deviceSigningKey: Buffer; message: Buffer }
+  | { type: "init"; browser?: true; deviceSigningKey: Buffer; message: Buffer }
   | { type: "response"; sid: Buffer; message: Buffer }
   | { type: "box"; sid: Buffer; counter: number; ciphertext: Buffer }
 );
@@ -251,7 +252,7 @@ export const frameSid = (frame: Frame): Buffer =>
 
 export function encodeFrame(frame: Frame): string {
   const head = Buffer.from(
-    frame.legacy ? [LEGACY_VERSION, { init: 1, response: 2, box: 3 }[frame.type]] : [FRAME_TYPE[frame.type]],
+    frame.type === "init" && frame.browser ? [BROWSER_INIT] : frame.legacy ? [LEGACY_VERSION, { init: 1, response: 2, box: 3 }[frame.type]] : [FRAME_TYPE[frame.type]],
   );
   if (frame.type === "init") return b64u(Buffer.concat([head, frame.deviceSigningKey, frame.message]));
   if (frame.type === "response") return b64u(Buffer.concat([head, frame.sid, frame.message]));
@@ -264,10 +265,11 @@ export function decodeFrame(payload: string): Frame | null {
   const b = fromB64u(payload);
   if (!b || b.length < 2) return null;
   const legacy = b.readUInt8(0) === LEGACY_VERSION;
-  const type = legacy ? b.readUInt8(1) : b.readUInt8(0) - 0x10;
+  const browser = b[0] === BROWSER_INIT;
+  const type = browser ? 1 : legacy ? b.readUInt8(1) : b.readUInt8(0) - 0x10;
   const body = b.subarray(legacy ? 2 : 1);
   if (type === 1 && body.length >= 32 + 96 && body.length <= 32 + 65_535) {
-    return { legacy, type: "init", deviceSigningKey: body.subarray(0, 32), message: body.subarray(32) };
+    return { legacy, type: "init", ...(browser && { browser: true }), deviceSigningKey: body.subarray(0, 32), message: body.subarray(32) };
   }
   if (type === 2 && body.length >= SID_BYTES + 48 && body.length <= SID_BYTES + 65_535) {
     return { legacy, type: "response", sid: body.subarray(0, SID_BYTES), message: body.subarray(SID_BYTES) };
@@ -329,6 +331,7 @@ export type HandshakePayload = { ts: number; proof?: string };
 
 export type AcceptedHandshake = {
   sid: string;
+  browser?: true;
   deviceSigningKey: Buffer;
   deviceStatic: Buffer;
   payload: HandshakePayload;
@@ -347,7 +350,7 @@ export function acceptHandshake(opts: {
   const frame = decodeFrame(opts.payload);
   if (frame?.type !== "init" || !verifyFrame(frame.deviceSigningKey, opts.payload, opts.sig)) return null;
   try {
-    const noise = new NoiseIK("responder", opts.host, null, prologue(opts.room, frame.deviceSigningKey, frame.legacy), opts.ephemeral);
+    const noise = new NoiseIK("responder", opts.host, null, prologue(opts.room, frame.deviceSigningKey, frame.legacy, frame.browser), opts.ephemeral);
     const payload = parseHandshakePayload(noise.readMessage(frame.message));
     const now = opts.now ?? Date.now();
     if (!payload || Math.abs(now - payload.ts) > HANDSHAKE_MAX_AGE_MS || !noise.remoteStatic) return null;
@@ -357,6 +360,7 @@ export function acceptHandshake(opts: {
     session.legacy = !!frame.legacy;
     return {
       sid: b64u(sid),
+      browser: frame.browser,
       deviceSigningKey: frame.deviceSigningKey,
       deviceStatic: noise.remoteStatic,
       payload,

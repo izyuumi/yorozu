@@ -12,13 +12,13 @@ main:has(.chat) { display: flex; flex-direction: column; align-items: stretch; j
 .conversation { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .transcript { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; padding: .5rem; }
 .message { margin-block: 1rem; padding: .75rem 1rem; max-width: 72ch; overflow-wrap: anywhere; }
-.message.user { margin-left: 2rem; background: Canvas; border: 1px solid GrayText; border-radius: .5rem; }
+.message.user { margin-left: 2rem; background: var(--yorozu-muted-fill); border: 1px solid GrayText; border-radius: var(--yorozu-bubble-radius); }
 .message p { white-space: pre-wrap; margin: .25rem 0; }
 .speaker { font-weight: 600; }
 .mark, .tools { font-size: .85rem; }
 .tools { padding: .5rem 1rem; overflow-wrap: anywhere; }
 .session-divider { text-align: center; margin-block: 1.5rem; border-block: 1px solid GrayText; padding: .5rem; }
-.composer { display: flex; flex-direction: column; gap: .5rem; padding-top: .75rem; }
+.composer { display: flex; flex-direction: column; gap: .5rem; padding-top: var(--yorozu-chat-gap); }
 .composer textarea { box-sizing: border-box; width: 100%; resize: vertical; min-height: 4rem; max-height: 25vh; padding: .5rem; }
 .composer button { align-self: flex-end; }
 .composer p { margin: 0; }
