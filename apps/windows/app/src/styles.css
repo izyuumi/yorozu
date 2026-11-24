@@ -2,72 +2,30 @@
 
 :root {
   color-scheme: light dark;
-  font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
-  font-size: 15px;
-  line-height: 1.5;
+  font: 15px/1.5 "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  color: var(--yorozu-text);
+  background: var(--yorozu-page);
 }
-
-html,
-body,
-#root {
-  height: 100%;
-  margin: 0;
-}
-
-.app {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-main {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem;
-  overflow: auto;
-}
-
-footer {
-  padding: 0.5rem 1rem;
-  font-size: 0.8rem;
-  text-align: center;
-  opacity: 0.6;
-}
-
-.pairing {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  width: 100%;
-  max-width: 32rem;
-}
-
-.pairing h1 {
-  margin: 0;
-  font-size: 1.5rem;
-  font-weight: 600;
-}
-
-.pairing textarea {
-  font: inherit;
-  padding: 0.5rem;
-  resize: vertical;
-}
-
-.pairing button {
-  align-self: flex-start;
-  font: inherit;
-  padding: 0.4rem 1.5rem;
-}
-
-.note {
-  margin: 0;
-  font-size: 0.85rem;
-  opacity: 0.7;
-}
-
-.pairing form { display: grid; gap: var(--yorozu-chat-gap); }
-.pairing form :where(button) { justify-self: start; }
-.pairing form button:not(:disabled) { background: var(--yorozu-accent); color: var(--yorozu-on-accent); border-color: transparent; }
+* { box-sizing: border-box; }
+html, body, #root, .app { height: 100%; margin: 0; }
+button, textarea { color: inherit; font: inherit; }
+button { cursor: pointer; min-height: 40px; padding: .45rem .8rem; border: 1px solid var(--yorozu-border); border-radius: .65rem; background: var(--yorozu-page); }
+button:disabled { cursor: default; opacity: .55; }
+button:not(:disabled):hover { filter: brightness(.97); }
+button:focus-visible, textarea:focus-visible, summary:focus-visible, .transcript:focus-visible { outline: 2px solid var(--yorozu-accent); outline-offset: 2px; }
+main { display: flex; flex-direction: column; align-items: center; height: 100%; overflow: auto; padding: 1.25rem; background: var(--yorozu-panel); gap: .6rem; }
+.app-notice { max-width: min(100%, var(--yorozu-column)); }
+.app-opening { margin: 1rem; }
+.client-brand { display: flex; gap: .55rem; align-items: center; font-weight: 690; letter-spacing: -.02em; }
+.client-brand span { width: 1.22rem; height: .88rem; transform: rotate(-17deg); border-radius: 50%; background: var(--yorozu-accent); }
+.entry-brand { align-self: flex-start; }
+.pairing { display: flex; flex-direction: column; gap: .75rem; width: 100%; max-width: 29rem; }
+.pair-card { margin-top: clamp(1.1rem, 8vh, 5rem); padding: clamp(1rem, 5vw, 2rem); background: var(--yorozu-page); border: 1px solid var(--yorozu-border); border-radius: 1.3rem; }
+.pairing h1 { margin: .1rem 0; font-size: 1.85rem; line-height: 1.16; letter-spacing: -.04em; }
+.pair-fields, .fingerprint-step { display: grid; gap: .72rem; }
+.pairing p { margin: 0; }
+.pairing textarea { width: 100%; min-height: 44px; padding: .65rem .75rem; resize: none; border: 1px solid var(--yorozu-border); border-radius: .7rem; -webkit-text-security: disc; background: var(--yorozu-page); }
+.pair-help { color: var(--yorozu-subtle); font-size: .88rem; margin-top: .3rem; }
+.pair-help summary { cursor: pointer; width: fit-content; padding-block: .25rem; }
+.pair-help code { overflow-wrap: anywhere; }
+.note { margin: 0; font-size: .86rem; color: var(--yorozu-subtle); }
