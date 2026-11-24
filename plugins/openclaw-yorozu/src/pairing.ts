@@ -30,38 +30,48 @@ export async function mintCode(mint: Mint | null, hints: DirectHints | undefined
 const q = (value: string) => encodeURIComponent(value).replace(/%3A/gi, ":").replace(/%2F/gi, "/");
 
 export function pairingQuery(opts: {
-  relayUrl: string; hostStatic: Uint8Array; token: string; room: string; secret: string; hints?: DirectHints;
+  relayUrl: string; hostStatic: Uint8Array; token: string; room: string; secret: string; hints?: DirectHints; browser?: boolean;
 }): string {
   const { hints } = opts;
   const lan = hints?.lan.slice(0, QR_LAN).map((i) => `${q(i.address)}/${i.prefix}`) ?? [];
   const ts = hints?.tailscale.slice(0, QR_TAILSCALE).map((i) => q(i.address)) ?? [];
-  return `v=3&relay=${q(opts.relayUrl)}&key=${b64u(opts.hostStatic)}&token=${q(opts.token)}&room=${opts.room}&secret=${opts.secret}` +
+  return `v=${opts.browser ? 4 : 3}&relay=${q(opts.relayUrl)}&key=${b64u(opts.hostStatic)}&token=${q(opts.token)}&room=${opts.room}&secret=${opts.secret}` +
     (hints ? `&port=${hints.port}` : "") + (lan.length ? `&lan=${lan.join(",")}` : "") + (ts.length ? `&ts=${ts.join(",")}` : "");
 }
 
 export class PendingPairings {
-  private readonly secrets = new Map<string, number>();
+  private readonly secrets = new Map<string, { expiresAt: number; browser: boolean }>();
   onSpend?: (secret: string) => void;
 
   has(secret: string, now = Date.now()): boolean {
     const until = this.secrets.get(secret);
-    return until !== undefined && until >= now;
+    return until !== undefined && until.expiresAt >= now;
   }
 
-  add(expiresAt: number, now = Date.now()): string {
-    for (const [old, until] of this.secrets) if (until < now) this.secrets.delete(old);
+  add(expiresAt: number, now = Date.now(), browser = false): string {
+    for (const [old, until] of this.secrets) if (until.expiresAt < now) this.secrets.delete(old);
     const secret = b64u(randomBytes(32));
-    this.secrets.set(secret, expiresAt);
+    this.secrets.set(secret, { expiresAt, browser });
     return secret;
   }
 
-  spend(proof: string | undefined, staticPub: string, signingPub: string, now = Date.now()): boolean {
+  spend(proof: string | undefined, staticPub: string, signingPub: string, now = Date.now(), browser = false): boolean {
+    return this.match(proof, staticPub, signingPub, now, browser, true);
+  }
+
+  acceptsBrowser(proof: string | undefined, staticPub: string, signingPub: string, now = Date.now()): boolean {
+    return this.match(proof, staticPub, signingPub, now, true, false);
+  }
+
+  private match(proof: string | undefined, staticPub: string, signingPub: string, now: number, browser: boolean, spend: boolean): boolean {
     if (!proof) return false;
     const given = Buffer.from(proof, "utf8");
     for (const [secret, until] of this.secrets) {
-      if (until >= now && sameBytes(Buffer.from(helloProof(secret, staticPub, signingPub), "utf8"), given)) {
-        this.secrets.delete(secret);
-        this.onSpend?.(secret);
+      if (until.browser === browser && until.expiresAt >= now && sameBytes(Buffer.from(helloProof(secret, staticPub, signingPub), "utf8"), given)) {
+        if (spend) {
+          this.secrets.delete(secret);
+          this.onSpend?.(secret);
+        }
         return true;
       }
     }

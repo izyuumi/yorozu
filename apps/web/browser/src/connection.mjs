@@ -98,13 +98,13 @@ export function connect(device, hooks, { Socket = WebSocket, handshakeTimeout = 
           if (!session) {
             session = await handshake.finish(frame);
             if (session) await sendFrame(session.seal({ kind: 'peer_info',
-              data: { protocolMin: 3, protocolMax: 3, app: 'Web', name: 'Yorozu Web', capabilities: [] } }));
+              data: { protocolMin: 3, protocolMax: 3, app: 'Web', name: 'Yorozu Web', capabilities: device.browser ? ['browser-ephemeral-v1'] : [] } }));
             return;
           }
           const box = session.open(frame);
           if (!box?.data || typeof box.data !== 'object') return;
           if (!ready && box.kind === 'peer_info') {
-            if (box.data.protocolMin > 3 || box.data.protocolMax < 3 ||
+            if ((device.browser && !box.data.capabilities?.includes("browser-ephemeral-v1")) || box.data.protocolMin > 3 || box.data.protocolMax < 3 ||
                 !Number.isInteger(box.data.protocolMin) || !Number.isInteger(box.data.protocolMax)) {
               closed = true;
               stop();
@@ -112,7 +112,7 @@ export function connect(device, hooks, { Socket = WebSocket, handshakeTimeout = 
               return;
             }
             if (!confirmed) {
-              const saved = { relay: device.relay, room: device.room, hostKey: device.hostKey, identity: device.identity };
+              const saved = { relay: device.relay, room: device.room, browser: device.browser, hostKey: device.hostKey, identity: device.identity };
               await hooks.paired(saved);
               if (!active()) return;
               confirmed = true;

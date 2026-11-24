@@ -8,7 +8,7 @@
   "routes": [{ "pattern": "app.yorozu.yumi.to", "custom_domain": true }],
   "env": {
     "staging": {
-      "name": "yorozu-browser-staging",
+      "name": "yorozu-v4-staging",
       "workers_dev": true,
       "preview_urls": false,
       "routes": []

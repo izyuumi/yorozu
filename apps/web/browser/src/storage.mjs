@@ -24,7 +24,8 @@ export function deviceStore() {
       db = open();
       const saved = await load();
       const matches = (key, name) => key?.type === 'private' && key.extractable === false && key.algorithm?.name === name;
-      if (saved?.room !== device.room || !matches(saved.identity?.noisePrivate, 'X25519') ||
+      if (saved?.room !== device.room || saved.browser !== device.browser ||
+          (device.browser ? saved.identity?.noisePrivate !== undefined : !matches(saved.identity?.noisePrivate, 'X25519')) ||
           !matches(saved.identity?.signingPrivate, 'Ed25519')) {
         await transact('readwrite', (store) => store.delete('current'));
         throw new Error('Browser did not preserve pairing keys');

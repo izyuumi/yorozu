@@ -46,7 +46,7 @@ for (const legacy of [false, true]) {
 
 test("unknown frame heads and legacy types are rejected", () => {
   for (let first = 0; first <= 255; first++) {
-    if ([3, 0x11, 0x12, 0x13].includes(first)) continue;
+    if ([3, 0x11, 0x12, 0x13, 0x21].includes(first)) continue;
     assert.equal(decodeFrame(b64u(Buffer.concat([Buffer.from([first]), Buffer.alloc(160)]))), null);
   }
   for (const type of [0, 4, 0x11, 0x12, 0x13, 255]) {
