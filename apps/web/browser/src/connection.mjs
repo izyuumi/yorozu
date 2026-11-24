@@ -12,7 +12,7 @@ export function connect(device, hooks, { Socket = WebSocket, handshakeTimeout = 
     const socket = new Socket(target.href);
     let alive = true, handshake, session, ready = false, auth = false, host = false;
     let authTimer, handshakeTimer, pongTimer;
-    let lastFlow = 0n, flowFrames = 0;
+    let lastFlow = 0, flowFrames = 0;
     let serial = Promise.resolve();
     const active = () => alive && !closed && socket.readyState === 1;
     function send(data) {
@@ -84,13 +84,13 @@ export function connect(device, hooks, { Socket = WebSocket, handshakeTimeout = 
           if (host) await init();
           else { resetSession(); hooks.status('Mac is offline'); }
         } else if (msg.type === 'frame' && auth) {
-          if (typeof msg.flowBytes === 'string' && /^\d{1,19}$/.test(msg.flowBytes)) {
-            const count = BigInt(msg.flowBytes);
-            if (++flowFrames >= 16 || count - lastFlow >= 262144n) {
-              send({ type: 'flowAck', bytes: msg.flowBytes });
-              lastFlow = count;
-              flowFrames = 0;
-            }
+          const count = typeof msg.flowBytes === 'string' && /^\d{1,19}$/.test(msg.flowBytes)
+            ? Number(msg.flowBytes) : msg.flowBytes;
+          if (Number.isSafeInteger(count) && count >= lastFlow &&
+              (++flowFrames >= 16 || count - lastFlow >= 262144)) {
+            send({ type: 'flowAck', bytes: String(count) });
+            lastFlow = count;
+            flowFrames = 0;
           }
           if (!host || !handshake) return;
           let frame;
