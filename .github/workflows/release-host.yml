@@ -1,0 +1,33 @@
+name: Release OpenClaw host
+on:
+  push:
+    branches: [main]
+    paths: ['plugins/openclaw-yorozu/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26
+      - run: node --test 'plugins/openclaw-yorozu/test/*.test.ts'
+      - name: Archive host plugin from the release commit
+        run: |
+          plugin=plugins/openclaw-yorozu
+          git archive --format=tar "$GITHUB_SHA" -- \
+            "$plugin/index.ts" "$plugin/setup-entry.ts" "$plugin/openclaw.plugin.json" \
+            "$plugin/package.json" "$plugin/README.md" "$plugin/src" |
+            gzip > "yorozu-openclaw-host-$GITHUB_SHA.tar.gz"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: yorozu-openclaw-host-${{ github.sha }}
+          path: yorozu-openclaw-host-${{ github.sha }}.tar.gz
+          if-no-files-found: error

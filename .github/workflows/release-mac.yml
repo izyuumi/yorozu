@@ -11,7 +11,36 @@ concurrency:
 permissions: {}
 
 jobs:
+  route:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      publish: ${{ steps.route.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: { fetch-depth: 0, persist-credentials: false }
+      - id: route
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          publish=true
+          if [[ "$GITHUB_EVENT_NAME" == push ]] &&
+             git show -s --format=%B "$GITHUB_SHA" | grep -Fx 'Release-Target: host-only' >/dev/null; then
+            files="$(git diff --name-only --no-renames "$BEFORE" "$GITHUB_SHA")"
+            if [[ "$(git rev-list --count "$BEFORE..$GITHUB_SHA")" != 1 ]] ||
+               ! grep -q '^plugins/openclaw-yorozu/' <<< "$files" ||
+               grep -qvE '^(plugins/openclaw-yorozu/|apps/web/browser/|apps/windows/|\.github/workflows/(browser-client|deploy-web)\.yml$)' <<< "$files"; then
+              echo "A host-only release marker requires a single reviewed host/browser commit." >&2
+              exit 1
+            fi
+            publish=false
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
   release:
+    needs: route
+    if: needs.route.outputs.publish == 'true'
     runs-on: xcode-27
     timeout-minutes: 180
     permissions:
