@@ -1,4 +1,5 @@
 import './style.css';
+import { mountUI } from './presentation.jsx';
 import { connect } from './connection.mjs';
 import { fingerprint, parsePairing } from './pairing.mjs';
 import { makeIdentity } from './wire.mjs';
@@ -14,6 +15,7 @@ function takeInvitation() {
   return link && link.length <= 4096 ? link : null;
 }
 let incoming = takeInvitation();
+const { renderMessages } = mountUI();
 const store = deviceStore();
 const history = new Map(), threads = new Map();
 let connection, pairing, draftPairing, selected, hostName, historyRequest, lockRelease;
@@ -59,16 +61,7 @@ function render() {
   $('threads').value = selected || newThread;
   const page = history.get(selected);
   $('older').hidden = !page?.more;
-  $('messages').replaceChildren(...(page?.items ?? []).map((item) => {
-    const element = document.createElement('li');
-    element.className = item.kind;
-    const label = document.createElement('b');
-    const text = document.createElement('p');
-    label.textContent = item.kind === 'user' ? 'You' : 'Yorozu';
-    text.textContent = item.text;
-    element.append(label, text);
-    return element;
-  }));
+  renderMessages(page?.items ?? [], selected);
 }
 function fetchHistory(before) {
   if (!connected || !selected || historyRequest) return;
@@ -147,7 +140,7 @@ async function forget(message) {
   threads.clear();
   history.clear();
   render();
-  $('messages').replaceChildren();
+  renderMessages([]);
   setStatus('');
   showPairing();
   notify(message);

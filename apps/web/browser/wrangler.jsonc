@@ -7,6 +7,12 @@
   "assets": { "directory": "./dist" },
   "routes": [{ "pattern": "app.yorozu.yumi.to", "custom_domain": true }],
   "env": {
+    "shared-preview": {
+      "name": "yorozu-shared-ui-preview",
+      "workers_dev": true,
+      "preview_urls": false,
+      "routes": []
+    },
     "staging": {
       "name": "yorozu-v4-staging",
       "workers_dev": true,

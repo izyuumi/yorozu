@@ -1,0 +1,14 @@
+:root {
+  --yorozu-accent: #bd432e;
+  --yorozu-on-accent: #fff;
+  --yorozu-muted-fill: #f2efed;
+  --yorozu-chat-gap: .75rem;
+  --yorozu-bubble-radius: 1.15rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --yorozu-accent: #fa8b73;
+    --yorozu-on-accent: #23120e;
+    --yorozu-muted-fill: #292729;
+  }
+}

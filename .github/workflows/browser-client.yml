@@ -1,7 +1,7 @@
 name: Yorozu browser client
 on:
   pull_request:
-    paths: ['apps/web/browser/**', '.github/workflows/browser-client.yml']
+    paths: ['apps/web/browser/**', 'apps/windows/app/src/components/shared/**', '.github/workflows/browser-client.yml']
   workflow_dispatch:
     inputs:
       target:

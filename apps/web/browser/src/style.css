@@ -1,12 +1,14 @@
+@import "../../../windows/app/src/components/shared/theme.css";
+
 :root {
   font: 1rem/1.45 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   color-scheme: light dark;
   --surface: #faf9f8; --page: #fff; --text: #1c1c1e; --subtle: #646467;
-  --fill: #f2efed; --stroke: #dedbd8; --accent: #bd432e; --white: #fff;
+  --fill: var(--yorozu-muted-fill); --stroke: #dedbd8; --accent: var(--yorozu-accent); --white: var(--yorozu-on-accent);
 }
 @media (prefers-color-scheme: dark) {
   :root { --surface: #19191a; --page: #111113; --text: #f9f6f3; --subtle: #b4afac;
-  --fill: #292729; --stroke: #474144; --accent: #fa8b73; --white: #23120e; }
+  --stroke: #474144; }
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--page); color: var(--text); }
@@ -31,17 +33,20 @@ h2 { margin-top: 0; }
 #pair-hint:empty { display: none; }
 #pair-hint { margin: 0; color: var(--subtle); font-size: .9rem; }
 #fingerprint { font: 650 1.2rem ui-monospace, monospace; letter-spacing: .07em; }
-#chat { margin-top: .7rem; }
+main:has(#chat:not([hidden])) { display: flex; flex-direction: column; height: 100dvh; }
+#chat { display: flex; flex: 1; min-height: 0; flex-direction: column; margin-top: .7rem; gap: .3rem; }
+#threads, #older { align-self: flex-start; max-width: 100%; }
 form { display: flex; align-items: start; flex-direction: column; gap: .55rem; }
-#composer { position: sticky; bottom: 0; display: grid; grid-template-columns: 1fr auto; align-items: end; padding: .65rem .5rem; border: 1px solid var(--stroke); border-radius: 1.35rem; background: var(--surface); }
+#chat-composer { position: sticky; bottom: 0; }
+#composer { display: grid; grid-template-columns: 1fr auto; align-items: end; padding: .65rem .5rem; border: 1px solid var(--stroke); border-radius: 1.35rem; background: var(--surface); }
 #composer label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 #composer textarea { resize: vertical; min-height: 2.6rem; border: 0; background: var(--surface); }
 #send { width: 44px; min-height: 44px; padding: 0; font-size: 1.25rem; }
 [hidden] { display: none !important; }
-#messages { display: flex; flex-direction: column; gap: .75rem; list-style: none; padding-inline: 0; min-height: min(39dvh, 18rem); }
+#messages { display: flex; flex-direction: column; gap: var(--yorozu-chat-gap); list-style: none; padding-inline: 0; min-height: 0; flex: 1; overflow: auto; overscroll-behavior: contain; overflow-anchor: none; }
 #messages li { max-width: min(95%, 38rem); }
-#messages li.user { align-self: end; padding: .65rem .9rem; border-radius: 1.15rem; background: var(--fill); }
-#messages b { color: var(--subtle); font-size: .78rem; }
+#messages li.user { align-self: end; padding: .65rem .9rem; border-radius: var(--yorozu-bubble-radius); background: var(--fill); }
+#messages .speaker { color: var(--subtle); font-size: .78rem; }
 #messages p { margin: .15rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 dialog { max-width: min(90vw, 32rem); border: 1px solid var(--stroke); border-radius: 1.3rem; padding: 1.4rem; color: var(--text); background: var(--surface); }
 dialog::backdrop { background: rgb(0 0 0 / .36); }

@@ -19,32 +19,15 @@
   <section id="onboarding" hidden>
     <p class="eyebrow">SET UP YOROZU</p><h1>Connect to your Mac</h1>
     <p>Run <code>openclaw yorozu pair-browser</code> on your Mac to create a browser invitation. Open the link here and compare the host fingerprint to connect.</p>
-    <form id="pair-form" novalidate>
-      <label for="pair-link">Pairing link</label><p id="pair-hint"></p>
-      <textarea id="pair-link" rows="1" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="pair-error" maxlength="8192"></textarea>
-      <label><input id="remember" type="checkbox" checked> Remember this browser</label>
-      <p id="pair-error" role="alert" hidden></p>
-      <button id="continue" type="button">Continue</button>
-    </form>
-    <div id="confirm" hidden>
-      <h2 id="confirm-heading" tabindex="-1">Confirm host fingerprint</h2>
-      <p>Check that this key matches the fingerprint shown with the pairing link.</p>
-      <code id="fingerprint"></code>
-      <p>Yorozu can keep up to 16 paired devices. If it is full, pairing removes the oldest device.</p>
-      <button id="pair-now" type="button">Pair</button>
-      <button id="cancel" type="button">Cancel</button>
-    </div>
+    <div id="pair-fields"></div>
+    <div id="pair-confirmation"></div>
   </section>
   <section id="chat" hidden>
     <label for="threads">Conversation</label>
     <select id="threads"></select>
     <button id="older" type="button" hidden>Earlier messages</button>
-    <ol id="messages" aria-label="Messages"></ol>
-    <form id="composer">
-      <label for="message">Message</label>
-      <textarea id="message" rows="2" maxlength="60000" required></textarea>
-      <button id="send" disabled aria-label="Send">↑</button>
-    </form>
+    <ol id="messages" aria-label="Messages" tabindex="0"></ol>
+    <div id="chat-composer"></div>
   </section>
   <dialog id="settings">
     <h2>Settings</h2>
@@ -55,7 +38,7 @@
     </dl>
     <p id="storage-mode"></p>
     <p>Forgetting this browser clears local access. To revoke its pairing on your Mac, remove Yorozu Web in Devices from another paired device.</p>
-    <button id="forget" type="button">Forget this browser</button>
+    <div id="forget-action"></div>
     <form method="dialog"><button>Close</button></form>
   </dialog>
 </main>

@@ -6,6 +6,10 @@ import { fakeHost } from '../../../windows/conformance/host/fake-host.ts';
 
 test('browser pairs, survives full browser restart, chats, waits for the offline Mac, and drops a revoked pairing', { timeout: 45_000 }, async (t) => {
   const host = await fakeHost();
+  const thread = crypto.randomUUID();
+  host.seed(thread, Array.from({length:65}, (_, i) => ({
+    kind: i % 2 ? 'agent' : 'user', id: crypto.randomUUID(), seq: i+1, ts: Date.now(), text: 'History message ' + (i+1),
+  })));
   t.after(() => host.stop());
   const relay = new URL(new URL(await host.link()).searchParams.get("relay"));
   process.env.VITE_YOROZU_TEST_RELAY = relay.href;
@@ -53,6 +57,11 @@ test('browser pairs, survives full browser restart, chats, waits for the offline
   await page.getByRole('button', {name:'Pair', exact: true}).click();
   await found(page, 'Connected');
   assert.equal(host.devices.size, 1);
+  await found(page, 'History message 65');
+  assert.equal(await page.getByText('History message 1',{exact:true}).count(),0);
+  assert.ok(await page.locator('#messages').evaluate(e=>e.scrollHeight>e.clientHeight), 'transcript scrolls independently');
+  await page.getByRole('button',{name:'Earlier messages'}).click();
+  await found(page, 'History message 1');
   await page.getByLabel('Message', { exact: true }).fill('Hello from a synthetic Windows client');
   await page.getByRole('button', {name:'Send'}).click();
   await found(page, 'echo: Hello from a synthetic Windows client');

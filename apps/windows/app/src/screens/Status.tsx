@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { command, type Snapshot } from "../api";
 import { strings } from "../strings";
+import { ForgetAction } from "../components/shared/ClientUI";
 export function Status({ snapshot, act }: { snapshot: Snapshot; act: (task: Promise<void>) => void }) {
   const [confirm, setConfirm] = useState(false);
   return <section className="pairing">
@@ -9,7 +10,7 @@ export function Status({ snapshot, act }: { snapshot: Snapshot; act: (task: Prom
     {snapshot.updateRequired && <button onClick={() => act(command("retry_connection"))}>Try again</button>}
     {snapshot.pairing.state === "paired" && (confirm ? <div>
       <p>Forget this PC's pairing?</p><p>{strings.S10}</p>
-      <button onClick={() => act(command("forget_pairing"))}>Forget pairing</button>
+      <ForgetAction onForget={() => act(command("forget_pairing"))} label="Forget pairing" />
       <button onClick={() => setConfirm(false)}>Cancel</button>
     </div> : <button onClick={() => setConfirm(true)}>Forget</button>)}
   </section>;

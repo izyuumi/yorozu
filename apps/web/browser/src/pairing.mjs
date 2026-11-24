@@ -1,9 +1,10 @@
 import { unb64 } from './wire.mjs';
 
-const officialRelay = import.meta.env?.MODE === "staging" ? "wss://yorozu-browser-test-relay.yumi-f4f.workers.dev/" : "wss://relay.yumi.to/";
+const mode = import.meta.env?.MODE;
+const officialRelay = mode === "staging" || mode === "shared-preview" ? "wss://yorozu-browser-test-relay.yumi-f4f.workers.dev/" : "wss://relay.yumi.to/";
 const previewOrigin = "https://yorozu-v4-staging.yumi-f4f.workers.dev";
 const appOrigin = "https://app.yorozu.yumi.to";
-const currentApp = import.meta.env?.MODE === "staging" ? previewOrigin : appOrigin;
+const currentApp = mode === "shared-preview" ? "https://yorozu-shared-ui-preview.yumi-f4f.workers.dev" : mode === "staging" ? previewOrigin : appOrigin;
 function normalize(value) {
   let text = value.trim();
   if (text.startsWith("```") && text.endsWith("```")) text = text.replace(/^```[^\r\n]*[\r\n]+/, "").slice(0,-3).trim();
