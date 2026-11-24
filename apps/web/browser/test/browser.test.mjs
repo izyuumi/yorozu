@@ -31,7 +31,10 @@ test('browser pairs, survives full browser restart, chats, waits for the offline
   context = await launch();
   let page = await open();
   const link = await host.link();
-  await page.getByLabel('Pairing link').fill(link);
+  await page.goto(url + '/#pair=' + encodeURIComponent(link));
+  await found(page, 'Pairing link ready.');
+  assert.equal(new URL(page.url()).hash, '');
+  assert.ok(!page.url().includes('token'));
   await page.getByRole('button', {name:'Continue'}).click();
   await page.getByRole('button', {name:'Pair', exact: true}).click();
   await found(page, 'Connected');

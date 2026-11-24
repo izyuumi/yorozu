@@ -5,6 +5,14 @@ import { makeIdentity } from './wire.mjs';
 import { deviceStore } from './storage.mjs';
 
 const $ = (id) => document.getElementById(id);
+function takeInvitation() {
+  if (!location.hash) return null;
+  const hash = new URLSearchParams(location.hash.slice(1));
+  window.history.replaceState(null, '', location.pathname);
+  const link = hash.get('pair');
+  return link && link.length <= 4096 ? link : null;
+}
+let incoming = takeInvitation();
 const store = deviceStore();
 const history = new Map(), threads = new Map();
 let connection, pairing, draftPairing, selected, hostName, historyRequest, lockRelease;
@@ -30,6 +38,11 @@ function showPairing() {
   $('confirm').hidden = true;
   $('pair-form').hidden = false;
   $('settings').close();
+  if (incoming) {
+    $('pair-link').value = incoming;
+    $('pair-hint').textContent = 'Pairing link ready.';
+    incoming = null;
+  }
 }
 function render() {
   if (!pairing || pending) return;
@@ -46,6 +59,7 @@ function render() {
   $('older').hidden = !page?.more;
   $('messages').replaceChildren(...(page?.items ?? []).map((item) => {
     const element = document.createElement('li');
+    element.className = item.kind;
     const label = document.createElement('b');
     const text = document.createElement('p');
     label.textContent = item.kind === 'user' ? 'You' : 'Yorozu';
@@ -170,6 +184,7 @@ $('pair-form').addEventListener('submit', (event) => {
   try {
     draftPairing = parsePairing($('pair-link').value, import.meta.env.DEV ? import.meta.env.VITE_YOROZU_TEST_RELAY : undefined);
     $('pair-link').value = '';
+    $('pair-hint').textContent = '';
     remember = $('remember').checked;
     $('fingerprint').textContent = fingerprint(draftPairing.hostKey);
     $('pair-form').hidden = true;
@@ -224,6 +239,13 @@ $('composer').addEventListener('submit', async (event) => {
   if (!page.items.some((item) => item.id === messageId)) page.items.push({ id: messageId, kind: 'user', text });
   history.set(id, page);
   render();
+});
+
+window.addEventListener('hashchange', () => {
+  const link = takeInvitation();
+  if (!link || pairing || pending) return;
+  incoming = link;
+  if (lockRelease) showPairing();
 });
 
 if (!navigator.locks) {

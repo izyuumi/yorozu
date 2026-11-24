@@ -1,18 +1,48 @@
-:root { font: 1rem/1.5 system-ui, sans-serif; color-scheme: light dark; }
-body { margin: 0; }
-main { max-width: 42rem; margin: auto; padding: 1rem; }
-header { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; border-bottom: 1px solid GrayText; padding-bottom: .65rem; }
-header p { margin: 0; color: GrayText; }
+:root {
+  font: 1rem/1.45 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  color-scheme: light dark;
+  --surface: #faf9f8; --page: #fff; --text: #1c1c1e; --subtle: #646467;
+  --fill: #f2efed; --stroke: #dedbd8; --accent: #bd432e; --white: #fff;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --surface: #19191a; --page: #111113; --text: #f9f6f3; --subtle: #b4afac;
+  --fill: #292729; --stroke: #474144; --accent: #fa8b73; --white: #23120e; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--text); }
+main { width: min(100%, 53rem); min-height: 100dvh; margin: 0 auto; padding: max(env(safe-area-inset-top), .5rem) clamp(1rem, 4vw, 2rem) max(env(safe-area-inset-bottom), 1rem); }
+header { display: flex; position: sticky; top: 0; align-items: center; gap: .65rem; border-bottom: 1px solid var(--stroke); padding: .45rem 0; background: var(--page); z-index: 1; }
+header p { margin: 0; font-size: .8rem; color: var(--subtle); }
+header strong { font-size: 1.12rem; letter-spacing: -.02em; }
 header button { margin-inline-start: auto; }
+.mark { display: inline-block; width: 1.3rem; height: 1rem; transform: rotate(-17deg); border-radius: 50%; background: var(--accent); }
 button, input, textarea, select { font: inherit; }
-button, select { padding: .35rem .55rem; }
-textarea, input[type=text] { width: 100%; box-sizing: border-box; padding: .5rem; }
-section { margin-top: 1rem; }
-form { display: flex; align-items: start; flex-direction: column; gap: .5rem; }
+button, select { min-height: 44px; padding: .4rem .85rem; border-radius: 1.5rem; border: 1px solid var(--stroke); color: var(--text); background: var(--fill); }
+button { cursor: pointer; }
+button:disabled { opacity: .48; cursor: not-allowed; }
+form button:not(:disabled), #pair-now:not(:disabled) { background: var(--accent); color: var(--white); border-color: transparent; font-weight: 640; }
+textarea, input[type=password] { width: 100%; min-height: 44px; border: 1px solid var(--stroke); background: var(--page); color: var(--text); border-radius: .9rem; padding: .65rem .85rem; }
+#onboarding { width: min(100%, 27rem); margin: clamp(1.5rem, 10dvh, 6rem) auto; background: var(--surface); border: 1px solid var(--stroke); border-radius: 1.35rem; padding: clamp(1rem, 5vw, 2rem); }
+.eyebrow { margin: 0; color: var(--accent); font-size: .73rem; font-weight: 660; letter-spacing: .09em; }
+h1 { font-size: clamp(1.75rem, 5vw, 2.35rem); line-height: 1.1; margin: .5rem 0; letter-spacing: -.04em; }
+h2 { margin-top: 0; }
+#pair-hint:empty { display: none; }
+#pair-hint { margin: 0; color: var(--subtle); font-size: .9rem; }
+#fingerprint { font: 650 1.2rem ui-monospace, monospace; letter-spacing: .07em; }
+#chat { margin-top: .7rem; }
+form { display: flex; align-items: start; flex-direction: column; gap: .55rem; }
+#composer { position: sticky; bottom: 0; display: grid; grid-template-columns: 1fr auto; align-items: end; padding: .65rem .5rem; border: 1px solid var(--stroke); border-radius: 1.35rem; background: var(--surface); }
+#composer label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+#composer textarea { resize: vertical; min-height: 2.6rem; border: 0; background: var(--surface); }
+#send { width: 44px; min-height: 44px; padding: 0; font-size: 1.25rem; }
 [hidden] { display: none !important; }
-li p { margin: 0 0 1rem; white-space: pre-wrap; overflow-wrap: anywhere; }
-ol { padding-left: 1.35rem; min-height: 12rem; }
-dialog { max-width: min(90vw, 32rem); }
-dt { font-weight: 600; }
-dd { margin: 0 0 .5rem; }
+#messages { display: flex; flex-direction: column; gap: .75rem; list-style: none; padding-inline: 0; min-height: min(39dvh, 18rem); }
+#messages li { max-width: min(95%, 38rem); }
+#messages li.user { align-self: end; padding: .65rem .9rem; border-radius: 1.15rem; background: var(--fill); }
+#messages b { color: var(--subtle); font-size: .78rem; }
+#messages p { margin: .15rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+dialog { max-width: min(90vw, 32rem); border: 1px solid var(--stroke); border-radius: 1.3rem; padding: 1.4rem; color: var(--text); background: var(--surface); }
+dialog::backdrop { background: rgb(0 0 0 / .36); }
+dt { font-weight: 650; }
+dd { margin: 0 0 .5rem; color: var(--subtle); }
 dialog form { margin-top: .65rem; }
