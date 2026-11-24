@@ -54,7 +54,11 @@ async function x25519() {
 
 const raw = async (key) => new Uint8Array(await cryptoAPI().exportKey('raw', key));
 
-export async function makeIdentity() {
+export async function makeIdentity(browser = false) {
+  if (browser) {
+    const signing = await cryptoAPI().generateKey('Ed25519', false, ['sign', 'verify']);
+    return { signingPrivate: signing.privateKey, signingPublic: await raw(signing.publicKey) };
+  }
   const [noise, signing] = await Promise.all([
     x25519(),
     cryptoAPI().generateKey('Ed25519', false, ['sign', 'verify']),
@@ -96,11 +100,18 @@ function symmetric(seed) {
 }
 
 export async function beginHandshake(pairing, { now = Date.now(), ephemeral } = {}) {
-  const { identity, hostKey, room, secret } = pairing;
+  const { hostKey, room, secret, browser } = pairing;
+  let { identity } = pairing;
+  if (browser) {
+    const noise = await x25519();
+    identity = { ...identity, noisePrivate: noise.privateKey, noisePublic: await raw(noise.publicKey) };
+  }
+  const head = browser ? 1 : 2;
+  const prefix = browser ? Uint8Array.of(0x21) : Uint8Array.of(3, 1);
   const e = ephemeral ?? await x25519();
   const ePublic = await raw(e.publicKey);
   const state = symmetric(utf8('Noise_IK_25519_ChaChaPoly_SHA256'));
-  await state.mixHash(utf8(`yorozu-v3|${room}|${b64(identity.signingPublic)}`));
+  await state.mixHash(utf8(`${browser ? "yorozu-browser-v1" : "yorozu-v3"}|${room}|${b64(identity.signingPublic)}`));
   await state.mixHash(hostKey);
   await state.mixHash(ePublic);
   await state.mixKey(await dh(e.privateKey, hostKey));
@@ -112,38 +123,40 @@ export async function beginHandshake(pairing, { now = Date.now(), ephemeral } = 
   const sid = ePublic.subarray(0, 8);
   let responseStarted = false;
   return {
-    init: b64(bytes(Uint8Array.of(3, 1), identity.signingPublic, ePublic, encryptedStatic, encryptedHello)),
+    init: b64(bytes(prefix, identity.signingPublic, ePublic, encryptedStatic, encryptedHello)),
     async finish(frame) {
-      if (responseStarted || frame.length < 58 || frame.length > 65545 || frame[0] !== 3 || frame[1] !== 2 ||
-          !sid.every((v, i) => v === frame[i + 2])) return;
+      if (responseStarted || frame.length < 56 + head || frame.length > 65543 + head ||
+          !(browser ? frame[0] === 0x12 : frame[0] === 3 && frame[1] === 2) || !sid.every((v, i) => v === frame[i + head])) return;
       responseStarted = true;
-      const remote = frame.subarray(10, 42);
+      const remote = frame.subarray(head + 8, head + 40);
       await state.mixHash(remote);
       await state.mixKey(await dh(e.privateKey, remote));
       await state.mixKey(await dh(identity.noisePrivate, remote));
-      await state.open(frame.subarray(42));
+      await state.open(frame.subarray(head + 40));
       const [send, recv] = await state.split();
-      return session(sid, send, recv);
+      return session(sid, send, recv, browser);
     },
   };
 }
 
-function session(sid, sendKey, receiveKey) {
+function session(sid, sendKey, receiveKey, browser) {
+  const prefix = browser ? Uint8Array.of(0x13) : Uint8Array.of(3, 3);
+  const head = prefix.length;
   let send = 0, received = -1;
   return {
     seal(event) {
       if (!Number.isSafeInteger(send)) throw new Error('Session counter exhausted');
       const counter = nonce(send++);
       const ciphertext = chacha20poly1305(sendKey, counter).encrypt(utf8(JSON.stringify(event)));
-      return b64(bytes(Uint8Array.of(3, 3), sid, counter.subarray(4), ciphertext));
+      return b64(bytes(prefix, sid, counter.subarray(4), ciphertext));
     },
     open(frame) {
-      if (frame.length < 34 || frame[0] !== 3 || frame[1] !== 3 ||
-          !sid.every((v, i) => v === frame[i + 2])) return;
-      const counter = Number(new DataView(frame.buffer, frame.byteOffset, frame.byteLength).getBigUint64(10, true));
+      if (frame.length < 32 + head || !prefix.every((v, i) => v === frame[i]) ||
+          !sid.every((v, i) => v === frame[i + head])) return;
+      const counter = Number(new DataView(frame.buffer, frame.byteOffset, frame.byteLength).getBigUint64(head + 8, true));
       if (!Number.isSafeInteger(counter) || counter <= received) return;
       try {
-        const clear = chacha20poly1305(receiveKey, nonce(counter)).decrypt(frame.subarray(18));
+        const clear = chacha20poly1305(receiveKey, nonce(counter)).decrypt(frame.subarray(head + 16));
         received = counter;
         return JSON.parse(decoder.decode(clear));
       } catch {

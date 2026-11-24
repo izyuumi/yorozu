@@ -105,7 +105,7 @@ function receive({ kind, data }) {
     const merged = before === undefined ? [...items, ...live] : [...items, ...previous];
     const content = new Map(merged.map((item) => [item.id, item]));
     history.set(id, { items: [...content.values()], more: data.more === true,
-      oldest: data.items.find((item) => Number.isSafeInteger(item?.seq))?.seq });
+      oldest: Number.isSafeInteger(data.browserOldest) ? data.browserOldest : data.items.find((item) => Number.isSafeInteger(item?.seq))?.seq });
     historyRequest = undefined;
     $('older').disabled = !connected;
     render();
@@ -182,7 +182,7 @@ function start(device, isPending) {
 $('pair-form').addEventListener('submit', (event) => {
   event.preventDefault();
   try {
-    draftPairing = parsePairing($('pair-link').value, import.meta.env.DEV ? import.meta.env.VITE_YOROZU_TEST_RELAY : undefined);
+    draftPairing = parsePairing($('pair-link').value, import.meta.env.DEV ? import.meta.env.VITE_YOROZU_TEST_RELAY : undefined, import.meta.env.DEV);
     $('pair-link').value = '';
     $('pair-hint').textContent = '';
     remember = $('remember').checked;
@@ -190,13 +190,13 @@ $('pair-form').addEventListener('submit', (event) => {
     $('pair-form').hidden = true;
     $('confirm').hidden = false;
     notify();
-  } catch { notify('Paste a valid Yorozu link for the standard Yorozu relay.'); }
+  } catch { notify('On your Mac run openclaw yorozu pair-browser to make a browser pairing link for the standard Yorozu relay.'); }
 });
 $('pair-now').addEventListener('click', async () => {
   const g = ++generation;
   $('pair-now').disabled = true;
   try {
-    const identity = await makeIdentity();
+    const identity = await makeIdentity(draftPairing.browser);
     if (generation === g) start({ ...draftPairing, identity }, true);
   } catch {
     if (generation === g) {
@@ -255,7 +255,7 @@ if (!navigator.locks) {
     try {
       notify();
       const saved = await store.load();
-      if (saved) start(saved, false);
+      if (saved && (saved.browser || import.meta.env.DEV)) start(saved, false);
       else showPairing();
     } catch {
       showPairing();

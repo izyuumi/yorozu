@@ -19,7 +19,7 @@ const registrations: string[] = [];
 });
 assert.deepEqual([...hooks.keys()].sort(), ["before_prompt_build", "before_tool_call"]);
 assert.deepEqual(registrations, [
-  "before_tool_call", "yorozu.pair.begin", "yorozu.devices.list", "yorozu.devices.remove", "before_prompt_build",
+  "before_tool_call", "yorozu.pair.begin", "yorozu.pair.browser", "yorozu.devices.list", "yorozu.devices.remove", "before_prompt_build",
 ]);
 const hook = hooks.get("before_tool_call") as Hook;
 const promptHook = hooks.get("before_prompt_build") as PromptHook;

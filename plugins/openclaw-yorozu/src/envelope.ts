@@ -65,7 +65,7 @@ export type ConvSummary = { convId: string; updatedAt: number; rev: number; titl
 export type ConvPatch = { convId: string; title?: string; archived?: boolean; pinned?: boolean; deleted?: boolean };
 export type ConvUpdate = { convId: string; title?: string; archived?: true; pinnedAt?: number; deleted?: true };
 export type HistoryRequest = { convId: string; before?: number; after?: number };
-export type History = HistoryRequest & { items: HistoryItem[]; more: boolean; rev: number };
+export type History = HistoryRequest & { items: HistoryItem[]; more: boolean; rev: number; browserOldest?: number };
 export type HistoryTool = { callId: string; name: string; status: ToolStatus };
 export type HistoryItem =
   | { kind: "user" | "agent"; id: string; seq: number; ts: number; text: string; attachments?: Attachment[]; replyTo?: ReplyTo; reactions?: Reactions; presentation?: Presentation }

@@ -50,3 +50,29 @@ the app origin from using it; a trusted delivery origin is part of the web
 client's threat model. The staging origin is separately paired and cannot read
 or reuse production device keys. No change to macOS/iOS/Windows release channels,
 relay permissions, or native pairing is needed.
+
+## Durable browser credentials (v4)
+
+Production browser builds only accept explicit v4 browser invitations via
+`openclaw yorozu pair-browser`. Legacy native links and key binding are unchanged.
+With the feature disabled (the default), the Gateway will not issue or accept
+v4 browser pairing. Browser invitations are relay only.
+
+A browser stores a non-extractable Ed25519 signing key, the pinned host key,
+and its connection metadata. Each reconnect makes fresh X25519 keys for the
+domain-separated Noise IK handshake. The host checks the signed init and only
+authorizes the device or replaces its live session after decrypting its first
+peer frame. A valid init alone cannot spend an invitation, bind an allowlist
+entry, or send chat. The owner can remove the browser via a native client's
+Devices settings or the usual CLI.
+
+The browser role may send plain text and request conversation list/history.
+The host rejects messages with attachment references, quote metadata, or unknown
+message fields, and does not expose direct-path hints, device administration, or
+tool events through this role. The agent's configured approval policy is unchanged.
+
+The staging build uses `pnpm --dir apps/web/browser build:staging`; it pins the
+separate staging relay in both link validation and the response CSP. It is
+served by the separate v4 staging Worker. Use synthetic test state only with
+`YOROZU_BROWSER_EPHEMERAL=1` on the staging Gateway. Production remains
+separately gated.

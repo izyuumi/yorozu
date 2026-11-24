@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "build:staging": "vite build --mode staging && node build-staging-headers.mjs"
   },
   "dependencies": {
     "@noble/ciphers": "2.1.1"

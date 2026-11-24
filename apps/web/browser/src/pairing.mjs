@@ -1,7 +1,7 @@
 import { unb64 } from './wire.mjs';
 
-const officialRelay = 'wss://relay.yumi.to/';
-export function parsePairing(value, allowedRelay = officialRelay) {
+const officialRelay = import.meta.env?.MODE === "staging" ? "wss://yorozu-browser-test-relay.yumi-f4f.workers.dev/" : "wss://relay.yumi.to/";
+export function parsePairing(value, allowedRelay = officialRelay, allowLegacy = false) {
   if (value.length > 4096 || /%(?![a-fA-F0-9]{2})/.test(value)) throw new Error('Invalid link');
   const url = new URL(value.trim());
   if (url.username || url.password || url.port) throw new Error('Invalid link');
@@ -17,14 +17,15 @@ export function parsePairing(value, allowedRelay = officialRelay) {
     if (all.length !== 1) throw new Error('Invalid link');
     return all[0];
   };
-  if (query.has('v') && get('v') !== '3') throw new Error('Invalid link version');
+  const version = query.has('v') ? get('v') : '3';
+  if (version !== '4' && !(allowLegacy && version === '3')) throw new Error('Invalid link version');
   const relay = new URL(get('relay')).href;
   if (relay !== allowedRelay) throw new Error('Unsupported relay');
   const token = get('token'), secret = get('secret'), room = get('room'), hostKey = unb64(get('key'));
   if (hostKey.length !== 32 || unb64(room).length !== 32 || unb64(secret).length !== 32 || !unb64(token).length) {
     throw new Error('Invalid keys');
   }
-  return { relay, token, secret, room, hostKey };
+  return { relay, token, secret, room, hostKey, browser: version === "4" };
 }
 
 export function fingerprint(key) {

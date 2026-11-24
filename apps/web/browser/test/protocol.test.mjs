@@ -22,9 +22,9 @@ test('existing plugin and relay accept browser Web Crypto pairing, encrypted cha
   try {
     const url = await host.link();
     const relay = new URL(new URL(url).searchParams.get('relay')).href;
-    assert.throws(() => parsePairing(url), /Unsupported relay/);
-    assert.throws(() => parsePairing(url + '&token=second', relay), /Invalid link/);
-    const device = { ...parsePairing(url, relay), identity: await makeIdentity() };
+    assert.throws(() => parsePairing(url, undefined, true), /Unsupported relay/);
+    assert.throws(() => parsePairing(url + '&token=second', relay, true), /Invalid link/);
+    const device = { ...parsePairing(url, relay, true), identity: await makeIdentity() };
     assert.match(fingerprint(device.hostKey), /^(?:[A-F0-9]{4} ){3}[A-F0-9]{4}$/);
     assert.equal(device.identity.noisePrivate.extractable, false);
     assert.equal(device.identity.signingPrivate.extractable, false);
