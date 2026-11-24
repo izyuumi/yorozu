@@ -152,7 +152,7 @@ function start(device, isPending) {
         try { await store.save(saved); }
         catch {
           remember = false;
-          notify('Your browser couldn’t save the pairing. It will last only in this tab.');
+          notify('This browser couldn’t remember the pairing. It will work in this tab, but you’ll need a new link if you close it.');
         }
       }
       if (generation !== g) return;

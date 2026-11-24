@@ -9,7 +9,7 @@ plugin's local-only listener or adds an origin exception to it.
 Only the device identity and host pin are persisted, in IndexedDB on this origin
 and browser profile. Both private keys are non-extractable Web Crypto keys. The
 invite token and secret never enter browser storage. Opting out of remembering
-keeps the pairing in the current tab's memory only. Transcripts are fetched from
+keeps the pairing in the current tab's memory only. Some Safari/WebKit versions can pair but cannot restore an X25519 key from IndexedDB. Save is checked by reading back both keys; if that fails, the app explicitly stays paired only for the current tab. No exportable-key fallback is used. Transcripts are fetched from
 the host, not written to IndexedDB. A second tab waits for the first to close so
 only one Noise session uses the same device keys. Forgetting closes the socket
 and clears local storage; removing the paired device at the host revokes remote

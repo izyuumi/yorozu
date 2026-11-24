@@ -74,4 +74,25 @@ test('browser pairs, survives full browser restart, chats, waits for the offline
   await found(page, 'This browser was removed from your Mac');
   await page.reload();
   await found(page, 'Connect to your Mac');
+
+  await page.addInitScript(() => {
+    const save = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function(value, key) {
+      return save.call(this, this.transaction.db.name === 'yorozu-pairing' && key === 'current' ? null : value, key);
+    };
+  });
+  await page.reload();
+  await page.getByLabel('Pairing link').fill(await host.link());
+  await page.getByRole('button', {name:'Continue'}).click();
+  await page.getByRole('button', {name:'Pair', exact:true}).click();
+  await found(page, 'Connected');
+  await found(page, 'This browser couldn’t remember the pairing. It will work in this tab, but you’ll need a new link if you close it.');
+  const devices = host.devices.size;
+  await host.close();
+  await found(page, 'Mac is offline');
+  await host.reconnect();
+  await found(page, 'Connected');
+  assert.equal(host.devices.size, devices, 'tab-only browser reconnects without asking for an invite');
+  await page.reload();
+  await found(page, 'Connect to your Mac');
 });
