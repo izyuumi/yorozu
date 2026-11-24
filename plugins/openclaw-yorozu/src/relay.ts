@@ -12,6 +12,7 @@ import { serveBonjour } from "./bonjour.js";
 import { watchDirect } from "./hints.js";
 import { bindAddresses, serveDirect, type DirectListener } from "./direct.js";
 import {
+  BROWSER_INVITE,
   DIRECT,
   LIVE_ACTIVITY_PUSH,
   PUSH_PROXY,
@@ -252,12 +253,13 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
       case "pair_invite":
         void (async () => {
           let answer: Event;
+          const { target, requestId } = event.data;
           try {
-            const { link, webLink, fingerprint, expiresAt } = await beginPairing();
-            answer = { kind: "pair_invite", data: { link, webLink, fingerprint, expiresAt } };
+            const { link, webLink, fingerprint, expiresAt } = await beginPairing(target === "browser");
+            answer = { kind: "pair_invite", data: { target, requestId, link, webLink, fingerprint, expiresAt } };
             log?.info("yorozu: pairing code made for a paired device");
           } catch (error) {
-            answer = { kind: "pair_invite", data: { error: error instanceof Error ? error.message : String(error) } };
+            answer = { kind: "pair_invite", data: { target, requestId, error: error instanceof Error ? error.message : String(error) } };
           }
           reply([answer]);
         })();
@@ -283,6 +285,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
       ...peerInfo,
       capabilities: [
         ...peerInfo.capabilities,
+        ...(browserEnabled() ? [BROWSER_INVITE] : []),
         ...(activities.liveActivity ? [LIVE_ACTIVITY_PUSH] : []),
         ...(direct?.listening ? [DIRECT] : []),
         ...(relayPushProxy ? [PUSH_PROXY] : []),

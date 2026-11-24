@@ -9,10 +9,10 @@
 * { box-sizing: border-box; }
 html, body, #root, .app { height: 100%; margin: 0; }
 button, textarea { color: inherit; font: inherit; }
-button { cursor: pointer; min-height: 40px; padding: .45rem .8rem; border: 1px solid var(--yorozu-border); border-radius: .65rem; background: var(--yorozu-page); }
+button { cursor: pointer; min-height: var(--yorozu-target); padding: .45rem .8rem; border: 1px solid var(--yorozu-border); border-radius: .65rem; background: var(--yorozu-page); }
 button:disabled { cursor: default; opacity: .55; }
 button:not(:disabled):hover { filter: brightness(.97); }
-button:focus-visible, textarea:focus-visible, summary:focus-visible, .transcript:focus-visible { outline: 2px solid var(--yorozu-accent); outline-offset: 2px; }
+button:focus-visible, textarea:focus-visible, summary:focus-visible, .transcript:focus-visible { outline: var(--yorozu-focus-width) solid var(--yorozu-accent); outline-offset: 2px; }
 main { display: flex; flex-direction: column; align-items: center; height: 100%; overflow: auto; padding: 1.25rem; background: var(--yorozu-panel); gap: .6rem; }
 .app-notice { max-width: min(100%, var(--yorozu-column)); }
 .app-opening { margin: 1rem; }
@@ -29,3 +29,6 @@ main { display: flex; flex-direction: column; align-items: center; height: 100%;
 .pair-help summary { cursor: pointer; width: fit-content; padding-block: .25rem; }
 .pair-help code { overflow-wrap: anywhere; }
 .note { margin: 0; font-size: .86rem; color: var(--yorozu-subtle); }
+
+.app-notice { display: flex; align-items: center; gap: var(--yorozu-inner, 8px); }
+.app-notice p { margin: 0; overflow-wrap: anywhere; }

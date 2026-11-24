@@ -1,0 +1,38 @@
+import { readFileSync, writeFileSync } from 'node:fs';
+
+const root = new URL('../', import.meta.url);
+const { colors, space, native, css } = JSON.parse(readFileSync(new URL('design/tokens.json', root), 'utf8'));
+const declarations = (entries) => Object.entries(entries).map(([name, value]) => `  --yorozu-${name}: ${value};`).join('\n');
+const palette = (mode) => Object.fromEntries(Object.entries(colors).map(([name, pair]) => [name, pair[mode]]));
+const pixels = Object.fromEntries(Object.entries(space).map(([name, value]) => [name, `${value}px`]));
+const swift = Object.entries({ ...space, ...native }).map(([name, value]) => `    static let ${name}: CGFloat = ${value}`).join('\n');
+
+const outputs = {
+  'apps/windows/app/src/components/shared/tokens.generated.css': `:root {
+${declarations({ ...palette(0), ...pixels, ...css })}
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+${declarations(palette(1)).replace(/^/gm, '  ')}
+  }
+}
+`,
+  'apps/ios/Sources/YorozuIOS/YorozuDesignTokens.swift': `import CoreGraphics
+
+enum YorozuDesignTokens {
+${swift}
+}
+`,
+};
+
+for (const [path, contents] of Object.entries(outputs)) {
+  const file = new URL(path, root);
+  if (process.argv.includes('--check')) {
+    if (readFileSync(file, 'utf8') !== contents) {
+      console.error(`Stale design tokens: ${path}`);
+      process.exitCode = 1;
+    }
+  } else {
+    writeFileSync(file, contents);
+  }
+}

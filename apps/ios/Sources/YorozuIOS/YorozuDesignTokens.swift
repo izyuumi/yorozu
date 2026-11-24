@@ -1,0 +1,13 @@
+import CoreGraphics
+
+enum YorozuDesignTokens {
+    static let hair: CGFloat = 2
+    static let tight: CGFloat = 4
+    static let inner: CGFloat = 8
+    static let stack: CGFloat = 12
+    static let gutter: CGFloat = 16
+    static let section: CGFloat = 24
+    static let target: CGFloat = 44
+    static let readingWidth: CGFloat = 700
+    static let composerWidth: CGFloat = 640
+}

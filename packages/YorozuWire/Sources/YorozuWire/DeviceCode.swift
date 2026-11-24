@@ -6,12 +6,14 @@ public struct DeviceCode: Equatable, Sendable {
     public var box: String
     public var key: String
     public var name: String
+    public var target: PairInvite.Target?
 
-    public init(relayUrl: String, box: String, key: String, name: String) {
+    public init(relayUrl: String, box: String, key: String, name: String, target: PairInvite.Target? = nil) {
         self.relayUrl = relayUrl
         self.box = box
         self.key = key
         self.name = name
+        self.target = target
     }
 
     public static let defaultRelay = "wss://relay.yumi.to"
@@ -29,12 +31,13 @@ public struct DeviceCode: Equatable, Sendable {
     public var link: String {
         var components = URLComponents()
         components.queryItems = [
-            URLQueryItem(name: "v", value: "1"),
+            URLQueryItem(name: "v", value: target == nil ? "1" : "2"),
             URLQueryItem(name: "relay", value: relayUrl),
             URLQueryItem(name: "box", value: box),
             URLQueryItem(name: "key", value: key),
             URLQueryItem(name: "name", value: name),
         ]
+        if let target { components.queryItems?.append(URLQueryItem(name: "target", value: target.rawValue)) }
         return "\(Self.page)#\(components.percentEncodedQuery ?? "")"
     }
 
@@ -55,12 +58,34 @@ public struct DeviceCode: Equatable, Sendable {
               let items = URLComponents(string: "x:?\(fragment)")?.queryItems
         else { return nil }
         let query = Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
-        guard query["v"] == "1", let relay = query["relay"], QrPayload.isAcceptableRelayUrl(relay),
+        let target: PairInvite.Target?
+        switch (query["v"], query["target"]) {
+        case ("1", nil): target = nil
+        case ("2", "browser"):
+            guard web.user == nil, web.password == nil, web.port == nil,
+                  Set(items.map(\.name)).count == items.count else { return nil }
+            target = .browser
+        default: return nil
+        }
+        guard let relay = query["relay"], QrPayload.isAcceptableRelayUrl(relay),
               let box = query["box"], Data(base64URLEncoded: box)?.count == 16,
               let key = query["key"], Data(base64URLEncoded: key)?.count == 32
         else { return nil }
+        if target == .browser {
+            guard Data(base64URLEncoded: box)?.base64URLEncodedString() == box,
+                  Data(base64URLEncoded: key)?.base64URLEncodedString() == key,
+                  let endpoint = URLComponents(string: relay), endpoint.scheme == "wss", endpoint.user == nil,
+                  endpoint.password == nil, endpoint.port == nil, endpoint.query == nil, endpoint.fragment == nil,
+                  endpoint.path.isEmpty || endpoint.path == "/" else { return nil }
+        }
         let name = String((query["name"] ?? "").prefix(64)).trimmingCharacters(in: .whitespacesAndNewlines)
-        return DeviceCode(relayUrl: relay, box: box, key: key, name: name.isEmpty ? "Mac" : name)
+        return DeviceCode(relayUrl: relay, box: box, key: key, name: name.isEmpty ? (target == .browser ? "Browser" : "Mac") : name, target: target)
+    }
+
+    public func matchesRelay(_ trustedRelay: String) -> Bool {
+        guard let candidate = mailbox(websocket: true) else { return false }
+        let trusted = DeviceCode(relayUrl: trustedRelay, box: box, key: key, name: name)
+        return candidate == trusted.mailbox(websocket: true)
     }
 
     public func seal(_ link: String) throws -> String {

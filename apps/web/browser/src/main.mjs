@@ -1,9 +1,10 @@
 import './style.css';
 import { mountUI } from './presentation.jsx';
 import { connect } from './connection.mjs';
-import { fingerprint, parsePairing } from './pairing.mjs';
+import { fingerprint, parsePairing, officialRelay } from './pairing.mjs';
 import { makeIdentity } from './wire.mjs';
 import { deviceStore } from './storage.mjs';
+import { listenForDeviceCode } from './device-code.mjs';
 
 const $ = (id) => document.getElementById(id);
 function takeInvitation() {
@@ -15,7 +16,7 @@ function takeInvitation() {
   return link && link.length <= 4096 ? link : null;
 }
 let incoming = takeInvitation();
-const { renderMessages, fitMessage, captureScroll } = mountUI();
+const { renderMessages, fitMessage, captureScroll, renderPairMethods } = mountUI();
 const store = deviceStore();
 const history = new Map(), threads = new Map(), drafts = new Map(), scrollPositions = new Map();
 let connection, pairing, draftPairing, selected, hostName, historyRequest, lockRelease;
@@ -23,12 +24,66 @@ let generation = 0, pending = false, connected = false, sending = false;
 let lastScroll = 0, initialSelectionDone = false;
 let remember = true;
 const newThread = 'new';
+const qrRelay = import.meta.env.DEV && import.meta.env.VITE_YOROZU_TEST_RELAY || officialRelay;
+let method = null, receiver = null, receiverError = '', receiverController;
+function renderMethods() {
+  renderPairMethods({
+    mode: method, onMode: chooseMethod, onScan(value) {
+      let reason;
+      return acceptInvitation(value, false, message => { reason = message; }) || reason || false;
+    },
+    receiver, receiverError, restart: () => chooseMethod('show'),
+    focusPaste: () => $('pair-link').focus(),
+    scanHint: 'Scan the browser invitation QR code from your Mac. A native-client invite will not work here.',
+    showHint: 'In Yorozu on an already-paired iPhone or iPad, open Settings → Devices → Add Device and scan this code. Use a version that supports browser pairing.',
+  });
+}
+function closeReceiver() {
+  receiverController?.abort();
+  receiverController = undefined;
+  receiver = null;
+}
+function chooseMethod(next) {
+  closeReceiver();
+  method = next;
+  receiverError = '';
+  $('pair-fields').hidden = Boolean(method);
+  renderMethods();
+  if (method !== 'show') return;
+  const controller = receiverController = new AbortController();
+  listenForDeviceCode(qrRelay, {
+    signal: controller.signal,
+    onReady(code) {
+      if (receiverController !== controller) return;
+      receiver = code;
+      renderMethods();
+    },
+  }).then(invite => {
+    if (receiverController !== controller) return;
+    if (!acceptInvitation(invite, false)) {
+      receiver = null;
+      receiverError = 'This response is not a browser invitation. Use an updated Yorozu device and try a new code.';
+      renderMethods();
+    }
+  }).catch(error => {
+    if (receiverController !== controller) return;
+    receiver = null;
+    receiverError = error?.message?.includes('expired') ? 'This code expired.' :
+      'Couldn’t complete the QR request. Try a new code or paste an invitation.';
+    renderMethods();
+  });
+}
 
 function notify(message = '') {
   $('notice').textContent = message;
   $('notice').hidden = !message;
 }
+function setPairProgress(value = "") {
+  $("pair-progress").textContent = value;
+  $("pair-progress").hidden = !value;
+}
 function setStatus(value) {
+  if (pending) setPairProgress(value === "Connected" ? "" : value);
   connected = value === 'Connected';
   $('connection').textContent = $('host-status').textContent = value;
   if (!connected) {
@@ -45,8 +100,11 @@ function showPairing() {
   $('entry-bar').hidden = false;
   $('mobile-chats').close();
   $('confirm').hidden = true;
+  setPairProgress();
   $('pair-error').hidden = true;
   $('pair-form').hidden = false;
+  $('pair-methods').hidden = false;
+  chooseMethod(null);
   $('settings').close();
   if (incoming) {
     $('pair-link').value = incoming;
@@ -235,7 +293,7 @@ function receive({ kind, data }) {
     notify('Your Mac couldn’t complete the request.');
   }
 }
-async function forget(message) {
+async function forget(message, restoreFocus = false) {
   generation++;
   connection?.close();
   resetHistoryRequest();
@@ -254,6 +312,7 @@ async function forget(message) {
   renderMessages([]);
   setStatus('');
   showPairing();
+  if (restoreFocus) $('pair-link').focus();
   notify(message);
   try { await store.clear(); }
   catch { notify('Could not erase site data. Clear Yorozu site data in your browser settings.'); }
@@ -300,23 +359,30 @@ function continuePairing(event) {
     input.focus();
     return;
   }
+  acceptInvitation(input.value, import.meta.env.DEV, setError);
+}
+function acceptInvitation(value, allowLegacy, setError) {
   try {
-    draftPairing = parsePairing($('pair-link').value, import.meta.env.DEV ? import.meta.env.VITE_YOROZU_TEST_RELAY : undefined, import.meta.env.DEV);
-    $('pair-link').value = '';
-    $('pair-hint').textContent = '';
-    remember = $('remember').checked;
-    $('fingerprint').textContent = fingerprint(draftPairing.hostKey);
-    $('pair-form').hidden = true;
-    $('confirm').hidden = false;
-    input.blur();
-    $('confirm-heading').focus();
-    $('confirm').scrollIntoView({block:'nearest'});
-    notify();
+    draftPairing = parsePairing(value, qrRelay, allowLegacy);
   } catch (error) {
-    setError(error.code === 'expired'
+    setError?.(error.code === 'expired'
       ? 'This invitation expired. Ask for a new browser pairing link.'
       : 'This is not a valid browser invitation. Copy the entire original link and try again.');
+    return false;
   }
+  const input = $('pair-link');
+  input.value = '';
+  $('pair-hint').textContent = '';
+  remember = $('remember').checked;
+  $('fingerprint').textContent = fingerprint(draftPairing.hostKey);
+  chooseMethod(null);
+  $('pair-methods').hidden = $('pair-form').hidden = true;
+  $('confirm').hidden = false;
+  input.blur();
+  $('confirm-heading').focus();
+  $('confirm').scrollIntoView({block:'nearest'});
+  notify();
+  return true;
 }
 $('pair-form').addEventListener('submit', continuePairing);
 $('continue').addEventListener('click', continuePairing);
@@ -329,6 +395,7 @@ $('pair-link').addEventListener('paste', (event) => {
 $('pair-now').addEventListener('click', async () => {
   const g = ++generation;
   $('pair-now').disabled = true;
+  setPairProgress('Checking this device…');
   try {
     const identity = await makeIdentity(draftPairing.browser);
     if (generation === g) start({ ...draftPairing, identity }, true);
@@ -336,10 +403,11 @@ $('pair-now').addEventListener('click', async () => {
     if (generation === g) {
       notify('Pairing is unavailable. On iPhone, use Safari on iOS 18.4 or newer. On Windows, update Edge or Chrome.');
       $('pair-now').disabled = false;
+      setPairProgress();
     }
   }
 });
-$('cancel').addEventListener('click', () => void forget('Pairing cancelled. If the Mac already accepted this browser, remove it from Devices.'));
+$('cancel').addEventListener('click', () => void forget('Pairing cancelled. If the Mac already accepted this browser, remove it from Devices.', true));
 $('settings-button').addEventListener('click', () => $('settings').showModal());
 $('chats-button').addEventListener('click', () => {
   $('mobile-chats').append($('chat-nav'));
@@ -370,7 +438,7 @@ $('keep-pairing').addEventListener('click', () => {
   $('forget').focus();
 });
 $('settings').addEventListener('close', () => showForgetConfirmation(false));
-$('confirm-forget').addEventListener('click', () => void forget('This browser has forgotten the pairing.'));
+$('confirm-forget').addEventListener('click', () => void forget('This browser has forgotten the pairing.', true));
 function loadEarlier() {
   const page = history.get(selected);
   if (page?.more && Number.isSafeInteger(page.oldest)) fetchHistory(page.oldest);
@@ -424,6 +492,7 @@ $('composer').addEventListener('submit', async (event) => {
 });
 
 $('boot-hint').hidden = true;
+window.addEventListener('pagehide', () => { if (method) chooseMethod(null); });
 window.addEventListener('hashchange', () => {
   const link = takeInvitation();
   if (!link || pairing || pending) return;

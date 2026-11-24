@@ -30,6 +30,8 @@ fn permissions_are_exact() {
         "core:event:allow-unlisten",
         "allow-snapshot",
         "allow-submit-link",
+        "allow-start-device-code",
+        "allow-stop-device-code",
         "allow-confirm-pairing",
         "allow-cancel-pairing",
         "allow-forget-pairing",

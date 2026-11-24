@@ -1,25 +1,5 @@
-:root {
-  --yorozu-page: #ffffff;
-  --yorozu-panel: #f8f7f5;
-  --yorozu-text: #24211f;
-  --yorozu-subtle: #68635d;
-  --yorozu-border: #e5e0da;
-  --yorozu-accent: #a83728;
-  --yorozu-on-accent: #fff;
-  --yorozu-muted-fill: #efebe6;
-  --yorozu-user-fill: #f3e9e3;
-  --yorozu-chat-gap: .7rem;
-  --yorozu-bubble-radius: 1rem;
-  --yorozu-column: 46rem;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --yorozu-page: #181716; --yorozu-panel: #211f1d; --yorozu-text: #f3efeb;
-    --yorozu-subtle: #b5aca3; --yorozu-border: #423a33;
-    --yorozu-accent: #fa8b73; --yorozu-on-accent: #23120e;
-    --yorozu-muted-fill: #302b27; --yorozu-user-fill: #3a2d27;
-  }
-}
+@import './tokens.generated.css';
+
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .step-label { color: var(--yorozu-accent); font-size: .82rem; font-weight: 650; }
 .pair-description { color: var(--yorozu-subtle); }
@@ -34,7 +14,27 @@
 .chat-heading [role=status] { color: var(--yorozu-subtle); font-size: .78rem; margin: .16rem 0 0; }
 .composer { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: end; gap: .4rem; padding: .28rem; border: 1px solid var(--yorozu-border); border-radius: 1.18rem; background: var(--yorozu-panel); }
 .composer:focus-within { border-color: var(--yorozu-accent); }
-.composer textarea { width: 100%; box-sizing: border-box; resize: none; min-height: 44px; max-height: min(8.5rem, 28dvh); border: 0; padding: .62rem .68rem; color: inherit; background: transparent; line-height: 1.4; }
+.composer textarea { width: 100%; box-sizing: border-box; resize: none; min-height: var(--yorozu-target); max-height: min(8.5rem, 28dvh); border: 0; padding: .62rem .68rem; color: inherit; background: transparent; line-height: 1.4; }
 .composer textarea:focus { outline: none; }
-.composer button.send-button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border-radius: .9rem; }
+.composer button.send-button { display: grid; place-items: center; min-width: var(--yorozu-target); min-height: var(--yorozu-target); padding: 0; border-radius: .9rem; }
 .composer-limit { grid-column: 1 / -1; margin: 0 .6rem .25rem; color: var(--yorozu-accent); }
+
+.pair-methods { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: .75rem; }
+.pair-methods > button { flex: 1 1 auto; }
+.qr-panel { display: grid; gap: .7rem; }
+.qr-panel video { width: 100%; max-height: 15rem; aspect-ratio: 4 / 3; object-fit: cover; border-radius: .75rem; background: var(--yorozu-panel); }
+.qr-file { font-weight: 650; display: grid; gap: .35rem; }
+.qr-file input { max-width: 100%; min-height: var(--yorozu-target); font: inherit; font-size: .9rem; }
+.qr-error { color: var(--yorozu-accent); }
+.device-qr-frame { width: 100%; max-width: 14rem; margin-inline: auto; }
+.device-qr-frame.enlarged { max-width: 20rem; }
+.device-qr { display: block; max-width: 100%; height: auto; margin-inline: auto; image-rendering: pixelated; }
+.device-qr[hidden] { display: none; }
+.qr-size-button { justify-self: center; }
+
+.qr-panel h1:focus { outline: none; }
+.qr-panel button, .pair-methods button { min-height: var(--yorozu-target); }
+@media (forced-colors: active) {
+  .primary-button:not(:disabled) { color: ButtonText; background: ButtonFace; border-color: ButtonText; }
+  .device-qr { forced-color-adjust: none; }
+}

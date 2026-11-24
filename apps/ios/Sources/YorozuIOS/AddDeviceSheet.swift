@@ -7,6 +7,7 @@ struct AddDeviceSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var scanning = false
     @State private var scanned: String?
+    @State private var deviceLinkError: String?
     @State private var known: Set<String>?
     @State private var paired: DeviceInfo?
     @State private var enlarged = false
@@ -18,7 +19,7 @@ struct AddDeviceSheet: View {
             ScrollView {
                 VStack(spacing: LayoutMetrics.section) {
                     #if os(iOS)
-                    scanMac
+                    scanDevice
                     #endif
                     content
                 }
@@ -59,12 +60,12 @@ struct AddDeviceSheet: View {
         }
         #if os(iOS)
         .sheet(isPresented: $scanning, onDismiss: {
-            if let text = scanned { model.pairingError = model.submit(text) }
+            if let text = scanned { submitDeviceLink(text) }
             scanned = nil
         }) {
-            ScannerView(prompt: "Scan the code on the new Mac’s pairing screen.", onScan: { text in
+            ScannerView(prompt: "Scan the code on the new device’s pairing screen.", manualLabel: "Paste Device Link", onScan: { text in
                 guard DeviceCode.decode(text) != nil else {
-                    return String(localized: "This isn’t a Mac’s pairing code. Open Yorozu on the new Mac and scan the code it shows.")
+                    return String(localized: "This isn’t a Yorozu device code. Open Yorozu on the new device and scan the code it shows.")
                 }
                 scanned = text
                 scanning = false
@@ -81,17 +82,34 @@ struct AddDeviceSheet: View {
     }
 
     #if os(iOS)
-    private var scanMac: some View {
+    private var scanDevice: some View {
         VStack(spacing: LayoutMetrics.tight) {
-            Button(String(localized: "Scan a Mac’s Code"), systemImage: "qrcode.viewfinder") { scanning = true }
+            Button(String(localized: "Scan QR Code"), systemImage: "qrcode.viewfinder") { scanning = true }
                 .buttonStyle(.borderedProminent)
+            LabeledContent("Paste Device Link") {
+                PasteButton(payloadType: String.self) { links in
+                    guard let link = links.first else { return }
+                    Task { @MainActor in submitDeviceLink(link) }
+                }
+                .accessibilityIdentifier("pairing.add.paste")
+            }
+            if let deviceLinkError {
+                Text(deviceLinkError).foregroundStyle(YorozuPalette.warning)
+            }
             if case .asking? = model.deviceAdding {
-                ProgressView(String(localized: "Sending the code to the Mac…"))
+                ProgressView(String(localized: "Sending the pairing invitation…"))
             }
         }
     }
-    #endif
 
+    private func submitDeviceLink(_ link: String) {
+        guard DeviceCode.decode(link) != nil else {
+            deviceLinkError = String(localized: "This isn’t a Yorozu device code. Open Yorozu on the new device and use the code it shows.")
+            return
+        }
+        deviceLinkError = model.submit(link)
+    }
+    #endif
 
     @ViewBuilder private var content: some View {
         if let paired {
@@ -251,13 +269,17 @@ private struct DeviceAddingAlerts: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .alert(String(localized: "Add \(model.pendingDevice?.name ?? "")?"),
+            .alert(model.pendingDevice?.target == .browser ? String(localized: "Add this browser?") : String(localized: "Add \(model.pendingDevice?.name ?? "")?"),
                 isPresented: Binding(get: { model.pendingDevice != nil }, set: { if !$0 { model.pendingDevice = nil } }),
                 presenting: model.pendingDevice) { code in
                 Button(String(localized: "Add")) { model.addDevice(code) }
                 Button(String(localized: "Cancel"), role: .cancel) { model.pendingDevice = nil }
-            } message: { _ in
-                Text("It pairs with your host and sees every conversation. Next, the Mac shows a host key: pair it only if the key is\n\n\(model.fingerprint ?? "")")
+            } message: { code in
+                if code.target == .browser {
+                    Text("This browser can read chat history and send messages. Pair it only if its host fingerprint matches\n\n\(model.fingerprint ?? "")")
+                } else {
+                    Text("It pairs with your host and sees every conversation. Next, the new device shows a host key: pair it only if the key is\n\n\(model.fingerprint ?? "")")
+                }
             }
             .alert(title, isPresented: Binding(get: { done }, set: { if !$0 { model.deviceAdding = nil } })) {
                 Button(String(localized: "OK")) { model.deviceAdding = nil }
@@ -279,8 +301,8 @@ private struct DeviceAddingAlerts: ViewModifier {
     }
 
     private var title: String {
-        if case .failed? = model.deviceAdding { return String(localized: "Couldn’t add the Mac") }
-        return String(localized: "Finish on the Mac")
+        if case .failed? = model.deviceAdding { return String(localized: "Couldn’t add the device") }
+        return String(localized: "Finish on the new device")
     }
 }
 

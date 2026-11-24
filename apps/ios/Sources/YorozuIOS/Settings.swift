@@ -11,6 +11,7 @@ enum CommandReturnSends {
 }
 
 struct SettingsView: View {
+    private enum LocalRemoval { case forget, revoke }
     let model: AppModel
     var onUnpair: () -> Void = {}
 
@@ -26,7 +27,7 @@ struct SettingsView: View {
     #endif
     @State private var permission: UNAuthorizationStatus?
     @State private var removing: DeviceInfo?
-    @State private var unpairing = false
+    @State private var localRemoval: LocalRemoval?
     @State private var addingDevice = false
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
@@ -39,17 +40,32 @@ struct SettingsView: View {
             guard !model.isDemo else { return }
             permission = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
         }
-        .confirmationDialog(String(localized: "Remove this device?"),
+        .confirmationDialog(String(localized: "Revoke access for this device?"),
             isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
             titleVisibility: .visible, presenting: removing) { device in
-            Button(String(localized: "Remove"), role: .destructive) { model.removeDevice(device.id) }
+            Button(String(localized: "Revoke Access"), role: .destructive) { model.removeDevice(device.id) }
         } message: { _ in
             Text("It stops reaching the host and has to pair again.")
         }
-        .confirmationDialog(String(localized: "Unpair this device?"), isPresented: $unpairing, titleVisibility: .visible) {
-            Button(String(localized: "Unpair"), role: .destructive) {
-                onUnpair()
-                Task { await model.unpairEverywhere() }
+        .confirmationDialog(localRemoval == .revoke ? String(localized: "Revoke this device’s access?") : String(localized: "Forget this device?"),
+            isPresented: Binding(get: { localRemoval != nil }, set: { if !$0 { localRemoval = nil } }),
+            titleVisibility: .visible, presenting: localRemoval) { removal in
+            if removal == .revoke {
+                Button(String(localized: "Revoke Access"), role: .destructive) {
+                    onUnpair()
+                    Task { await model.unpairEverywhere() }
+                }
+            } else {
+                Button(String(localized: "Forget This Device"), role: .destructive) {
+                    onUnpair()
+                    model.unpair()
+                }
+            }
+        } message: { removal in
+            if removal == .revoke {
+                Text("Asks the host to revoke access and clears the pairing and cached chats here.")
+            } else {
+                Text("Clears the pairing and cached chats here. It does not revoke access on the host.")
             }
         }
     }
@@ -144,12 +160,16 @@ struct SettingsView: View {
         if model.isDemo || model.devicesAvailable { devices }
         if !model.isDemo {
             Section {
-                Button(String(localized: "Unpair This Device"), role: .destructive) { unpairing = true }
+                Button(String(localized: "Forget This Device"), role: .destructive) { localRemoval = .forget }
                     .disabled(!model.paired)
+                    .accessibilityIdentifier("settings.forgetDevice")
+                if model.devicesAvailable {
+                    Button(String(localized: "Revoke This Device’s Access"), role: .destructive) { localRemoval = .revoke }
+                        .disabled(model.state != .ready || current == nil)
+                        .accessibilityIdentifier("settings.revokeDevice")
+                }
             } footer: {
-                Text(model.devicesAvailable
-                    ? "Removes this device from the host, and its keys and cached conversations from this device."
-                    : "Removes the keys and cached conversations from this device. On the host, `openclaw yorozu devices remove` removes it there.")
+                Text("Forget clears this device only. Revoke removes access on the host and requires a new pairing.")
             }
         }
     }
@@ -257,7 +277,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings.connection")
             }
             LabeledContent(String(localized: "Relay"), value: model.pairing.flatMap { URL(string: $0.pairing.relayUrl)?.host() } ?? "")
-            LabeledContent(String(localized: "Host key"), value: model.fingerprint ?? "")
+            LabeledContent(String(localized: "Host Fingerprint"), value: model.fingerprint ?? "")
             if let at = model.pairing?.pairedAt {
                 LabeledContent(String(localized: "Paired"), value: at.formatted(date: .abbreviated, time: .shortened))
             }
@@ -303,12 +323,12 @@ struct SettingsView: View {
                     .badge(device.push ? nil : Text("Push off"))
                     .swipeActions {
                         if !model.isDemo, !device.current {
-                            Button(String(localized: "Remove"), role: .destructive) { removing = device }
+                            Button(String(localized: "Revoke Access"), role: .destructive) { removing = device }
                         }
                     }
                     .contextMenu {
                         if !model.isDemo, !device.current {
-                            Button(String(localized: "Remove…"), systemImage: "trash", role: .destructive) { removing = device }
+                            Button(String(localized: "Revoke Access…"), systemImage: "trash", role: .destructive) { removing = device }
                         }
                     }
                 }

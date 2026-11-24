@@ -18,3 +18,8 @@ delivery marks, and retry UI.
 Native iPhone/iPad/Mac stay SwiftUI, using the platform’s own QR, navigation and
 system effects. Windows remains a Windows client, not a webview shipped with
 browser keys; web remains limited to pairing, settings, and text chat/history.
+
+Pairing methods share the QR camera, local image fallback, and QR renderer. The
+browser mailbox is scoped to its configured relay. Windows listens through its
+native core. A QR response always goes to fingerprint confirmation before
+either client saves a pairing.

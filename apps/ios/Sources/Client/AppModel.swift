@@ -38,6 +38,7 @@ final class AppModel {
     private(set) var cronsError: String?
     var automationDrafts: [String: CronJob] = [:]
     @ObservationIgnored var textDrafts: [String: String] = [:]
+    @ObservationIgnored var chatReadingAnchors: [String: String] = [:]
     @ObservationIgnored private var onScreen: Set<String> = []
     private(set) var devices: [DeviceInfo]?
     private(set) var devicesError: String?
@@ -218,6 +219,14 @@ final class AppModel {
             guard inviteAvailable else {
                 return String(localized: "Scan this code with Yorozu on an iPhone or iPad that is already paired.")
             }
+            if code.target == .browser {
+                guard hostInfo?.capabilities.contains(Invite.browserCapability) == true else {
+                    return String(localized: "Update the Yorozu plugin and enable browser pairing on your host first.")
+                }
+                guard let relay = pairing?.pairing.relayUrl, code.matchesRelay(relay) else {
+                    return String(localized: "This browser code does not use your host’s relay.")
+                }
+            }
             pendingDevice = code
             return nil
         }
@@ -235,6 +244,8 @@ final class AppModel {
         pendingPairing = nil
         disconnect()
         if let room = pairing?.pairing.roomId { forgetDirectPath(room: room) }
+        textDrafts = [:]
+        chatReadingAnchors = [:]
         cache.wipe()
         AttachmentFiles.wipe()
         conversations = [:]
@@ -274,6 +285,8 @@ final class AppModel {
         #if os(iOS)
         PreviewKeychain.clear()
         #endif
+        textDrafts = [:]
+        chatReadingAnchors = [:]
         cache.wipe()
         AttachmentFiles.wipe()
         ShareInbox.clear()
@@ -363,6 +376,7 @@ final class AppModel {
         visible = nil
         onScreen = []
         textDrafts = [:]
+        chatReadingAnchors = [:]
         foreground = nil
         activeSent = false
         automationDrafts = [:]
@@ -866,8 +880,9 @@ final class AppModel {
             devicesError = list.error
         case .pairInvite(let answer):
             guard answer.link != nil || answer.error != nil else { return }
-            invite = answer
-            if case .asking(let code) = deviceAdding { deliver(answer, to: code) }
+            if answer.target == nil { invite = answer }
+            if case .asking(let code) = deviceAdding, answer.target == code.target,
+               code.target == nil || answer.requestId == code.box { deliver(answer, to: code) }
         case .peerInfo, .message, .upload, .uploadStatus, .download, .foreground, .historyRequest, .convPatch, .devicePatch, .liveActivity, .pushToken, .directHints, .unknown:
             break
         }
@@ -929,10 +944,13 @@ final class AppModel {
 
     var inviteAvailable: Bool { !isDemo && hostInfo?.capabilities.contains(Invite.capability) == true }
 
-    func requestInvite() {
+    func requestInvite(target: PairInvite.Target? = nil, requestId: String? = nil) {
         guard !isDemo else { return }
-        invite = nil
-        transmit(.pairInvite(PairInvite()))
+        if target == nil { invite = nil }
+        var request = PairInvite()
+        request.target = target
+        request.requestId = requestId
+        transmit(.pairInvite(request))
     }
 
     func setPush(_ on: Bool, for id: String) {
@@ -1190,6 +1208,8 @@ final class AppModel {
     private func forget(_ convId: String) {
         guard let gone = conversations.removeValue(forKey: convId) else { return }
         deleted = convId
+        textDrafts[convId] = nil
+        chatReadingAnchors[convId] = nil
         if !isDemo { cache.remove(convId) }
         let waiting = Set(ShareInbox.pending().map { $0.folder.lastPathComponent.lowercased() })
         let retained = gone.items.filter { $0.kind == .user && ($0.status ?? .queued) < .delivered && waiting.contains($0.id) }

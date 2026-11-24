@@ -18,6 +18,7 @@ struct ChatView: View {
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var atBottom = true
     @State private var opening = false
+    @State private var restoringAnchor = false
     @State private var phase: ScrollPhase = .idle
     @State private var edge: ChatScrollEdge?
     @State private var settling: Task<Void, Never>?
@@ -78,13 +79,18 @@ struct ChatView: View {
         }
         .onScrollPhaseChange { _, new in
             phase = new
-            if new == .interacting { opening = false }
+            if new == .interacting {
+                opening = false
+                restoringAnchor = false
+            }
             scheduleSettle()
         }
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         .onChange(of: items.last?.id) { old, _ in
+            if old == nil, restoreReadingAnchor(in: items) { return }
+            guard !restoringAnchor else { return }
             if old == nil { opening = true }
-            if old == nil || atBottom || items.last?.kind == .user { scrollToEnd() }
+            if old == nil || atBottom { scrollToEnd() }
         }
         .task(id: model.state == .ready) { model.open(convId) }
         .task(id: highlighted) {
@@ -97,17 +103,25 @@ struct ChatView: View {
             model.requestedMessage = nil
             if items.contains(where: { $0.id == request.messageId }) { show(request.messageId) }
         }
-        .onChange(of: typing) { if atBottom { scrollToEnd() } }
+        .onChange(of: typing) { if atBottom && !restoringAnchor { scrollToEnd() } }
         .onAppear {
             model.markRead(convId, explicit: true)
             model.setOnScreen(convId, true)
             if focus != .unfocused { model.setVisible(convId) }
             if draft.isEmpty { draft = model.textDrafts.removeValue(forKey: convId) ?? "" }
+            if !items.isEmpty { _ = restoreReadingAnchor(in: items) }
         }
         .onDisappear {
             model.setOnScreen(convId, false)
             model.setVisible(nil, leaving: convId)
-            if !draft.isEmpty { model.textDrafts[convId] = draft }
+            if model.paired, !draft.isEmpty { model.textDrafts[convId] = draft }
+            if model.paired, !restoringAnchor {
+                let anchor = atBottom ? nil : position.viewID(type: String.self)
+                model.chatReadingAnchors[convId] = anchor.flatMap { candidate in
+                    items.contains { $0.id == candidate } ? candidate : nil
+                }
+            }
+            settling?.cancel()
         }
         .onChange(of: focus) { if focus != .unfocused { model.setVisible(convId) } }
         .onChange(of: model.conversations[convId]?.latestReply?.id) { readIfActive() }
@@ -196,6 +210,7 @@ extension ChatView {
             onRequestHandled: { model.composeRequest = nil },
             onFiles: attach, onImages: attachImages, onPasteData: attachPasteData) {
             model.send(Self.message(draft, automation: automation), attachments: files, in: convId, replyingTo: replyingTo)
+            scrollToEnd()
             draft = ""
             files = []
             automation = nil
@@ -253,11 +268,25 @@ extension ChatView {
     static let endId = "chat.end"
 
     private func scrollToEnd() {
+        restoringAnchor = false
+        model.chatReadingAnchors[convId] = nil
         position.scrollTo(id: Self.endId, anchor: .bottom)
+    }
+
+    private func restoreReadingAnchor(in items: [ChatItem]) -> Bool {
+        guard let anchor = model.chatReadingAnchors[convId], items.contains(where: { $0.id == anchor }) else { return false }
+        opening = false
+        restoringAnchor = true
+        position.scrollTo(id: anchor, anchor: .top)
+        return true
     }
 
     private func settle() {
         guard phase == .idle, let edge else { return }
+        if restoringAnchor {
+            restoringAnchor = false
+            return
+        }
         if edge.needsSettle(following: atBottom || opening) {
             scrollToEnd()
         } else if opening {

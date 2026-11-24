@@ -1,0 +1,35 @@
+:root {
+  --yorozu-page: #ffffff;
+  --yorozu-panel: #f8f7f5;
+  --yorozu-text: #24211f;
+  --yorozu-subtle: #68635d;
+  --yorozu-border: #e5e0da;
+  --yorozu-accent: #a83728;
+  --yorozu-on-accent: #ffffff;
+  --yorozu-muted-fill: #efebe6;
+  --yorozu-user-fill: #f3e9e3;
+  --yorozu-hair: 2px;
+  --yorozu-tight: 4px;
+  --yorozu-inner: 8px;
+  --yorozu-stack: 12px;
+  --yorozu-gutter: 16px;
+  --yorozu-section: 24px;
+  --yorozu-target: 44px;
+  --yorozu-chat-gap: .7rem;
+  --yorozu-bubble-radius: 1rem;
+  --yorozu-column: 46rem;
+  --yorozu-focus-width: 2px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --yorozu-page: #181716;
+    --yorozu-panel: #211f1d;
+    --yorozu-text: #f3efeb;
+    --yorozu-subtle: #b5aca3;
+    --yorozu-border: #423a33;
+    --yorozu-accent: #fa8b73;
+    --yorozu-on-accent: #23120e;
+    --yorozu-muted-fill: #302b27;
+    --yorozu-user-fill: #3a2d27;
+  }
+}

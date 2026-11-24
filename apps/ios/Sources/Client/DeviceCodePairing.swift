@@ -2,6 +2,8 @@ import Foundation
 import YorozuWire
 #if os(macOS)
 import AppKit
+#else
+import UIKit
 #endif
 
 enum DeviceAdding: Equatable {
@@ -14,12 +16,14 @@ extension AppModel {
     func addDevice(_ code: DeviceCode) {
         pendingDevice = nil
         deviceAdding = .asking(code)
-        requestInvite()
+        requestInvite(target: code.target, requestId: code.target == .browser ? code.box : nil)
     }
 
     func deliver(_ answer: PairInvite, to code: DeviceCode) {
-        guard let webLink = answer.webLink, let fingerprint = answer.fingerprint, let url = code.mailbox(websocket: false),
-              let letter = try? code.seal(webLink) else {
+        guard answer.target == code.target, code.target == nil || answer.requestId == code.box,
+              let link = code.target == .browser ? answer.link : answer.webLink,
+              let fingerprint = answer.fingerprint, let url = code.mailbox(websocket: false),
+              let letter = try? code.seal(link) else {
             deviceAdding = .failed(answer.error ?? String(localized: "The host could not make a pairing code."))
             return
         }
@@ -31,7 +35,7 @@ extension AppModel {
             guard deviceAdding == .asking(code) else { return }
             switch status?.statusCode {
             case 204?: deviceAdding = .sent(code, fingerprint: fingerprint)
-            case 409?, 410?: deviceAdding = .failed(String(localized: "This code was already used or has expired. Scan the new code on the Mac."))
+            case 409?, 410?: deviceAdding = .failed(String(localized: "This code was already used or has expired. Scan the new code on the device."))
             default: deviceAdding = .failed(String(localized: "Couldn’t reach the relay. Check the connection and scan again."))
             }
         }
@@ -41,16 +45,23 @@ extension AppModel {
         #if os(macOS)
         let name = Host.current().localizedName ?? "Mac"
         #else
-        let name = "Yorozu"
+        let name = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
         #endif
+        var ownedCode: DeviceCode?
+        defer {
+            if deviceCode == ownedCode { deviceCode = nil }
+        }
         while !Task.isCancelled {
             let (code, key) = DeviceCode.make(name: name)
+            ownedCode = code
             deviceCode = code
-            if let letter = await mailboxLetter(code, for: .seconds(600)), let link = try? DeviceCode.open(letter, privateKey: key) {
+            let letter = await mailboxLetter(code, for: .seconds(600))
+            guard !Task.isCancelled, deviceCode == code else { return }
+            if let letter, let link = try? DeviceCode.open(letter, privateKey: key) {
                 pairingError = submit(link)
+                if pairingError == nil { return }
             }
         }
-        deviceCode = nil
     }
 
     #if os(macOS)

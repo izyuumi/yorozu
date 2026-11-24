@@ -31,6 +31,14 @@ pub fn submit_link(core: State<'_, Core>, link: String) -> Result<(), String> {
     send(core, Command::SubmitLink(link))
 }
 #[tauri::command]
+pub fn start_device_code(core: State<'_, Core>) -> Result<(), String> {
+    send(core, Command::StartDeviceCode)
+}
+#[tauri::command]
+pub fn stop_device_code(core: State<'_, Core>) -> Result<(), String> {
+    send(core, Command::StopDeviceCode)
+}
+#[tauri::command]
 pub fn confirm_pairing(core: State<'_, Core>) -> Result<(), String> {
     send(core, Command::Confirm)
 }

@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
+import { PairingMethods } from '../../../windows/app/src/components/shared/PairingQr';
 import { ChatHeader, ClientIcon, ComposerFields, FingerprintConfirmation, ForgetAction, PairLinkForm, TextMessage, fitComposer }
   from '../../../windows/app/src/components/shared/ClientUI';
 
@@ -18,7 +19,7 @@ export function mountUI() {
     mount('pair-confirmation', <FingerprintConfirmation hidden id="confirm" headingId="confirm-heading"
       fingerprintId="fingerprint" pairId="pair-now" cancelId="cancel" confirmLabel="Pair"
       details={<p>Compare this code with the fingerprint shown on your Mac. Only pair if they match.</p>}
-      footer={<p className="help">If your Mac already has 16 paired devices, this replaces the oldest pairing.</p>} />);
+      footer={<><p className="help">If your Mac already has 16 paired devices, this replaces the oldest pairing.</p><p id="pair-progress" role="status" hidden /></>} />);
     mount('chat-header', <ChatHeader title="New chat" titleId="chat-title"
       navigation={<button id="chats-button" className="icon-button" type="button" aria-controls="mobile-chats" aria-haspopup="dialog" aria-label="Show chats">
         <ClientIcon name="chats" />
@@ -31,11 +32,12 @@ export function mountUI() {
       label="Message" sendLabel="Send" />);
     mount('forget-action', <ForgetAction id="forget" label="Forget this browser" />);
   });
+  const methods = createRoot(node('pair-methods'));
   const transcript = node('timeline');
   const messages = node('messages');
   const root = createRoot(messages);
   let shown, thread;
-  return { captureScroll() {
+  return { renderPairMethods(props) { methods.render(<PairingMethods {...props} />); }, captureScroll() {
     const position = transcript.scrollTop;
     const top = transcript.getBoundingClientRect().top;
     const anchor = Array.from(messages.children).find(el => el.getBoundingClientRect().bottom > top);

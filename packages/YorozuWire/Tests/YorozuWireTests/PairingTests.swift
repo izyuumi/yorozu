@@ -6,6 +6,39 @@ struct PairingTests {
     let key = Data(repeating: 7, count: 32).base64URLEncodedString()
     let base = "yorozu://pair?v=3&relay=wss://relay.example/ws&key=\(Data(repeating: 7, count: 32).base64URLEncodedString())&token=tok&room=room&secret=sec"
 
+    @Test func browserDeviceCodeKeepsNativeAndBrowserInvitationsSeparate() throws {
+        let (native, privateKey) = DeviceCode.make(name: "Test device")
+        #expect(DeviceCode.decode(native.link) == native)
+        #expect(native.link.contains("#v=1&"))
+        #expect(DeviceCode.decode(native.link + "&target=browser") == nil)
+
+        var browser = native
+        browser.name = "Test browser"
+        browser.target = .browser
+        let decoded = try #require(DeviceCode.decode(browser.link))
+        #expect(decoded == browser)
+        #expect(browser.link.contains("#v=2&"))
+        #expect(DeviceCode.decode(browser.link.replacingOccurrences(of: "&target=browser", with: "")) == nil)
+        #expect(DeviceCode.decode(browser.link + "&target=browser") == nil)
+        #expect(DeviceCode.decode(browser.link.replacingOccurrences(of: "wss:", with: "ws:")) == nil)
+        #expect(decoded.matchesRelay("wss://relay.yumi.to/"))
+        #expect(!decoded.matchesRelay("wss://another.invalid"))
+        #expect(try DeviceCode.open(browser.seal("browser invite"), privateKey: privateKey) == "browser invite")
+        let (_, otherPrivateKey) = DeviceCode.make(name: "Other device")
+        #expect(throws: (any Error).self) { try DeviceCode.open(browser.seal("browser invite"), privateKey: otherPrivateKey) }
+    }
+
+    @Test func browserInviteTargetIsExplicitAndLegacyRequestStaysEmpty() throws {
+        let encoder = JSONEncoder()
+        let legacy = try JSONSerialization.jsonObject(with: encoder.encode(PairInvite())) as? [String: String]
+        #expect(legacy == [:])
+        var request = PairInvite()
+        request.target = .browser
+        let typed = try JSONSerialization.jsonObject(with: encoder.encode(request)) as? [String: String]
+        #expect(typed == ["target": "browser"])
+        #expect(try JSONDecoder().decode(PairInvite.self, from: encoder.encode(request)).target == .browser)
+    }
+
     @Test func hintsRoundTrip() throws {
         let hints = DirectHints(port: 8738, lan: [.init(address: "192.168.1.5", prefix: 24), .init(address: "fd00::5", prefix: 64)],
             tailscale: [.init(address: "100.100.1.2"), .init(address: "fd7a:115c:a1e0::1")])
