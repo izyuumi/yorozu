@@ -1,0 +1,16 @@
+{
+  "name": "@yorozu/browser",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@noble/ciphers": "2.1.1"
+  },
+  "devDependencies": {
+    "playwright-core": "1.58.2",
+    "vite": "7.3.1"
+  }
+}

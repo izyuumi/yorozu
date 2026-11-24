@@ -1,0 +1,18 @@
+:root { font: 1rem/1.5 system-ui, sans-serif; color-scheme: light dark; }
+body { margin: 0; }
+main { max-width: 42rem; margin: auto; padding: 1rem; }
+header { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; border-bottom: 1px solid GrayText; padding-bottom: .65rem; }
+header p { margin: 0; color: GrayText; }
+header button { margin-inline-start: auto; }
+button, input, textarea, select { font: inherit; }
+button, select { padding: .35rem .55rem; }
+textarea, input[type=text] { width: 100%; box-sizing: border-box; padding: .5rem; }
+section { margin-top: 1rem; }
+form { display: flex; align-items: start; flex-direction: column; gap: .5rem; }
+[hidden] { display: none !important; }
+li p { margin: 0 0 1rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+ol { padding-left: 1.35rem; min-height: 12rem; }
+dialog { max-width: min(90vw, 32rem); }
+dt { font-weight: 600; }
+dd { margin: 0 0 .5rem; }
+dialog form { margin-top: .65rem; }

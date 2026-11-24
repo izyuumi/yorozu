@@ -2,7 +2,7 @@ name: Deploy website
 on:
   push:
     branches: [main]
-    paths: ['apps/web/**', 'apps/mcp/src/**', 'apps/mcp/package.json']
+    paths: ['apps/web/**', '!apps/web/browser/**', 'apps/mcp/src/**', 'apps/mcp/package.json']
   workflow_dispatch:
 
 concurrency:

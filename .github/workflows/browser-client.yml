@@ -1,0 +1,60 @@
+name: Yorozu browser client
+on:
+  pull_request:
+    paths: ['apps/web/browser/**', '.github/workflows/browser-client.yml']
+  workflow_dispatch:
+    inputs:
+      target:
+        type: choice
+        options: [staging, production]
+        default: staging
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26
+      - run: pnpm install --frozen-lockfile --filter @yorozu/relay
+      - run: pnpm --dir apps/web/browser install --frozen-lockfile
+      - run: pnpm --dir apps/web/browser build
+      - run: pnpm --dir apps/web/browser exec playwright-core install --with-deps chromium
+      - run: pnpm --dir apps/web/browser test
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: browser-dist
+          path: apps/web/browser/dist/*
+          include-hidden-files: true
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch' && (inputs.target == 'staging' || github.ref == 'refs/heads/main')
+    needs: test
+    runs-on: ubuntu-latest
+    environment: yorozu-browser-${{ inputs.target }}
+    concurrency: yorozu-browser-${{ inputs.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26
+      - run: pnpm install --frozen-lockfile --filter @yorozu/relay
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: browser-dist
+          path: apps/web/browser/dist
+      - name: Deploy browser assets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          args=()
+          if [ "$TARGET" = staging ]; then args+=(--env staging); fi
+          apps/relay/node_modules/.bin/wrangler deploy --config apps/web/browser/wrangler.jsonc "${args[@]}"

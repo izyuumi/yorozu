@@ -1,0 +1,17 @@
+{
+  "name": "yorozu-browser",
+  "account_id": "f4fc69dd41998fb00537d2f2fd08895d",
+  "compatibility_date": "2026-03-10",
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": { "directory": "./dist" },
+  "routes": [{ "pattern": "app.yorozu.yumi.to", "custom_domain": true }],
+  "env": {
+    "staging": {
+      "name": "yorozu-browser-staging",
+      "workers_dev": true,
+      "preview_urls": false,
+      "routes": []
+    }
+  }
+}
