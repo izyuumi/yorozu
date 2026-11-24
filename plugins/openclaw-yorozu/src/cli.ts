@@ -27,6 +27,14 @@ export function registerYorozuCli(program: Program): void {
     if (pairing.devices >= 16) print("16 devices are paired: the new one replaces the oldest.");
   });
 
+  addGatewayClientOptions(yorozu.command("pair-browser").description("Create an independent one-time browser invitation")).action(
+    async (opts: GatewayRpcOpts) => {
+      const pairing = await call<Pairing>("yorozu.pair.browser", opts);
+      print(pairing.webLink);
+      print("Host fingerprint: " + pairing.fingerprint + ". One browser, until " + time(pairing.expiresAt) + ".");
+    },
+  );
+
   const devices = addGatewayClientOptions(yorozu.command("devices").description("List paired devices")).action(
     async (opts: GatewayRpcOpts) => {
       const { devices } = await call<{ devices: DeviceRow[] }>("yorozu.devices.list", opts);

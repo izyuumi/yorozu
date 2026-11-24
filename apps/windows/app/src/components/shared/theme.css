@@ -1,0 +1,40 @@
+:root {
+  --yorozu-page: #ffffff;
+  --yorozu-panel: #f8f7f5;
+  --yorozu-text: #24211f;
+  --yorozu-subtle: #68635d;
+  --yorozu-border: #e5e0da;
+  --yorozu-accent: #a83728;
+  --yorozu-on-accent: #fff;
+  --yorozu-muted-fill: #efebe6;
+  --yorozu-user-fill: #f3e9e3;
+  --yorozu-chat-gap: .7rem;
+  --yorozu-bubble-radius: 1rem;
+  --yorozu-column: 46rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --yorozu-page: #181716; --yorozu-panel: #211f1d; --yorozu-text: #f3efeb;
+    --yorozu-subtle: #b5aca3; --yorozu-border: #423a33;
+    --yorozu-accent: #fa8b73; --yorozu-on-accent: #23120e;
+    --yorozu-muted-fill: #302b27; --yorozu-user-fill: #3a2d27;
+  }
+}
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.step-label { color: var(--yorozu-accent); font-size: .82rem; font-weight: 650; }
+.pair-description { color: var(--yorozu-subtle); }
+.field-label { font-weight: 650; }
+.pair-actions { display: flex; justify-content: flex-end; gap: .55rem; }
+.fingerprint { display: block; padding: .85rem 1rem; background: var(--yorozu-muted-fill); border-radius: .7rem; font: 650 1.08rem ui-monospace, monospace; letter-spacing: .05em; overflow-wrap: anywhere; }
+.primary-button:not(:disabled) { background: var(--yorozu-accent); color: var(--yorozu-on-accent); border-color: transparent; font-weight: 650; }
+.danger-button { color: var(--yorozu-accent); }
+.chat-heading { display: flex; align-items: center; gap: .75rem; min-width: 0; }
+.chat-heading-copy { min-width: 0; flex: 1; }
+.chat-heading h1 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1.05rem; line-height: 1.3; }
+.chat-heading [role=status] { color: var(--yorozu-subtle); font-size: .78rem; margin: .16rem 0 0; }
+.composer { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: end; gap: .4rem; padding: .28rem; border: 1px solid var(--yorozu-border); border-radius: 1.18rem; background: var(--yorozu-panel); }
+.composer:focus-within { border-color: var(--yorozu-accent); }
+.composer textarea { width: 100%; box-sizing: border-box; resize: none; min-height: 44px; max-height: min(8.5rem, 28dvh); border: 0; padding: .62rem .68rem; color: inherit; background: transparent; line-height: 1.4; }
+.composer textarea:focus { outline: none; }
+.composer button.send-button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border-radius: .9rem; }
+.composer-limit { grid-column: 1 / -1; margin: 0 .6rem .25rem; color: var(--yorozu-accent); }

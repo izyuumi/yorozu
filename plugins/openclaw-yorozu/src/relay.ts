@@ -7,7 +7,7 @@ import { computeBackoff, sleepWithAbort } from "openclaw/plugin-sdk/runtime-env"
 import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 import { WebSocket, WebSocketServer } from "openclaw/plugin-sdk/websocket-runtime";
 import { receiveUpload, receiveUploadStatus, serveDownload } from "./attachments.js";
-import { getDevice, listDevices, putDevice, removeDevice } from "./devices.js";
+import { getDevice, listDevices, mutateDevices, putDevice, removeDevice } from "./devices.js";
 import { serveBonjour } from "./bonjour.js";
 import { watchDirect } from "./hints.js";
 import { bindAddresses, serveDirect, type DirectListener } from "./direct.js";
@@ -24,7 +24,7 @@ import {
   type Reaction,
   type PeerInfo,
 } from "./envelope.js";
-import { CLOSE, Hub, type HubOptions, type Link, type Request } from "./hub.js";
+import { Hub, type HubOptions, type Link, type Request } from "./hub.js";
 import type { HostKeys } from "./keys.js";
 import { ActivityStore } from "./activitystore.js";
 import { ActivityWatch } from "./activitywatch.js";
@@ -71,6 +71,9 @@ export type Pairing = {
   directOnly: boolean;
 };
 
+const browserEnabled = () => process.env.YOROZU_BROWSER_EPHEMERAL === "1";
+const BROWSER_PREVIEW_RELAY = "wss://yorozu-browser-test-relay.yumi-f4f.workers.dev/";
+const BROWSER_PREVIEW_ORIGIN = "https://yorozu-v4-staging.yumi-f4f.workers.dev";
 const PAIR_WEB_LINK = "https://yorozu.yumi.to/pair";
 const MINT_TIMEOUT_MS = 10_000;
 
@@ -99,22 +102,24 @@ export async function notifyReply(convId: string, messageId: string, text: strin
   await host?.notify?.(convId, messageId, text);
 }
 
-export async function beginPairing(): Promise<Pairing> {
-  const { link, webLink, fingerprint, expiresAt, directOnly } = await mintPairing();
+export async function beginPairing(browser = false): Promise<Pairing> {
+  const { link, webLink, fingerprint, expiresAt, directOnly } = await mintPairing(false, browser);
   return { link, webLink, fingerprint, expiresAt, directOnly, devices: (await listDevices()).length };
 }
 
-async function mintPairing(directOnly = false): Promise<Omit<Pairing, "devices"> & { secret: string }> {
+async function mintPairing(directOnly = false, browser = false): Promise<Omit<Pairing, "devices"> & { secret: string }> {
   if (!host) throw new Error("the yorozu channel reaches neither its relay nor its direct listener; check `openclaw channels status`");
   const { relayUrl, keys } = host;
-  const hints = host.hints();
+  if (browser && (!browserEnabled() || !host.mint)) throw new Error("browser pairing is disabled or the relay is offline");
+  const hints = browser ? undefined : host.hints();
   const code = await mintCode(directOnly ? null : host.mint, hints, directOnly ? undefined : host.log);
   const { token, expiresAt } = code;
-  const secret = pending.add(expiresAt);
-  const query = pairingQuery({ relayUrl, hostStatic: keys.static.publicKey, token, room: keys.room, secret, hints });
+  const browserOrigin = new URL(relayUrl).href === BROWSER_PREVIEW_RELAY ? BROWSER_PREVIEW_ORIGIN : "https://app.yorozu.yumi.to";
+  const secret = pending.add(expiresAt, Date.now(), browser);
+  const query = pairingQuery({ relayUrl, hostStatic: keys.static.publicKey, token, room: keys.room, secret, hints, browser }) + (browser ? '&exp=' + expiresAt : '');
   return {
     link: `yorozu://pair?${query}`,
-    webLink: `${PAIR_WEB_LINK}#${query}`,
+    webLink: browser ? browserOrigin + "/#pair=" + encodeURIComponent("yorozu://pair?" + query) : `${PAIR_WEB_LINK}#${query}`,
     fingerprint: fingerprint(keys.static.publicKey),
     expiresAt,
     directOnly: code.directOnly,
@@ -123,9 +128,11 @@ async function mintPairing(directOnly = false): Promise<Omit<Pairing, "devices">
 }
 
 export async function unpairDevice(deviceKey: string): Promise<boolean> {
-  const removed = await removeDevice(deviceKey);
-  host?.forget([deviceKey]);
-  return removed;
+  return mutateDevices(async () => {
+    const removed = await removeDevice(deviceKey);
+    host?.forget([deviceKey]);
+    return removed;
+  });
 }
 
 export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
@@ -187,11 +194,13 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     const device = await getDevice(patch.id);
     if (!device) return { kind: "device_list", data: { error: "unknown device" } };
     if (patch.removed) {
-      await removeDevice(patch.id);
-      me!.forget([patch.id]);
+      await unpairDevice(patch.id);
       log?.info("yorozu: device removed from Settings");
     } else if (patch.push !== undefined && (device.push !== false) !== patch.push) {
-      await putDevice({ ...device, push: patch.push });
+      await mutateDevices(async () => {
+        const current = await getDevice(patch.id);
+        if (current && !current.browser) await putDevice({ ...current, push: patch.push });
+      });
     }
     return deviceList(deviceKey);
   };
@@ -281,21 +290,40 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     }),
     directHints: () => direct?.listening ? hints : undefined,
     staticKeyOf: (deviceKey) => getDevice(deviceKey).then(
-      (device) => device ? { staticPub: device.staticPub } : { absent: true },
+      (device) => device ? device.browser ? { browser: true } : { staticPub: device.staticPub } : { absent: true },
       () => ({ unread: true }),
     ),
     pair: pairer({
       pending,
-      put: putDevice,
+      put: (device) => mutateDevices(async () => {
+        if ((await getDevice(device.signingPub))?.browser) throw new Error("mode mismatch");
+        return putDevice(device);
+      }),
       forget: (deviceKeys) => me!.forget(deviceKeys),
       ...announceOptions,
     }, announcer),
+    browser: browserEnabled() ? {
+      canPair: (accepted, now) => pending.acceptsBrowser(accepted.payload.proof, b64u(accepted.deviceStatic), b64u(accepted.deviceSigningKey), now),
+      authorize: (accepted, wasKnown, stillPending) => mutateDevices(async () => {
+        const signingPub = b64u(accepted.deviceSigningKey);
+        const existing = await getDevice(signingPub);
+        if (!stillPending()) return false;
+        if (wasKnown) return existing?.browser === true;
+        if (existing || !pending.spend(accepted.payload.proof, b64u(accepted.deviceStatic), signingPub, Date.now(), true)) return false;
+        const evicted = await putDevice({ browser: true, signingPub, pairedAt: Date.now(), push: false });
+        me.forget(evicted);
+        announcer.announce();
+        return true;
+      }),
+    } : undefined,
     refused: (deviceKey) => relaySend?.(JSON.stringify({ type: "revoke", pubkey: deviceKey })),
     onPeer: async ({ deviceKey, event, reply }) => {
       if (event.kind !== "peer_info") return;
       const name = event.data.name?.trim().slice(0, 64);
-      const device = name ? await getDevice(deviceKey) : undefined;
-      if (device && name && device.name !== name) await putDevice({ ...device, name });
+      if (name) await mutateDevices(async () => {
+        const device = await getDevice(deviceKey);
+        if (device && device.name !== name) await putDevice({ ...device, name });
+      });
       const cursors = await listCursors();
       if (cursors.length) reply(cursors.map((data) => ({ kind: "read_cursor", data })));
     },
@@ -314,7 +342,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     notify: null,
     forget: (deviceKeys) => {
       for (const key of deviceKeys) {
-        hub.end(key, { code: CLOSE.unauthorized, reason: "revoked" });
+        hub.revoke(key);
         activities.forget(key, false);
         relaySend?.(JSON.stringify({ type: "revoke", pubkey: key }));
       }
@@ -399,7 +427,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         const body = firstLine(text);
         if (!body) return;
         const watching = hub.watching(convId);
-        const devices = (await listDevices()).filter((device) => device.push !== false && !watching.has(device.signingPub));
+        const devices = (await listDevices()).filter((device) => !device.browser && device.push !== false && !watching.has(device.signingPub));
         if (!devices.length) return log?.info("yorozu: notify skipped (every device has the app open or push off)");
         const marked = alerted.get(convId) ?? new Set<string>();
         for (const device of devices) marked.add(device.signingPub);
@@ -408,7 +436,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         const plaintext = previewPlaintext({ b: body, c: "reply", e: threadRef(messageId), t: title, v: convId });
         const previews: Record<string, { n: string; c: string }> = {};
         for (const device of devices) {
-          const key = plaintext && previewKey(keys.static.privateKey, device.staticPub);
+          const key = plaintext && device.staticPub && previewKey(keys.static.privateKey, device.staticPub);
           if (key) previews[device.signingPub] = sealPreview(key, plaintext);
         }
         send(
@@ -532,6 +560,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         signal.removeEventListener("abort", stop);
         if (registered) {
           relaySend = null;
+          hub.browserRelayDown(relayLink);
           activities.relayDown();
           relayFrames = null;
           me.mint = null;
