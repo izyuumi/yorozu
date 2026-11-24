@@ -2,44 +2,65 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="robots" content="noindex, nofollow">
   <title>Yorozu</title>
   <script type="module" src="/src/main.mjs"></script>
 </head>
 <body>
-<main>
-  <header><span class="mark" aria-hidden="true"></span>
-    <strong>Yorozu</strong>
-    <p id="connection" role="status"></p>
-    <button id="settings-button" type="button" hidden>Settings</button>
-  </header>
+<main id="app">
+  <header id="entry-bar" class="brand"><span class="mark" aria-hidden="true"></span><strong>Yorozu</strong></header>
   <p id="notice" role="status" hidden></p>
   <p id="boot-hint" role="status">Opening Yorozu… If this message stays, open the original invitation in a Safari tab with JavaScript enabled.</p>
-  <section id="onboarding" hidden>
-    <p class="eyebrow">SET UP YOROZU</p><h1>Connect to your Mac</h1>
-    <p>Run <code>openclaw yorozu pair-browser</code> on your Mac to create a browser invitation. Open the link here and compare the host fingerprint to connect.</p>
+  <section id="onboarding" class="pair-card" hidden>
     <div id="pair-fields"></div>
     <div id="pair-confirmation"></div>
   </section>
   <section id="chat" hidden>
-    <label for="threads">Conversation</label>
-    <select id="threads"></select>
-    <button id="older" type="button" hidden>Earlier messages</button>
-    <ol id="messages" aria-label="Messages" tabindex="0"></ol>
-    <div id="chat-composer"></div>
+    <aside id="desktop-chats" aria-label="Chats">
+      <nav id="chat-nav" aria-label="Conversations">
+        <div class="brand"><span class="mark" aria-hidden="true"></span><strong>Yorozu</strong></div>
+        <button id="new-chat" type="button"><span aria-hidden="true">＋</span> New chat</button>
+        <h2>Recent chats</h2>
+        <ul id="threads"></ul>
+        <p id="no-chats" hidden>No chats yet.</p>
+      </nav>
+    </aside>
+    <section class="chat-pane" aria-labelledby="chat-title">
+      <div id="chat-header"></div>
+      <div class="timeline" id="timeline" tabindex="0" aria-label="Message history" role="region">
+        <div class="reading-column">
+          <div class="history-control"><button id="older" type="button" hidden>Load earlier messages</button></div>
+          <div id="empty-chat" hidden>
+            <span class="mark" aria-hidden="true"></span>
+            <h2 id="chat-state-title">Start a chat</h2><p id="chat-state-description">Write a message to your Yorozu assistant.</p>
+          </div>
+          <ol id="messages" aria-label="Messages"></ol>
+        </div>
+      </div>
+      <div class="composer-area">
+        <button id="latest" class="latest" hidden type="button" aria-label="Jump to latest message" title="Jump to latest message">↓</button>
+        <div id="chat-composer" class="reading-column"></div>
+      </div>
+    </section>
   </section>
-  <dialog id="settings">
-    <h2>Settings</h2>
-    <dl>
-      <dt>Host</dt><dd id="host-name"></dd>
-      <dt>Host fingerprint</dt><dd id="host-key"></dd>
-      <dt>Connection</dt><dd id="host-status"></dd>
-    </dl>
-    <p id="storage-mode"></p>
-    <p>Forgetting this browser clears local access. To revoke its pairing on your Mac, remove Yorozu Web in Devices from another paired device.</p>
-    <div id="forget-action"></div>
-    <form method="dialog"><button>Close</button></form>
+  <dialog id="mobile-chats" aria-label="Chats">
+    <div class="dialog-heading"><h2>Chats</h2><form method="dialog"><button class="icon-button" type="submit" aria-label="Close chats">×</button></form></div>
+  </dialog>
+  <dialog id="settings" aria-labelledby="settings-heading">
+    <div class="dialog-heading"><h2 id="settings-heading">Settings</h2><form method="dialog"><button class="icon-button" type="submit" aria-label="Close">×</button></form></div>
+    <section aria-labelledby="connection-heading">
+      <h3 id="connection-heading">Connection</h3>
+      <dl><div><dt>Host</dt><dd id="host-name"></dd></div>
+        <div><dt>Status</dt><dd id="host-status"></dd></div>
+        <div><dt>Host fingerprint</dt><dd><code id="host-key"></code></dd></div></dl>
+    </section>
+    <section aria-labelledby="device-heading">
+      <h3 id="device-heading">This browser</h3><p id="storage-mode"></p>
+      <div id="forget-action"></div>
+      <div id="forget-confirmation" class="pair-actions" hidden><button id="keep-pairing" type="button">Cancel</button><button id="confirm-forget" class="danger-button" type="button">Forget pairing</button></div>
+      <p class="help">This clears access on this browser. To also revoke its pairing, remove Yorozu Web from Devices on your Mac.</p>
+    </section>
   </dialog>
 </main>
 </body>
