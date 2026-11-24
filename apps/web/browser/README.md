@@ -1,7 +1,7 @@
 # Yorozu Web
 
 A separate HTTPS client for the owner's existing Yorozu/OpenClaw host. No account
-or repeat sign-in. Pair using a link from a paired device or the OpenClaw CLI and
+or repeat sign-in. Use an up-to-date Chrome or Edge, or Safari on iOS 18.4 or newer (Web Crypto X25519 support). Pair using a link from a paired device or the OpenClaw CLI and
 compare the host fingerprint. The web client uses the standard Yorozu relay and
 the plugin's current legacy-compatible Noise v3 wire. It never connects to the
 plugin's local-only listener or adds an origin exception to it.

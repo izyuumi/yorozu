@@ -185,7 +185,7 @@ $('pair-now').addEventListener('click', async () => {
     if (generation === g) start({ ...draftPairing, identity }, true);
   } catch {
     if (generation === g) {
-      notify('Pairing is unavailable. Try the latest Edge or Chrome.');
+      notify('Pairing is unavailable. On iPhone, use Safari on iOS 18.4 or newer. On Windows, update Edge or Chrome.');
       $('pair-now').disabled = false;
     }
   }
@@ -227,7 +227,7 @@ $('composer').addEventListener('submit', async (event) => {
 });
 
 if (!navigator.locks) {
-  notify('Try the latest Edge or Chrome to use Yorozu in your browser.');
+  notify('Use Safari on iOS 18.4 or newer, or a current version of Edge or Chrome.');
 } else {
   navigator.locks.request('yorozu-device', async () => {
     try {
