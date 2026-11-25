@@ -1051,6 +1051,24 @@ for (const { name, number, mediaUrl, basename, attachments, failures, liveText }
     failures: [mediaFailure],
     liveText: `${text}\n\n${mediaFailure}`,
   },
+  {
+    name: "a percent-encoded image URL replaces its decoded filename mirror in history",
+    number: 676,
+    mediaUrl: "https://example.test/a%20b.png",
+    basename: "a b.png",
+    attachments: [stagedImage],
+    failures: [],
+    liveText: text,
+  },
+  {
+    name: "a data URL image replaces its media fallback mirror in history",
+    number: 677,
+    mediaUrl: "data:image/png;base64,AAAA",
+    basename: "media",
+    attachments: [stagedImage],
+    failures: [],
+    liveText: text,
+  },
 ]) {
   test(name, async () => {
     const { convId, sessionId, eventId: mirrorId } = conversation(number);
@@ -1079,6 +1097,49 @@ for (const { name, number, mediaUrl, basename, attachments, failures, liveText }
       assert.deepEqual(items.map(({ ts: _, ...item }) => item), [
         { kind: "agent", id: liveId, seq: 29, text: liveText, ...(attachments.length && { attachments }) },
       ]);
+    } finally {
+      host.stage = undefined;
+    }
+  });
+}
+
+for (const { name, number, separate } of [
+  { name: "a two-image payload restores one history item with both attachments", number: 678, separate: false },
+  { name: "two separately mirrored images restore as separate history items", number: 679, separate: true },
+]) {
+  test(name, async () => {
+    const { convId, sessionId, eventId } = conversation(number);
+    const transcript = host.transcripts.get(sessionId)!;
+    transcript.pop();
+    const mediaUrls = ["/tmp/a.png", "/tmp/b.png"];
+    const files = ["a.png", "b.png"].map((name, i) => ({ ...stagedImage, id: uuid(number * 100 + 3 + i), name }));
+    host.stage = (urls: string[]) => ({ attachments: [files[mediaUrls.indexOf(urls[0]!)]!], failures: [] });
+    host.sent.length = 0;
+    try {
+      host.run = async () => {
+        if (separate) {
+          for (const [i, mediaUrl] of mediaUrls.entries()) {
+            await sendConversationMedia({ threadId: convId, text: i === 0 ? text : "", mediaUrl, maxBytes: 1, access: {} });
+          }
+        } else {
+          await sendConversationPayload({ threadId: convId, text, mediaUrls, cfg: {}, sdk, maxBytes: 1, access: {} });
+        }
+        const mirrors = separate ? [`${text}\na.png`, "b.png"] : [`${text}\na.png, b.png`];
+        for (const [i, content] of mirrors.entries()) {
+          transcript.push({
+            type: "message", id: i === 0 ? eventId : uuid(number * 100 + 2),
+            message: { role: "assistant", content, api: "openclaw-transcript", provider: "openclaw", model: "delivery-mirror" },
+          });
+        }
+      };
+      await handleMessage({ cfg: {}, agent: "main", presentationSdk: sdk, log } as never, { convId, messageId: userId, text: "Send the images" });
+      await stored();
+      const live = host.sent.filter((event: Event) => event.kind === "reply").map((event: Event) => event.data as Reply);
+      assert.deepEqual(live.map((reply: Reply) => reply.attachments), files.map((file) => [file]));
+      const [first, second] = asItems(live, 1);
+      assert.deepEqual(agents(await page(convId)), separate
+        ? [{ ...first, text, attachments: [files[0]] }, { ...second, seq: 2, text: "", attachments: [files[1]] }]
+        : [{ ...first, text, attachments: files }]);
     } finally {
       host.stage = undefined;
     }

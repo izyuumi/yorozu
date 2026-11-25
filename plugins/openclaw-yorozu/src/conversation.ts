@@ -434,6 +434,32 @@ export function sendConversationText(params: { threadId?: string | number | null
   return messageId;
 }
 
+function extractFileNameFromMediaUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const cleaned = trimmed.split(/[?#]/u, 1)[0] ?? trimmed;
+  const parsed = URL.parse(cleaned);
+  if (!parsed) {
+    const base = path.basename(cleaned);
+    return base && base !== "/" && base !== "." ? base : null;
+  }
+  const base = parsed.protocol === "data:" ? "" : path.basename(parsed.pathname);
+  if (!base) return null;
+  try {
+    return decodeURIComponent(base);
+  } catch {
+    return base;
+  }
+}
+
+function mediaMirrorText(text: string | undefined, urls: string[]): string {
+  const caption = text?.trim() ?? "";
+  if (!urls.length) return caption;
+  const names = urls.map(extractFileNameFromMediaUrl).filter((name) => name && name.trim());
+  const mediaText = names.join(", ") || "media";
+  return caption ? `${caption}\n${mediaText}` : mediaText;
+}
+
 export async function sendConversationMedia(params: {
   threadId?: string | number | null;
   text?: string;
@@ -445,8 +471,7 @@ export async function sendConversationMedia(params: {
 }): Promise<string> {
   const convId = deliveryConv(params.threadId);
   const urls = mediaUrls(params.mediaUrl);
-  const names = urls.map((url) => path.basename(url.split(/[?#]/)[0] ?? "")).filter(Boolean).join(", ");
-  const mirrorText = [params.text?.trim(), names].filter(Boolean).join("\n");
+  const mirrorText = mediaMirrorText(params.text, urls);
   const { attachments, failures } = await stageOutbound(urls, params.maxBytes, params.access);
   const text = [params.text ?? "", ...failures].filter((line) => line.trim()).join("\n\n");
   const messageId = randomUUID();

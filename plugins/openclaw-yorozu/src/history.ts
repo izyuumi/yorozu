@@ -34,7 +34,8 @@ const PAGE_BYTES = 192 * 1024;
 const ITEM_CHARS = 60_000;
 const LIST_MAX = 2000;
 const CACHE_MAX = 8;
-type TurnReply = { eventId: string; seq: number; chunks: number; text: string; key: string };
+type TurnReply = { eventId: string; seq: number; chunks: number; text: string; key: string; deliveryMirror: boolean };
+type ReplyChunks = NonNullable<StoredCard["reply"]>;
 type Built = {
   items: HistoryItem[];
   cards: Map<string, string>;
@@ -130,13 +131,12 @@ export async function historyPage(
       found = (async () => {
         const replace = new Map<string, HistoryItem[]>();
         const extra: HistoryItem[] = [];
-        for (const key of listed.filter((key) => key.startsWith(turn))) {
-          const card = await read(() => storedCard(key));
-          const chunks = chunksOf(card?.reply);
-          if (!card || !chunks) continue;
-          const full = chunks.map((chunk) => chunk.text).join("");
-          const mirrored = built.replies.get(turn)?.find((reply) => !replace.has(chunkId(built.sessionId, reply.eventId, 0)) && !has.has(reply.key)
-            && sameText(reply.text, typeof card.mirrorText === "string" ? card.mirrorText : full));
+        const findMirror = (text: string, deliveryOnly = false) => built.replies.get(turn)?.find((reply) =>
+          (!deliveryOnly || reply.deliveryMirror) && !replace.has(chunkId(built.sessionId, reply.eventId, 0))
+          && !has.has(reply.key) && sameText(reply.text, text));
+        const restore = (card: StoredCard, chunks: ReplyChunks, mirrored = findMirror(
+          typeof card.mirrorText === "string" ? card.mirrorText : chunks.map((chunk) => chunk.text).join(""),
+        )) => {
           const restored: HistoryItem[] = chunks.map(({ messageId, ts, text }, k) => {
             const replyTo = replyOf(messageId);
             const reactions = reactionsOf(messageId);
@@ -149,7 +149,42 @@ export async function historyPage(
           if (mirrored) {
             for (let k = 0; k < mirrored.chunks; k++) replace.set(chunkId(built.sessionId, mirrored.eventId, k), k === 0 ? restored : []);
           } else extra.push(...restored);
+        };
+        const media: { card: StoredCard; chunks: ReplyChunks }[] = [];
+        const flushMedia = () => {
+          if (media.length > 1) {
+            const first = media[0]!;
+            const caption = first.chunks.map((chunk) => chunk.text).join("");
+            const prefix = caption.trim() ? `${caption.trim()}\n` : "";
+            const names = media.map(({ card }, i) => {
+              const text = card.mirrorText;
+              if (typeof text !== "string") return "";
+              if (i > 0) return text;
+              return text.startsWith(prefix) ? text.slice(prefix.length) : "";
+            });
+            if (names.every(Boolean)) {
+              const mirrored = findMirror(prefix + names.join(", "), true);
+              if (mirrored) {
+                const attachments = media.flatMap(({ card }) => card.attachments ?? []);
+                restore({ attachments }, [{ ...first.chunks[0]!, text: caption }], mirrored);
+                media.length = 0;
+                return;
+              }
+            }
+          }
+          for (const { card, chunks } of media) restore(card, chunks);
+          media.length = 0;
+        };
+        for (const key of listed.filter((key) => key.startsWith(turn))) {
+          const card = await read(() => storedCard(key));
+          const chunks = chunksOf(card?.reply);
+          if (card && chunks && !card.presentation) media.push({ card, chunks });
+          else {
+            flushMedia();
+            if (card && chunks) restore(card, chunks);
+          }
         }
+        flushMedia();
         return { replace, extra };
       })();
       turnCardsRead.set(turn, found);
@@ -325,10 +360,10 @@ export function sameText(transcript: string, reply: string): boolean {
   return !!said && said === flat(reply);
 }
 
-function chunksOf(reply: unknown): NonNullable<StoredCard["reply"]> | undefined {
+function chunksOf(reply: unknown): ReplyChunks | undefined {
   if (!Array.isArray(reply) || !reply.length) return undefined;
   const ok = reply.every((chunk) => isId(obj(chunk)?.messageId) && typeof obj(chunk)?.text === "string" && Number.isSafeInteger(obj(chunk)?.ts));
-  return ok ? (reply as NonNullable<StoredCard["reply"]>) : undefined;
+  return ok ? (reply as ReplyChunks) : undefined;
 }
 
 const cut = (text: string) => (text.length > ITEM_CHARS ? `${text.slice(0, ITEM_CHARS)}…` : text);
@@ -443,7 +478,9 @@ function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): 
       });
       const lastId = chunkId(sessionId, eventId, chunks.length - 1);
       cards.set(lastId, cardKey(sessionId, eventId));
-      if (turn) replies.get(turnCards(sessionId, turn.user))?.push({ eventId, seq, chunks: chunks.length, text, key: cardKey(sessionId, eventId) });
+      if (turn) replies.get(turnCards(sessionId, turn.user))?.push({
+        eventId, seq, chunks: chunks.length, text, key: cardKey(sessionId, eventId), deliveryMirror: message.model === "delivery-mirror",
+      });
     } else if (message.role === "toolResult" && typeof message.toolCallId === "string") {
       const call = pending.get(message.toolCallId);
       if (call) call.status = message.isError === true ? "failed" : "done";
