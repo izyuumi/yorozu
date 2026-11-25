@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.17.0
+
+### Features
+
+- **client:** polish pairing and chat across platforms (#776)
+- **ui:** ship the reviewed Yorozu browser chat
+- **client:** search words and phrases across conversations (#768)
+- **plugin:** durable run ledger with boot ids and restart counts (sync-restart 01) (#751)
+
+### Fixes
+
+- **ios:** show the Mac pairing QR by default (#779)
+
 ## 0.16.2
 
 ### Fixes
