@@ -440,6 +440,7 @@ export async function sendConversationMedia(params: {
   maxBytes: number;
   access: MediaAccess;
   replyTo?: ReplyTo;
+  log?: ChannelGatewayContext["log"];
 }): Promise<string> {
   const convId = deliveryConv(params.threadId);
   const { attachments, failures } = await stageOutbound(mediaUrls(params.mediaUrl), params.maxBytes, params.access);
@@ -450,6 +451,13 @@ export async function sendConversationMedia(params: {
     data: { convId, messageId, text, ts: Date.now(), ...(attachments.length ? { attachments } : {}), ...quoted(messageId, params.replyTo) },
   };
   broadcast([reply]);
+  const turn = runningTurns.get(convId);
+  const sessionId = turn && liveSessionId(turn.agentId, turn.sessionKey);
+  if (turn && sessionId) {
+    void storeCard(convId, turnCardKey(sessionId, turn.messageId, messageId), {
+      reply: replyChunks([reply]), attachments, mirrorText: [text, ...attachments.map((file) => file.name)].join("\n"),
+    }).catch((error: unknown) => params.log?.warn(`yorozu: a media reply was not stored (${errorTag(error)}); history will not show it`));
+  }
   return messageId;
 }
 
@@ -473,7 +481,7 @@ export async function sendConversationPayload(params: {
     const text = params.text ?? "";
     const sent: string[] = [];
     for (const [k, mediaUrl] of params.mediaUrls.entries()) {
-      sent.push(await sendConversationMedia({ threadId, text: k === 0 ? text : "", mediaUrl, maxBytes: params.maxBytes, access: params.access, replyTo }));
+      sent.push(await sendConversationMedia({ threadId, text: k === 0 ? text : "", mediaUrl, maxBytes: params.maxBytes, access: params.access, replyTo, log: params.log }));
     }
     if (!params.mediaUrls.length) {
       const limit = resolveTextChunkLimit(params.cfg, CHANNEL_ID, params.accountId, { fallbackLimit: DEFAULT_CHUNK_LIMIT });

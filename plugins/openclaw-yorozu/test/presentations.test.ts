@@ -984,6 +984,51 @@ test("a sendPayload card replaces every mirror chunk with its live chunks; unmir
   }
 });
 
+for (const [name, caption] of [
+  ["a message-tool image with a caption replaces its delivery mirror in history", "MySBC 予約一覧（1/16 11:30 予約確定）"],
+  ["an image-only message-tool send replaces its filename-only delivery mirror in history", ""],
+] as const) {
+  test(name, async () => {
+    const convId = caption ? "51288456-5d23-4157-8264-676cd7730c0d" : uuid(67300);
+    const sessionId = caption ? "f169fc7d-3e4f-4fe7-a6b9-ee9cfa5093e9" : "session-673";
+    const messageId = caption ? "88d52456-ad57-47f6-bbf6-d38d39b75d78" : userId;
+    const mirrorId = caption ? "84514c6c-4bfb-4356-baef-40e7b98d8b6e" : uuid(67301);
+    const file = { id: "d8e0d61a-6cd4-4dbe-bd40-cae32ec36075", name: "sbc-reservation-jan16.png", mime: "image/png", size: 86781 };
+    host.sessions.set(sessionKey(convId), { sessionId });
+    host.transcripts.set(sessionId, [
+      { type: "message", seq: 36, message: { role: "user", content: "Send the image", __openclaw: { transport: { messageId } } } },
+    ]);
+    const transcript = host.transcripts.get(sessionId)!;
+    host.stage = () => ({ attachments: [file], failures: [] });
+    let liveId: string | undefined;
+    try {
+      host.run = async () => {
+        liveId = await sendConversationMedia({ threadId: convId, text: caption, mediaUrl: file.name, maxBytes: file.size, access: {} });
+        transcript.push({
+          type: "message", seq: 37, id: mirrorId,
+          message: {
+            role: "assistant", openclawDelivery: { mediaUrls: [] },
+            content: [{ type: "text", text: caption ? `${caption}\n${file.name}` : file.name }],
+            api: "openclaw-transcript", provider: "openclaw", model: "delivery-mirror", stopReason: "stop", timestamp: 1795567067696,
+          },
+        });
+      };
+      await handleMessage({ cfg: {}, agent: "main", presentationSdk: sdk, log } as never, { convId, messageId, text: "Send the image" });
+      await stored();
+      assert.ok(liveId);
+      assert.notEqual(liveId, mirrorId);
+      const items = agents(await page(convId));
+      assert.equal(items.length, 1);
+      const { ts: _, ...item } = items[0]!;
+      assert.deepEqual(item, {
+        kind: "agent", id: liveId, seq: 37, text: caption, attachments: [file],
+      });
+    } finally {
+      host.stage = undefined;
+    }
+  });
+}
+
 test("a mirrored turn-keyed card retains its live reaction and replyTo at the mirror's position", async () => {
   const { convId, sessionId } = conversation(671);
   const transcript = host.transcripts.get(sessionId)!;

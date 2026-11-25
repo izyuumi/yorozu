@@ -133,7 +133,7 @@ export async function historyPage(
         for (const key of listed.filter((key) => key.startsWith(turn))) {
           const card = await read(() => storedCard(key));
           const chunks = chunksOf(card?.reply);
-          if (!card?.presentation || !chunks) continue;
+          if (!card || !chunks) continue;
           const full = chunks.map((chunk) => chunk.text).join("");
           const mirrored = built.replies.get(turn)?.find((reply) => !replace.has(chunkId(built.sessionId, reply.eventId, 0)) && !has.has(reply.key)
             && sameText(reply.text, typeof card.mirrorText === "string" ? card.mirrorText : full));
@@ -142,7 +142,8 @@ export async function historyPage(
             const reactions = reactionsOf(messageId);
             return {
               kind: "agent", id: messageId, seq: mirrored?.seq ?? seq, ts, text: cut(text), ...(replyTo && { replyTo }), ...(reactions && { reactions }),
-              ...(k === chunks.length - 1 && { presentation: card.presentation }),
+              ...(k === chunks.length - 1 && card.presentation && { presentation: card.presentation }),
+              ...(k === chunks.length - 1 && card.attachments?.length && { attachments: card.attachments }),
             };
           });
           if (mirrored) {

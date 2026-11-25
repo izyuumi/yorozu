@@ -1,4 +1,4 @@
-import type { Event } from "./envelope.js";
+import type { Attachment, Event } from "./envelope.js";
 import { sanitizePresentation, type Presentation, type PresentationSdk } from "./presentation.js";
 
 export const MESSAGE_TOOL = { actions: ["react"], capabilities: ["presentation"] } as const;
@@ -60,7 +60,12 @@ export const cardKey = (sessionId: string, eventId: string): string => `${sessio
 export const turnCards = (sessionId: string, userMessageId: string): string => `${sessionId}:turn:${userMessageId}:`;
 export const turnCardKey = (sessionId: string, userMessageId: string, replyId: string): string =>
   turnCards(sessionId, userMessageId) + replyId;
-export type StoredCard = { presentation: Presentation; reply?: { messageId: string; ts: number; text: string }[]; mirrorText?: string };
+export type StoredCard = {
+  presentation?: Presentation;
+  reply?: { messageId: string; ts: number; text: string }[];
+  attachments?: Attachment[];
+  mirrorText?: string;
+};
 
 export const replyChunks = (events: Event[]): NonNullable<StoredCard["reply"]> =>
   events.flatMap((event) => (event.kind === "reply" ? [{ messageId: event.data.messageId, ts: event.data.ts, text: event.data.text }] : []));
