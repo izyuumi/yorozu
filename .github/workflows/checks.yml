@@ -103,6 +103,7 @@ jobs:
       - run: scripts/release_notes_test.sh
       - run: node --test scripts/comments.test.mjs
       - run: node scripts/comments.mjs check --base "$(git rev-parse HEAD^1)"
+      - run: bash .github/release-mac-windows-attach-guard-test.sh
       - name: Windows commit types
         if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]'
         env:
