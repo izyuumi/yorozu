@@ -7,6 +7,8 @@ on:
     branches: [main]
     paths: ['apps/windows/**', '.github/workflows/windows-installer.yml', 'scripts/version.sh']
   workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -17,6 +19,7 @@ concurrency:
 
 jobs:
   installer:
+    if: github.event_name != 'release'
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -69,3 +72,60 @@ jobs:
           path: apps/windows/target/release/bundle/nsis/Yorozu_${{ steps.version.outputs.version }}_x64-setup.exe
           if-no-files-found: error
           retention-days: 90
+
+  attach-beta-test:
+    if: github.event_name != 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test attach-beta.sh
+        run: bash apps/windows/ci/attach-beta.test.sh
+
+  attach-beta:
+    needs: [installer, attach-beta-test]
+    if: >
+      always() &&
+      (
+        (
+          (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+          && needs.installer.result == 'success'
+          && needs.attach-beta-test.result == 'success'
+        ) ||
+        (
+          github.event_name == 'release' &&
+          github.event.release.prerelease &&
+          needs.installer.result == 'skipped'
+          && needs.attach-beta-test.result == 'skipped'
+        )
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: windows-beta-attach
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Attach the unsigned Windows installer to the matching beta prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = release ]; then
+            sha=$(gh api "repos/$REPO/commits/$TAG_NAME" --jq .sha)
+            bash apps/windows/ci/attach-beta.sh --tag "$TAG_NAME" --artifact-sha "$sha" --append-notes
+          else
+            v=$(bash apps/windows/ci/version.sh shared)
+            bash apps/windows/ci/attach-beta.sh --tag "v${v}-beta" --artifact-sha "$GITHUB_SHA" --append-notes
+          fi
