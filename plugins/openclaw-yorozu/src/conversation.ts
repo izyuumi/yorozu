@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
 import {
@@ -443,7 +444,10 @@ export async function sendConversationMedia(params: {
   log?: ChannelGatewayContext["log"];
 }): Promise<string> {
   const convId = deliveryConv(params.threadId);
-  const { attachments, failures } = await stageOutbound(mediaUrls(params.mediaUrl), params.maxBytes, params.access);
+  const urls = mediaUrls(params.mediaUrl);
+  const names = urls.map((url) => path.basename(url.split(/[?#]/)[0] ?? "")).filter(Boolean).join(", ");
+  const mirrorText = [params.text?.trim(), names].filter(Boolean).join("\n");
+  const { attachments, failures } = await stageOutbound(urls, params.maxBytes, params.access);
   const text = [params.text ?? "", ...failures].filter((line) => line.trim()).join("\n\n");
   const messageId = randomUUID();
   const reply: Event = {
@@ -455,7 +459,7 @@ export async function sendConversationMedia(params: {
   const sessionId = turn && liveSessionId(turn.agentId, turn.sessionKey);
   if (turn && sessionId) {
     void storeCard(convId, turnCardKey(sessionId, turn.messageId, messageId), {
-      reply: replyChunks([reply]), attachments, mirrorText: [text, ...attachments.map((file) => file.name)].join("\n"),
+      reply: replyChunks([reply]), attachments, mirrorText,
     }).catch((error: unknown) => params.log?.warn(`yorozu: a media reply was not stored (${errorTag(error)}); history will not show it`));
   }
   return messageId;
