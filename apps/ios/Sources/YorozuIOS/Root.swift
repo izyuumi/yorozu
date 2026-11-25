@@ -213,7 +213,7 @@ struct PairingView: View {
 
     private var deviceCode: some View {
         VStack(spacing: LayoutMetrics.stack) {
-            if let code = model.deviceCode {
+            if model.showsDeviceCode, let code = model.deviceCode {
                 QRCode(text: code.link)
                     .accessibilityLabel(Text("Pairing QR code"))
             } else {

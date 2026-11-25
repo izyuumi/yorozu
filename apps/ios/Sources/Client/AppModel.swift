@@ -47,6 +47,11 @@ final class AppModel {
     var pendingDevice: DeviceCode?
     var deviceAdding: DeviceAdding?
     var deviceCode: DeviceCode?
+    var deviceCodeSpent = false
+    var showsDeviceCode: Bool {
+        DeviceCodeOffer(code: deviceCode, spent: deviceCodeSpent)
+            .isVisible(pendingHostPairing: pendingPairing != nil, connecting: connecting)
+    }
 
     @ObservationIgnored private var connection: (any ClientTransport)?
     @ObservationIgnored private var listener: Task<Void, Never>?
