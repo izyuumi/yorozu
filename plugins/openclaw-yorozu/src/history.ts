@@ -134,57 +134,55 @@ export async function historyPage(
         const findMirror = (text: string, deliveryOnly = false) => built.replies.get(turn)?.find((reply) =>
           (!deliveryOnly || reply.deliveryMirror) && !replace.has(chunkId(built.sessionId, reply.eventId, 0))
           && !has.has(reply.key) && sameText(reply.text, text));
-        const restore = (card: StoredCard, chunks: ReplyChunks, mirrored = findMirror(
-          typeof card.mirrorText === "string" ? card.mirrorText : chunks.map((chunk) => chunk.text).join(""),
-        )) => {
-          const restored: HistoryItem[] = chunks.map(({ messageId, ts, text }, k) => {
+        const restoreItems = (card: StoredCard, chunks: ReplyChunks, itemSeq: number): HistoryItem[] =>
+          chunks.map(({ messageId, ts, text }, k) => {
             const replyTo = replyOf(messageId);
             const reactions = reactionsOf(messageId);
             return {
-              kind: "agent", id: messageId, seq: mirrored?.seq ?? seq, ts, text: cut(text), ...(replyTo && { replyTo }), ...(reactions && { reactions }),
+              kind: "agent", id: messageId, seq: itemSeq, ts, text: cut(text), ...(replyTo && { replyTo }), ...(reactions && { reactions }),
               ...(k === chunks.length - 1 && card.presentation && { presentation: card.presentation }),
               ...(k === chunks.length - 1 && card.attachments?.length && { attachments: card.attachments }),
             };
           });
-          if (mirrored) {
-            for (let k = 0; k < mirrored.chunks; k++) replace.set(chunkId(built.sessionId, mirrored.eventId, k), k === 0 ? restored : []);
-          } else extra.push(...restored);
+        const replaceMirror = (mirrored: TurnReply, restored: HistoryItem[]) => {
+          for (let k = 0; k < mirrored.chunks; k++) replace.set(chunkId(built.sessionId, mirrored.eventId, k), k === 0 ? restored : []);
         };
-        const media: { card: StoredCard; chunks: ReplyChunks }[] = [];
-        const flushMedia = () => {
-          if (media.length > 1) {
-            const first = media[0]!;
-            const caption = first.chunks.map((chunk) => chunk.text).join("");
-            const prefix = caption.trim() ? `${caption.trim()}\n` : "";
-            const names = media.map(({ card }, i) => {
-              const text = card.mirrorText;
-              if (typeof text !== "string") return "";
-              if (i > 0) return text;
-              return text.startsWith(prefix) ? text.slice(prefix.length) : "";
-            });
-            if (names.every(Boolean)) {
-              const mirrored = findMirror(prefix + names.join(", "), true);
-              if (mirrored) {
-                const attachments = media.flatMap(({ card }) => card.attachments ?? []);
-                restore({ attachments }, [{ ...first.chunks[0]!, text: caption }], mirrored);
-                media.length = 0;
-                return;
-              }
-            }
-          }
-          for (const { card, chunks } of media) restore(card, chunks);
-          media.length = 0;
+        const restore = (card: StoredCard, chunks: ReplyChunks) => {
+          const mirrored = findMirror(typeof card.mirrorText === "string" ? card.mirrorText : chunks.map((chunk) => chunk.text).join(""));
+          const restored = restoreItems(card, chunks, mirrored?.seq ?? seq);
+          if (mirrored) replaceMirror(mirrored, restored);
+          else extra.push(...restored);
         };
+        const records: ({ card: StoredCard; chunks: ReplyChunks } | undefined)[] = [];
         for (const key of listed.filter((key) => key.startsWith(turn))) {
           const card = await read(() => storedCard(key));
           const chunks = chunksOf(card?.reply);
-          if (card && chunks && !card.presentation) media.push({ card, chunks });
-          else {
-            flushMedia();
-            if (card && chunks) restore(card, chunks);
+          records.push(card && chunks ? { card, chunks } : undefined);
+        }
+        for (let i = 0; i < records.length; i++) {
+          const record = records[i];
+          if (!record) continue;
+          const mirrorParts: string[] = [];
+          for (let j = i; j < records.length; j++) {
+            const card = records[j]?.card;
+            if (!card || card.presentation || typeof card.mirrorText !== "string" || !card.mirrorText) break;
+            mirrorParts.push(card.mirrorText);
+          }
+          let mirrored: TurnReply | undefined;
+          while (mirrorParts.length) {
+            mirrored = findMirror(mirrorParts.join(", "), true);
+            if (mirrored) break;
+            mirrorParts.pop();
+          }
+          if (mirrored) {
+            const end = i + mirrorParts.length;
+            const restored = records.slice(i, end).flatMap((record) => restoreItems(record!.card, record!.chunks, mirrored.seq));
+            replaceMirror(mirrored, restored);
+            i = end - 1;
+          } else {
+            restore(record.card, record.chunks);
           }
         }
-        flushMedia();
         return { replace, extra };
       })();
       turnCardsRead.set(turn, found);

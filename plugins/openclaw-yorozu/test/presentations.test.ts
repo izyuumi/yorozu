@@ -1103,43 +1103,48 @@ for (const { name, number, mediaUrl, basename, attachments, failures, liveText }
   });
 }
 
-for (const { name, number, separate } of [
-  { name: "a two-image payload restores one history item with both attachments", number: 678, separate: false },
-  { name: "two separately mirrored images restore as separate history items", number: 679, separate: true },
+for (const { name, number, sends, separate } of [
+  { name: "a two-image payload restores both live items at the combined mirror's seq", number: 678, sends: [["a.png", "b.png"]] },
+  { name: "two separately mirrored images restore as separate history items", number: 679, sends: [["a.png"], ["b.png"]], separate: true },
+  { name: "single send then two-image send in one turn", number: 680, sends: [["a.png"], ["b.png", "c.png"]] },
+  { name: "two-image then two-image", number: 681, sends: [["a.png", "b.png"], ["c.png", "d.png"]] },
 ]) {
   test(name, async () => {
     const { convId, sessionId, eventId } = conversation(number);
     const transcript = host.transcripts.get(sessionId)!;
     transcript.pop();
-    const mediaUrls = ["/tmp/a.png", "/tmp/b.png"];
-    const files = ["a.png", "b.png"].map((name, i) => ({ ...stagedImage, id: uuid(number * 100 + 3 + i), name }));
-    host.stage = (urls: string[]) => ({ attachments: [files[mediaUrls.indexOf(urls[0]!)]!], failures: [] });
+    const files = sends.flat().map((name, i) => ({ ...stagedImage, id: uuid(number * 100 + 3 + i), name }));
+    host.stage = (urls: string[]) => ({ attachments: [files.find((file) => `/tmp/${file.name}` === urls[0])!], failures: [] });
     host.sent.length = 0;
+    const expected: { seq: number; text: string }[] = [];
     try {
       host.run = async () => {
-        if (separate) {
-          for (const [i, mediaUrl] of mediaUrls.entries()) {
-            await sendConversationMedia({ threadId: convId, text: i === 0 ? text : "", mediaUrl, maxBytes: 1, access: {} });
+        for (const [i, names] of sends.entries()) {
+          const caption = separate && i > 0 ? "" : text;
+          const mediaUrls = names.map((name) => `/tmp/${name}`);
+          const params = { threadId: convId, text: caption, maxBytes: 1, access: {} };
+          if (mediaUrls.length === 1) {
+            await sendConversationMedia({ ...params, mediaUrl: mediaUrls[0]! });
+          } else {
+            await sendConversationPayload({ ...params, mediaUrls, cfg: {}, sdk });
           }
-        } else {
-          await sendConversationPayload({ threadId: convId, text, mediaUrls, cfg: {}, sdk, maxBytes: 1, access: {} });
-        }
-        const mirrors = separate ? [`${text}\na.png`, "b.png"] : [`${text}\na.png, b.png`];
-        for (const [i, content] of mirrors.entries()) {
+          const seq = i + 1;
+          const content = (caption ? `${caption}\n` : "") + names.join(", ");
           transcript.push({
-            type: "message", id: i === 0 ? eventId : uuid(number * 100 + 2),
+            type: "message", seq, id: i === 0 ? eventId : uuid(number * 100 + 2),
             message: { role: "assistant", content, api: "openclaw-transcript", provider: "openclaw", model: "delivery-mirror" },
           });
+          expected.push(...names.map((_, j) => ({ seq, text: j === 0 ? caption : "" })));
         }
       };
       await handleMessage({ cfg: {}, agent: "main", presentationSdk: sdk, log } as never, { convId, messageId: userId, text: "Send the images" });
       await stored();
       const live = host.sent.filter((event: Event) => event.kind === "reply").map((event: Event) => event.data as Reply);
       assert.deepEqual(live.map((reply: Reply) => reply.attachments), files.map((file) => [file]));
-      const [first, second] = asItems(live, 1);
-      assert.deepEqual(agents(await page(convId)), separate
-        ? [{ ...first, text, attachments: [files[0]] }, { ...second, seq: 2, text: "", attachments: [files[1]] }]
-        : [{ ...first, text, attachments: files }]);
+      assert.equal(new Set(live.map((reply: Reply) => reply.messageId)).size, files.length);
+      assert.deepEqual(agents(await page(convId)), asItems(live, 1).map((item, i) => ({
+        ...item, ...expected[i], attachments: [files[i]],
+      })));
     } finally {
       host.stage = undefined;
     }
