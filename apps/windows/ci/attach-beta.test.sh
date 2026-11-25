@@ -15,7 +15,6 @@ fail() { echo "FAIL - $1" >&2; failed=$((failed + 1)); }
 PATH="$tmp/bin:$PATH"
 mkdir -p "$tmp/bin" "$tmp/log" "$tmp/files"
 
-# Fake gh: records argv and serves fixture JSON / files.
 cat >"$tmp/bin/gh" << 'GH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -88,7 +87,6 @@ esac
 GH
 chmod +x "$tmp/bin/gh"
 
-# Also mock unzip is real; jq/shasum must be real.
 command -v jq >/dev/null
 command -v unzip >/dev/null
 
@@ -132,13 +130,11 @@ run() {
   fi
 }
 
-# --- argument validation ---
 run 2 'no args'
 run 2 'tag only' --tag v0.17.0-beta --repo izyuumi/yorozu
 run 2 'bad tag' --tag v0.17.0 --file "$exe" --repo izyuumi/yorozu
 run 2 'both file and sha' --tag v0.17.0-beta --file "$exe" --artifact-sha 56a4d69972adabebbd2505d9d9d6430c28eefd29 --repo izyuumi/yorozu
 run 2 'short sha' --tag v0.17.0-beta --artifact-sha 56a4d699 --repo izyuumi/yorozu
-# repo is unset only in the next test; run() always exports REPO
 got=0
 out=$(ATTACH_TEST_ROOT="$tmp" env -u REPO -u GITHUB_REPOSITORY bash "$script" --tag v0.17.0-beta --file "$exe" 2>"$tmp/err") || got=$?
 err=$(cat "$tmp/err")
@@ -150,14 +146,12 @@ write_view true false ""
 run 1 'version mismatch' --tag v0.17.0-beta --file "$wrong" --repo izyuumi/yorozu
 grep -q 'version 0.16.2' <<<"$err" && ok 'mismatch names versions' || fail "mismatch message: $err"
 
-# --- skip if release missing ---
 : >"$tmp/missing"
 run 0 'missing release skips' --tag v0.17.0-beta --file "$exe" --repo izyuumi/yorozu
 grep -q 'does not exist yet; skipping' <<<"$out$err" && ok 'missing release message' || fail "missing msg: $out $err"
 [ ! -f "$tmp/log/upload" ] && ok 'missing release does not upload' || fail 'uploaded on missing release'
 rm -f "$tmp/missing"
 
-# --- refuse stable / latest ---
 write_view false false ""
 run 1 'refuse non-prerelease' --tag v0.17.0-beta --file "$exe" --repo izyuumi/yorozu
 grep -q 'not a prerelease' <<<"$err" && ok 'non-prerelease message' || fail "pre msg: $err"
@@ -168,12 +162,10 @@ run 1 'refuse latest' --tag v0.17.0-beta --file "$exe" --repo izyuumi/yorozu
 grep -q 'latest stable' <<<"$err" && ok 'latest message' || fail "latest msg: $err"
 echo '{"tag_name":"v0.16.2"}' >"$tmp/latest.json"
 
-# --- draft skips ---
 write_view true true ""
 run 0 'draft skips' --tag v0.17.0-beta --file "$exe" --repo izyuumi/yorozu
 [ ! -f "$tmp/log/upload" ] && ok 'draft does not upload' || fail 'uploaded to draft'
 
-# --- upload new asset, no clobber ---
 write_view true false ""
 : >"$tmp/allow-upload"
 run 0 'upload new exe' --tag v0.17.0-beta --file "$exe" --repo izyuumi/yorozu
@@ -181,23 +173,19 @@ grep -q 'attached Yorozu_0.17.0_x64-setup.exe' <<<"$out$err" && ok 'upload messa
 grep -q 'release upload v0.17.0-beta' "$tmp/log/upload" && ok 'called release upload' || fail "upload args: $(cat "$tmp/log/upload" 2>/dev/null)"
 if grep -q -- '--clobber' "$tmp/log/upload"; then fail 'new upload used --clobber'; else ok 'new upload has no --clobber'; fi
 if grep -q 'release edit' "$tmp/log/gh.log"; then fail 'notes edited without --append-notes'; else ok 'no notes edit by default'; fi
-# must not mention other assets in the upload command
 if grep -qE 'Yorozu.dmg|appcast|candidate' "$tmp/log/upload"; then fail 'upload named a Mac asset'; else ok 'upload only the exe'; fi
 
-# --- same digest is a no-op ---
 rm -f "$tmp/log/upload"
 write_view true false "$digest"
 run 0 'same digest is no-op' --tag v0.17.0-beta --file "$exe" --repo izyuumi/yorozu
 [ ! -f "$tmp/log/upload" ] && ok 'same digest does not upload' || fail 're-uploaded same digest'
 grep -q 'already on v0.17.0-beta' <<<"$out$err" && ok 'same digest message' || fail "same msg: $out $err"
 
-# --- different digest replaces only the exe ---
 write_view true false "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 run 0 'replace changed exe' --tag v0.17.0-beta --file "$exe" --repo izyuumi/yorozu
 grep -q -- '--clobber' "$tmp/log/upload" && ok 'replace uses --clobber' || fail "replace args: $(cat "$tmp/log/upload")"
 if grep -qE 'Yorozu.dmg|appcast|candidate' "$tmp/log/upload"; then fail 'replace named a Mac asset'; else ok 'replace only the exe'; fi
 
-# --- append notes once ---
 write_view true false "$digest"
 run 0 'append SmartScreen notes' --tag v0.17.0-beta --file "$exe" --repo izyuumi/yorozu --append-notes
 [ -f "$tmp/log/notes.md" ] || { fail 'notes file missing'; }
@@ -212,7 +200,6 @@ if grep -qE -- '--prerelease|--latest|--draft|--target|--title|--tag ' "$tmp/log
 else
   ok 'notes edit does not change release flags'
 fi
-# existing text must still include the Features list
 grep -q -- '- item' "$tmp/log/notes.md" && ok 'features list kept' || fail 'features list missing'
 
 write_view true false "$digest" $'Yorozu 0.17.0 (7), beta.\n\nThe Windows installer (`Yorozu_0.17.0_x64-setup.exe`) is unsigned, so Windows SmartScreen will warn.\n'
@@ -220,7 +207,6 @@ rm -f "$tmp/log/edit" "$tmp/log/notes.md"
 run 0 'notes already mention SmartScreen' --tag v0.17.0-beta --file "$exe" --repo izyuumi/yorozu --append-notes
 [ ! -f "$tmp/log/edit" ] && ok 'does not re-edit notes' || fail 're-edited notes'
 
-# --- artifact sha path ---
 artid=14928345354
 mkdir -p "$tmp/ziproot"
 cp "$exe" "$tmp/ziproot/Yorozu_0.17.0_x64-setup.exe"
@@ -232,7 +218,6 @@ run 0 'upload from artifact sha' --tag v0.17.0-beta --artifact-sha 56a4d69972ada
 grep -q 'attached Yorozu_0.17.0_x64-setup.exe' <<<"$out$err" && ok 'artifact upload message' || fail "artifact msg: $out $err"
 grep -q "actions/artifacts/$artid/zip" "$tmp/log/gh.log" && ok 'downloaded named artifact' || fail "no zip download: $(cat "$tmp/log/gh.log")"
 
-# --- fallback to latest main artifact ---
 echo '{"artifacts":[]}' >"$tmp/named.json"
 jq -n --argjson id "$artid" '{artifacts:[
   {id:$id,name:"yorozu-windows-56a4d69972adabebbd2505d9d9d6430c28eefd29",expired:false,created_at:"2026-11-24T14:05:49Z",workflow_run:{head_branch:"main"}},
@@ -243,7 +228,6 @@ write_view true false ""
 run 0 'fallback to latest main artifact' --tag v0.17.0-beta --artifact-sha cccccccccccccccccccccccccccccccccccccccc --repo izyuumi/yorozu
 grep -q "actions/artifacts/$artid/zip" "$tmp/log/gh.log" && ok 'fallback picked newest main artifact' || fail "fallback zip: $(cat "$tmp/log/gh.log")"
 
-# --- no artifact skips ---
 echo '{"artifacts":[]}' >"$tmp/named.json"
 echo '{"artifacts":[]}' >"$tmp/list.json"
 rm -f "$tmp/log/upload"
