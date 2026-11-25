@@ -6,10 +6,8 @@ import AppKit
 import UIKit
 #endif
 
-/// Visibility and remint policy for the Mac-add device code, isolated from the mailbox wait so it can be tested without a relay.
 struct DeviceCodeOffer: Equatable {
     var code: DeviceCode?
-    /// True after a mailbox letter arrived or the wait expired, so this published code must not be reused.
     var spent = false
 
     func isVisible(pendingHostPairing: Bool, connecting: Bool) -> Bool {
@@ -20,7 +18,6 @@ struct DeviceCodeOffer: Equatable {
         spent = true
     }
 
-    /// A mailbox letter arrived (accepted or not). The published code is spent because the relay re-sends that letter to every new websocket.
     mutating func letterReceived(accepted _: Bool) {
         spent = true
     }
@@ -37,7 +34,6 @@ enum DeviceAdding: Equatable {
 }
 
 extension AppModel {
-    /// Whether the pairing screen offers this device's code at all; the QR inside it follows `showsDeviceCode`.
     var offersDeviceCode: Bool { pendingPairing == nil && !connecting }
 
     func addDevice(_ code: DeviceCode) {
