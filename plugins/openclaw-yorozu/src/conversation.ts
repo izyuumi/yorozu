@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
 import {
@@ -433,6 +434,32 @@ export function sendConversationText(params: { threadId?: string | number | null
   return messageId;
 }
 
+function extractFileNameFromMediaUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const cleaned = trimmed.split(/[?#]/u, 1)[0] ?? trimmed;
+  const parsed = URL.parse(cleaned);
+  if (!parsed) {
+    const base = path.basename(cleaned);
+    return base && base !== "/" && base !== "." ? base : null;
+  }
+  const base = parsed.protocol === "data:" ? "" : path.basename(parsed.pathname);
+  if (!base) return null;
+  try {
+    return decodeURIComponent(base);
+  } catch {
+    return base;
+  }
+}
+
+function mediaMirrorText(text: string | undefined, urls: string[]): string {
+  const caption = text?.trim() ?? "";
+  if (!urls.length) return caption;
+  const names = urls.map(extractFileNameFromMediaUrl).filter((name) => name && name.trim());
+  const mediaText = names.join(", ") || "media";
+  return caption ? `${caption}\n${mediaText}` : mediaText;
+}
+
 export async function sendConversationMedia(params: {
   threadId?: string | number | null;
   text?: string;
@@ -440,9 +467,12 @@ export async function sendConversationMedia(params: {
   maxBytes: number;
   access: MediaAccess;
   replyTo?: ReplyTo;
+  log?: ChannelGatewayContext["log"];
 }): Promise<string> {
   const convId = deliveryConv(params.threadId);
-  const { attachments, failures } = await stageOutbound(mediaUrls(params.mediaUrl), params.maxBytes, params.access);
+  const urls = mediaUrls(params.mediaUrl);
+  const mirrorText = mediaMirrorText(params.text, urls);
+  const { attachments, failures } = await stageOutbound(urls, params.maxBytes, params.access);
   const text = [params.text ?? "", ...failures].filter((line) => line.trim()).join("\n\n");
   const messageId = randomUUID();
   const reply: Event = {
@@ -450,6 +480,13 @@ export async function sendConversationMedia(params: {
     data: { convId, messageId, text, ts: Date.now(), ...(attachments.length ? { attachments } : {}), ...quoted(messageId, params.replyTo) },
   };
   broadcast([reply]);
+  const turn = runningTurns.get(convId);
+  const sessionId = turn && liveSessionId(turn.agentId, turn.sessionKey);
+  if (turn && sessionId) {
+    void storeCard(convId, turnCardKey(sessionId, turn.messageId, messageId), {
+      reply: replyChunks([reply]), attachments, mirrorText,
+    }).catch((error: unknown) => params.log?.warn(`yorozu: a media reply was not stored (${errorTag(error)}); history will not show it`));
+  }
   return messageId;
 }
 
@@ -473,7 +510,7 @@ export async function sendConversationPayload(params: {
     const text = params.text ?? "";
     const sent: string[] = [];
     for (const [k, mediaUrl] of params.mediaUrls.entries()) {
-      sent.push(await sendConversationMedia({ threadId, text: k === 0 ? text : "", mediaUrl, maxBytes: params.maxBytes, access: params.access, replyTo }));
+      sent.push(await sendConversationMedia({ threadId, text: k === 0 ? text : "", mediaUrl, maxBytes: params.maxBytes, access: params.access, replyTo, log: params.log }));
     }
     if (!params.mediaUrls.length) {
       const limit = resolveTextChunkLimit(params.cfg, CHANNEL_ID, params.accountId, { fallbackLimit: DEFAULT_CHUNK_LIMIT });

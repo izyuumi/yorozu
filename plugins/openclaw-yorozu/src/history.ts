@@ -34,7 +34,8 @@ const PAGE_BYTES = 192 * 1024;
 const ITEM_CHARS = 60_000;
 const LIST_MAX = 2000;
 const CACHE_MAX = 8;
-type TurnReply = { eventId: string; seq: number; chunks: number; text: string; key: string };
+type TurnReply = { eventId: string; seq: number; chunks: number; text: string; key: string; deliveryMirror: boolean };
+type ReplyChunks = NonNullable<StoredCard["reply"]>;
 type Built = {
   items: HistoryItem[];
   cards: Map<string, string>;
@@ -130,24 +131,57 @@ export async function historyPage(
       found = (async () => {
         const replace = new Map<string, HistoryItem[]>();
         const extra: HistoryItem[] = [];
-        for (const key of listed.filter((key) => key.startsWith(turn))) {
-          const card = await read(() => storedCard(key));
-          const chunks = chunksOf(card?.reply);
-          if (!card?.presentation || !chunks) continue;
-          const full = chunks.map((chunk) => chunk.text).join("");
-          const mirrored = built.replies.get(turn)?.find((reply) => !replace.has(chunkId(built.sessionId, reply.eventId, 0)) && !has.has(reply.key)
-            && sameText(reply.text, typeof card.mirrorText === "string" ? card.mirrorText : full));
-          const restored: HistoryItem[] = chunks.map(({ messageId, ts, text }, k) => {
+        const findMirror = (text: string, deliveryOnly = false) => built.replies.get(turn)?.find((reply) =>
+          (!deliveryOnly || reply.deliveryMirror) && !replace.has(chunkId(built.sessionId, reply.eventId, 0))
+          && !has.has(reply.key) && sameText(reply.text, text));
+        const restoreItems = (card: StoredCard, chunks: ReplyChunks, itemSeq: number): HistoryItem[] =>
+          chunks.map(({ messageId, ts, text }, k) => {
             const replyTo = replyOf(messageId);
             const reactions = reactionsOf(messageId);
             return {
-              kind: "agent", id: messageId, seq: mirrored?.seq ?? seq, ts, text: cut(text), ...(replyTo && { replyTo }), ...(reactions && { reactions }),
-              ...(k === chunks.length - 1 && { presentation: card.presentation }),
+              kind: "agent", id: messageId, seq: itemSeq, ts, text: cut(text), ...(replyTo && { replyTo }), ...(reactions && { reactions }),
+              ...(k === chunks.length - 1 && card.presentation && { presentation: card.presentation }),
+              ...(k === chunks.length - 1 && card.attachments?.length && { attachments: card.attachments }),
             };
           });
+        const replaceMirror = (mirrored: TurnReply, restored: HistoryItem[]) => {
+          for (let k = 0; k < mirrored.chunks; k++) replace.set(chunkId(built.sessionId, mirrored.eventId, k), k === 0 ? restored : []);
+        };
+        const restore = (card: StoredCard, chunks: ReplyChunks) => {
+          const mirrored = findMirror(typeof card.mirrorText === "string" ? card.mirrorText : chunks.map((chunk) => chunk.text).join(""));
+          const restored = restoreItems(card, chunks, mirrored?.seq ?? seq);
+          if (mirrored) replaceMirror(mirrored, restored);
+          else extra.push(...restored);
+        };
+        const records: ({ card: StoredCard; chunks: ReplyChunks } | undefined)[] = [];
+        for (const key of listed.filter((key) => key.startsWith(turn))) {
+          const card = await read(() => storedCard(key));
+          const chunks = chunksOf(card?.reply);
+          records.push(card && chunks ? { card, chunks } : undefined);
+        }
+        for (let i = 0; i < records.length; i++) {
+          const record = records[i];
+          if (!record) continue;
+          const mirrorParts: string[] = [];
+          for (let j = i; j < records.length; j++) {
+            const card = records[j]?.card;
+            if (!card || card.presentation || typeof card.mirrorText !== "string" || !card.mirrorText) break;
+            mirrorParts.push(card.mirrorText);
+          }
+          let mirrored: TurnReply | undefined;
+          while (mirrorParts.length) {
+            mirrored = findMirror(mirrorParts.join(", "), true);
+            if (mirrored) break;
+            mirrorParts.pop();
+          }
           if (mirrored) {
-            for (let k = 0; k < mirrored.chunks; k++) replace.set(chunkId(built.sessionId, mirrored.eventId, k), k === 0 ? restored : []);
-          } else extra.push(...restored);
+            const end = i + mirrorParts.length;
+            const restored = records.slice(i, end).flatMap((record) => restoreItems(record!.card, record!.chunks, mirrored.seq));
+            replaceMirror(mirrored, restored);
+            i = end - 1;
+          } else {
+            restore(record.card, record.chunks);
+          }
         }
         return { replace, extra };
       })();
@@ -324,10 +358,10 @@ export function sameText(transcript: string, reply: string): boolean {
   return !!said && said === flat(reply);
 }
 
-function chunksOf(reply: unknown): NonNullable<StoredCard["reply"]> | undefined {
+function chunksOf(reply: unknown): ReplyChunks | undefined {
   if (!Array.isArray(reply) || !reply.length) return undefined;
   const ok = reply.every((chunk) => isId(obj(chunk)?.messageId) && typeof obj(chunk)?.text === "string" && Number.isSafeInteger(obj(chunk)?.ts));
-  return ok ? (reply as NonNullable<StoredCard["reply"]>) : undefined;
+  return ok ? (reply as ReplyChunks) : undefined;
 }
 
 const cut = (text: string) => (text.length > ITEM_CHARS ? `${text.slice(0, ITEM_CHARS)}…` : text);
@@ -442,7 +476,9 @@ function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): 
       });
       const lastId = chunkId(sessionId, eventId, chunks.length - 1);
       cards.set(lastId, cardKey(sessionId, eventId));
-      if (turn) replies.get(turnCards(sessionId, turn.user))?.push({ eventId, seq, chunks: chunks.length, text, key: cardKey(sessionId, eventId) });
+      if (turn) replies.get(turnCards(sessionId, turn.user))?.push({
+        eventId, seq, chunks: chunks.length, text, key: cardKey(sessionId, eventId), deliveryMirror: message.model === "delivery-mirror",
+      });
     } else if (message.role === "toolResult" && typeof message.toolCallId === "string") {
       const call = pending.get(message.toolCallId);
       if (call) call.status = message.isError === true ? "failed" : "done";

@@ -235,6 +235,7 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
         maxBytes: mediaMaxBytes(cfg, accountId),
         access: { mediaAccess, localRoots: mediaLocalRoots, readFile: mediaReadFile },
         replyTo: deliveryReplyTo(cfg, threadId, replyToId),
+        log: outboundLog,
       }),
     }),
     presentationCapabilities: PRESENTATION_CAPABILITIES,
