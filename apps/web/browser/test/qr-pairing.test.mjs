@@ -65,6 +65,7 @@ test('browser QR scans camera and image, rejects the native role, and decrypts r
   });
   const relayURL = 'ws://127.0.0.1:' + server.address().port + '/';
   process.env.VITE_YOROZU_TEST_RELAY = relayURL;
+  process.env.VITE_YOROZU_TEST_QUIET_MS = '1500';
   const cacheDir = await mkdtemp(tmpdir() + '/yorozu-qr-test-');
   const app = await createServer({cacheDir,server:{host:'127.0.0.1',port:0}});
   t.after(() => rm(cacheDir,{recursive:true,force:true}));
@@ -152,10 +153,15 @@ test('browser QR scans camera and image, rejects the native role, and decrypts r
     assert.equal(fragment.get('target'),'browser');
     assert.equal(fragment.get('relay'),relayURL);
     assert.equal(Buffer.from(fragment.get('box'),'base64url').length,16);
+    assert.match(url.hash,/&name=Yorozu%20Web(&|$)/);
     return {box:fragment.get('box'),key:fragment.get('key')};
   }
   await show();
+  await page.getByText('Your host’s Yorozu plugin must include 56a4d699 with browser pairing enabled.',{exact:false}).waitFor();
   const old = await displayedRequest();
+  await page.getByText('Nothing arrived? Your host may not support browser pairing yet.').waitFor();
+  assert.equal(boxes.get(old.box).readyState,1,'the quiet hint keeps the mailbox open');
+  assert.deepEqual(await displayedRequest(), old, 'the quiet hint keeps the same code');
   const small = await code.evaluate(canvas => canvas.width);
   await page.getByRole('button',{name:'Enlarge QR code'}).click();
   await page.waitForFunction(width=>document.querySelector('.device-qr')?.width > width, small);

@@ -47,6 +47,11 @@ final class AppModel {
     var pendingDevice: DeviceCode?
     var deviceAdding: DeviceAdding?
     var deviceCode: DeviceCode?
+    var deviceCodeSpent = false
+    var showsDeviceCode: Bool {
+        DeviceCodeOffer(code: deviceCode, spent: deviceCodeSpent)
+            .isVisible(pendingHostPairing: pendingPairing != nil, connecting: connecting)
+    }
 
     @ObservationIgnored private var connection: (any ClientTransport)?
     @ObservationIgnored private var listener: Task<Void, Never>?
@@ -216,12 +221,16 @@ final class AppModel {
         }
         guard !isDemo else { return String(localized: "Exit demo mode before pairing with a host.") }
         if let code = DeviceCode.decode(text) {
-            guard inviteAvailable else {
+            guard paired else {
                 return String(localized: "Scan this code with Yorozu on an iPhone or iPad that is already paired.")
+            }
+            guard hostReady else { return Self.stillConnecting }
+            guard inviteAvailable else {
+                return String(localized: "Your host’s Yorozu plugin can’t add devices. Update it on your host first.")
             }
             if code.target == .browser {
                 guard hostInfo?.capabilities.contains(Invite.browserCapability) == true else {
-                    return String(localized: "Update the Yorozu plugin and enable browser pairing on your host first.")
+                    return String(localized: "Your host’s Yorozu plugin is older than this browser, or browser pairing is off. Update the plugin and set YOROZU_BROWSER_EPHEMERAL=1 on the host.")
                 }
                 guard let relay = pairing?.pairing.relayUrl, code.matchesRelay(relay) else {
                     return String(localized: "This browser code does not use your host’s relay.")
@@ -943,6 +952,12 @@ final class AppModel {
     }
 
     var inviteAvailable: Bool { !isDemo && hostInfo?.capabilities.contains(Invite.capability) == true }
+
+    var hostReady: Bool { connection != nil && state == .ready && hostInfo != nil }
+
+    static var stillConnecting: String {
+        String(localized: "Yorozu is still connecting to your host. Try again once it’s connected.")
+    }
 
     func requestInvite(target: PairInvite.Target? = nil, requestId: String? = nil) {
         guard !isDemo else { return }

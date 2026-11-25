@@ -60,10 +60,10 @@ final class ModelHarness {
         return condition()
     }
 
-    func openFirstSession() async throws -> AppModel {
+    func openFirstSession(capabilities: [String] = []) async throws -> AppModel {
         let transport = ScriptedTransport()
         await transport.emit(.state(.ready))
-        await transport.emit(.sessionOpen(PeerInfo(app: "test")))
+        await transport.emit(.sessionOpen(PeerInfo(app: "test", capabilities: capabilities)))
         transports.fails = false
         transports.scripted = transport
         let model = makeModel()

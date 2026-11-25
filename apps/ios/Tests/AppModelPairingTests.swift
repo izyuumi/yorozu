@@ -22,6 +22,183 @@ import YorozuWire
     private func openFirstSession() async throws -> AppModel { try await harness.openFirstSession() }
     private func stored() -> Pairing? { harness.stored() }
 
+    private func macAddCode(box: UInt8 = 1) -> DeviceCode {
+        let key = Data(repeating: 7, count: 32).base64URLEncodedString()
+        return DeviceCode(relayUrl: "wss://relay.example/ws",
+            box: Data(repeating: box, count: 16).base64URLEncodedString(), key: key, name: "Mac")
+    }
+
+    private func hostLink() -> String {
+        let key = Data(repeating: 7, count: 32).base64URLEncodedString()
+        return "yorozu://pair?v=3&relay=wss://relay.example/ws&key=\(key)&token=tok&room=room&secret=sec"
+    }
+
+    @Test func aPendingHostPairingHidesTheDeviceCode() {
+        let model = makeModel()
+        let code = macAddCode()
+        model.deviceCode = code
+
+        #expect(model.submit(hostLink()) == nil)
+        #expect(model.pendingPairing != nil)
+        #expect(model.deviceCode == code)
+        #expect(!model.showsDeviceCode)
+    }
+
+    @Test func cancellingAPastedHostPairingShowsTheDeviceCodeAgain() {
+        let model = makeModel()
+        let code = macAddCode()
+        model.deviceCode = code
+
+        #expect(model.submit(hostLink()) == nil)
+        #expect(model.pendingPairing != nil)
+        #expect(model.deviceCode == code)
+        #expect(!model.showsDeviceCode)
+        model.dismissPendingPairing()
+        #expect(model.pendingPairing == nil)
+        #expect(model.deviceCode == code)
+        #expect(model.showsDeviceCode)
+    }
+
+    @Test func aDroppedMailboxLetterMintsAFreshCodeOncePendingClears() {
+        let original = macAddCode(box: 1)
+        var offer = DeviceCodeOffer(code: original)
+        #expect(offer.isVisible(pendingHostPairing: false, connecting: false))
+        #expect(!offer.isVisible(pendingHostPairing: true, connecting: false))
+        #expect(offer.code == original)
+        #expect(!offer.shouldMint(pendingHostPairing: true, connecting: false))
+
+        offer.letterDropped()
+        #expect(!offer.shouldMint(pendingHostPairing: true, connecting: false))
+        #expect(!offer.isVisible(pendingHostPairing: true, connecting: false))
+        #expect(offer.shouldMint(pendingHostPairing: false, connecting: false))
+
+        let fresh = macAddCode(box: 2)
+        offer.code = fresh
+        offer.spent = false
+        #expect(offer.code != original)
+        #expect(offer.isVisible(pendingHostPairing: false, connecting: false))
+        #expect(!offer.shouldMint(pendingHostPairing: false, connecting: false))
+    }
+
+    @Test func anAcceptedMailboxLetterMintsAFreshCodeOncePendingClears() {
+        let original = macAddCode(box: 1)
+        var offer = DeviceCodeOffer(code: original)
+        offer.letterReceived(accepted: true)
+        #expect(offer.spent)
+        #expect(!offer.isVisible(pendingHostPairing: true, connecting: false))
+        #expect(!offer.shouldMint(pendingHostPairing: true, connecting: false))
+        #expect(offer.shouldMint(pendingHostPairing: false, connecting: false))
+
+        let fresh = macAddCode(box: 2)
+        offer.code = fresh
+        offer.spent = false
+        #expect(offer.code != original)
+        #expect(offer.isVisible(pendingHostPairing: false, connecting: false))
+        #expect(!offer.shouldMint(pendingHostPairing: false, connecting: false))
+    }
+
+    @Test func aDeviceCodeWithoutAKeyIsMintedAgain() {
+        let leftover = macAddCode()
+        let offer = DeviceCodeOffer(code: leftover)
+        #expect(!offer.shouldMint(pendingHostPairing: false, connecting: false, hasKey: true))
+        #expect(offer.shouldMint(pendingHostPairing: false, connecting: false, hasKey: false))
+        #expect(!offer.shouldMint(pendingHostPairing: true, connecting: false, hasKey: false))
+    }
+
+    private var stillConnecting: String { AppModel.stillConnecting }
+    private var unpairedScan: String { String(localized: "Scan this code with Yorozu on an iPhone or iPad that is already paired.") }
+
+    private func invites(_ transport: ScriptedTransport) async -> [PairInvite] {
+        let sent = await transport.sent
+        return sent.compactMap { event -> PairInvite? in
+            guard case .pairInvite(let invite) = event else { return nil }
+            return invite
+        }
+    }
+
+    @Test func aPairedPhoneAddsAMacByItsCodeAndTheMacCanStartOver() async throws {
+        _ = try store(paired: true)
+        let phone = try await harness.openFirstSession(capabilities: [Invite.capability])
+        let transport = try #require(harness.scripted)
+        let (macCode, macKey) = DeviceCode.make(name: "Mac")
+
+        #expect(phone.submit(macCode.link) == nil)
+        #expect(phone.pendingDevice == macCode)
+        phone.addDevice(macCode)
+        #expect(phone.deviceAdding == .asking(macCode))
+        var asked: [PairInvite] = []
+        for _ in 0..<100 where asked.isEmpty {
+            asked = await invites(transport)
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(asked == [PairInvite()])
+
+        let macHarness = try ModelHarness()
+        let mac = macHarness.makeModel()
+        mac.deviceCode = macCode
+        #expect(mac.offersDeviceCode)
+        #expect(mac.showsDeviceCode)
+        let letter = try macCode.seal(hostLink())
+        #expect(try mac.submit(DeviceCode.open(letter, privateKey: macKey)) == nil)
+        mac.deviceCodeSpent = true
+        #expect(mac.pendingPairing != nil)
+        #expect(!mac.offersDeviceCode)
+        #expect(!mac.showsDeviceCode)
+
+        mac.dismissPendingPairing()
+        #expect(mac.pendingPairing == nil)
+        #expect(mac.offersDeviceCode)
+        #expect(DeviceCodeOffer(code: mac.deviceCode, spent: mac.deviceCodeSpent).shouldMint(pendingHostPairing: false, connecting: false))
+    }
+
+    @Test func aPairedPhoneWithoutAHostSessionSaysItIsStillConnecting() async throws {
+        _ = try store(paired: true)
+        let transport = ScriptedTransport()
+        await transport.emit(.state(.ready))
+        transports.fails = false
+        transports.scripted = transport
+        let model = makeModel()
+        try #require(await settled { model.state == .ready })
+        #expect(model.hostInfo == nil)
+
+        let code = macAddCode()
+        #expect(model.submit(code.link) == stillConnecting)
+        model.addDevice(code)
+        #expect(model.deviceAdding == .failed(stillConnecting))
+        #expect(await invites(transport).isEmpty)
+    }
+
+    @Test func aDisconnectedPhoneSaysItIsStillConnecting() async throws {
+        _ = try store(paired: true)
+        let model = try await harness.openFirstSession(capabilities: [Invite.capability])
+        let transport = try #require(harness.scripted)
+        await transport.emit(.state(.offline))
+        try #require(await settled { model.state == .offline })
+        #expect(model.hostInfo != nil)
+
+        let code = macAddCode()
+        #expect(model.submit(code.link) == stillConnecting)
+        model.addDevice(code)
+        #expect(model.deviceAdding == .failed(stillConnecting))
+        #expect(await invites(transport).isEmpty)
+    }
+
+    @Test func anUnpairedDeviceAsksForAPairedPhone() {
+        let model = makeModel()
+        #expect(model.submit(macAddCode().link) == unpairedScan)
+    }
+
+    @Test func aBrowserCodeNamesAHostWithoutBrowserPairing() async throws {
+        _ = try store(paired: true)
+        let model = try await harness.openFirstSession(capabilities: [Invite.capability])
+        var browser = macAddCode()
+        browser.relayUrl = "wss://relay.test"
+        browser.name = "Yorozu Web"
+        browser.target = .browser
+        #expect(model.submit(browser.link) == String(localized: "Your host’s Yorozu plugin is older than this browser, or browser pairing is off. Update the plugin and set YOROZU_BROWSER_EPHEMERAL=1 on the host."))
+        #expect(model.pendingDevice == nil)
+    }
+
     @Test(arguments: [true, false]) func aFailedConnectKeepsTheStoredPairing(paired: Bool) throws {
         let pairing = try store(paired: paired)
         let model = makeModel()

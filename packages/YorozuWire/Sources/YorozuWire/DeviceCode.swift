@@ -78,7 +78,12 @@ public struct DeviceCode: Equatable, Sendable {
                   endpoint.password == nil, endpoint.port == nil, endpoint.query == nil, endpoint.fragment == nil,
                   endpoint.path.isEmpty || endpoint.path == "/" else { return nil }
         }
-        let name = String((query["name"] ?? "").prefix(64)).trimmingCharacters(in: .whitespacesAndNewlines)
+        var name = query["name"] ?? ""
+        if target == .browser,
+           let raw = URLComponents(string: "x:?\(fragment)")?.percentEncodedQueryItems?.first(where: { $0.name == "name" })?.value {
+            name = raw.replacingOccurrences(of: "+", with: "%20").removingPercentEncoding ?? name
+        }
+        name = String(name.prefix(64)).trimmingCharacters(in: .whitespacesAndNewlines)
         return DeviceCode(relayUrl: relay, box: box, key: key, name: name.isEmpty ? (target == .browser ? "Browser" : "Mac") : name, target: target)
     }
 

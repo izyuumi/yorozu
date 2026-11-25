@@ -28,6 +28,16 @@ struct PairingTests {
         #expect(throws: (any Error).self) { try DeviceCode.open(browser.seal("browser invite"), privateKey: otherPrivateKey) }
     }
 
+    @Test func aBrowserLinkFromTheWebClientKeepsSpacesInItsName() throws {
+        let box = Data(repeating: 1, count: 16).base64URLEncodedString()
+        let link = "https://yorozu.yumi.to/add#v=2&target=browser&relay=wss%3A%2F%2Frelay.yumi.to&box=\(box)&key=\(key)&name=Yorozu%20Web"
+        #expect(try #require(DeviceCode.decode(link)).name == "Yorozu Web")
+        #expect(try #require(DeviceCode.decode(link.replacingOccurrences(of: "%20", with: "+"))).name == "Yorozu Web")
+        #expect(try #require(DeviceCode.decode(link.replacingOccurrences(of: "%20", with: "%2B"))).name == "Yorozu+Web")
+        let native = DeviceCode(relayUrl: "wss://relay.yumi.to", box: box, key: key, name: "A+B")
+        #expect(DeviceCode.decode(native.link)?.name == "A+B")
+    }
+
     @Test func browserInviteTargetIsExplicitAndLegacyRequestStaysEmpty() throws {
         let encoder = JSONEncoder()
         let legacy = try JSONSerialization.jsonObject(with: encoder.encode(PairInvite())) as? [String: String]
