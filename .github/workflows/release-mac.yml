@@ -98,6 +98,19 @@ jobs:
         env:
           SPARKLE_ED_KEY_FILE: ${{ runner.temp }}/sparkle.key
         run: scripts/release_mac.sh --publish
+      - name: Attach the unsigned Windows installer to the beta prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag=$(jq -r .tag dist/candidate.json)
+          sha=$(jq -r .source_sha dist/candidate.json)
+          if [ -z "$tag" ] || [ "$tag" = null ] || [ -z "$sha" ] || [ "$sha" = null ]; then
+            echo "missing tag or source_sha in dist/candidate.json" >&2
+            exit 1
+          fi
+          bash apps/windows/ci/attach-beta.sh --tag "$tag" --artifact-sha "$sha" --append-notes
       - name: Forget signing credentials
         if: always()
         run: |
