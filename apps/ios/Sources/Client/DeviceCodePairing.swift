@@ -37,8 +37,15 @@ enum DeviceAdding: Equatable {
 }
 
 extension AppModel {
+    /// Whether the pairing screen offers this device's code at all; the QR inside it follows `showsDeviceCode`.
+    var offersDeviceCode: Bool { pendingPairing == nil && !connecting }
+
     func addDevice(_ code: DeviceCode) {
         pendingDevice = nil
+        guard hostReady else {
+            deviceAdding = .failed(Self.stillConnecting)
+            return
+        }
         deviceAdding = .asking(code)
         requestInvite(target: code.target, requestId: code.target == .browser ? code.box : nil)
     }

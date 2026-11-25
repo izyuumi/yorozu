@@ -30,7 +30,7 @@ export async function listenForDeviceCode(relay, { signal, onReady }) {
   const request = new URL('https://yorozu.yumi.to/add');
   request.hash = new URLSearchParams({
     v: '2', target: 'browser', relay, box, key: b64(recipient), name: 'Yorozu Web',
-  }).toString();
+  }).toString().replaceAll('+', '%20');
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(mailbox);
     let busy = false, complete = false, timer;

@@ -25,6 +25,7 @@ let lastScroll = 0, initialSelectionDone = false;
 let remember = true;
 const newThread = 'new';
 const qrRelay = import.meta.env.DEV && import.meta.env.VITE_YOROZU_TEST_RELAY || officialRelay;
+const quietDelay = import.meta.env.DEV && Number(import.meta.env.VITE_YOROZU_TEST_QUIET_MS) || 60_000;
 let method = null, receiver = null, receiverError = '', receiverController;
 function renderMethods() {
   renderPairMethods({
@@ -35,7 +36,7 @@ function renderMethods() {
     receiver, receiverError, restart: () => chooseMethod('show'),
     focusPaste: () => $('pair-link').focus(),
     scanHint: 'Scan the browser invitation QR code from your Mac. A native-client invite will not work here.',
-    showHint: 'In Yorozu on an already-paired iPhone or iPad, open Settings → Devices → Add Device and scan this code. Use a version that supports browser pairing.',
+    showHint: 'In Yorozu on an already-paired iPhone or iPad, open Settings → Devices → Add a Device and scan this code. Your host’s Yorozu plugin must include 56a4d699 with browser pairing enabled.',
   });
 }
 function closeReceiver() {
@@ -51,14 +52,22 @@ function chooseMethod(next) {
   renderMethods();
   if (method !== 'show') return;
   const controller = receiverController = new AbortController();
+  let quiet;
+  controller.signal.addEventListener('abort', () => clearTimeout(quiet), { once: true });
   listenForDeviceCode(qrRelay, {
     signal: controller.signal,
     onReady(code) {
       if (receiverController !== controller) return;
       receiver = code;
       renderMethods();
+      quiet = setTimeout(() => {
+        if (receiverController !== controller || receiver !== code) return;
+        receiver = { ...code, status: 'Nothing arrived? Your host may not support browser pairing yet.' };
+        renderMethods();
+      }, quietDelay);
     },
   }).then(invite => {
+    clearTimeout(quiet);
     if (receiverController !== controller) return;
     if (!acceptInvitation(invite, false)) {
       receiver = null;
@@ -66,6 +75,7 @@ function chooseMethod(next) {
       renderMethods();
     }
   }).catch(error => {
+    clearTimeout(quiet);
     if (receiverController !== controller) return;
     receiver = null;
     receiverError = error?.message?.includes('expired') ? 'This code expired.' :

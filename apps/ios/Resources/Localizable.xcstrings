@@ -27428,6 +27428,46 @@
           }
         }
       }
+    },
+    "On your host, run `openclaw yorozu pair` and paste the invite link it prints above." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストで `openclaw yorozu pair` を実行し、表示された招待リンクを上の欄に貼り付けてください。"
+          }
+        }
+      }
+    },
+    "Your host’s Yorozu plugin can’t add devices. Update it on your host first." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストの Yorozu プラグインはデバイスの追加に対応していません。先にホストでプラグインを更新してください。"
+          }
+        }
+      }
+    },
+    "Your host’s Yorozu plugin is older than this browser, or browser pairing is off. Update the plugin and set YOROZU_BROWSER_EPHEMERAL=1 on the host." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストの Yorozu プラグインがこのブラウザより古いか、ブラウザでのペアリングがオフになっています。プラグインを更新し、ホストで YOROZU_BROWSER_EPHEMERAL=1 を設定してください。"
+          }
+        }
+      }
+    },
+    "Yorozu is still connecting to your host. Try again once it’s connected." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu はまだホストに接続中です。接続が完了してからもう一度お試しください。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

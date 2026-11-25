@@ -104,14 +104,22 @@ struct PairingView: View {
                         Text(model.state.label)
                     }
                 } else {
+                    #if os(macOS)
+                    if model.offersDeviceCode {
+                        Section {
+                            deviceCode
+                                .accessibilityIdentifier("pairing.show")
+                        } header: {
+                            Text("Pair with your iPhone or iPad")
+                        }
+                    }
+                    #else
                     Section {
-                        #if os(iOS)
                         Button(String(localized: "Scan QR Code"), systemImage: "qrcode.viewfinder") {
                             showingCode = false
                             scanning = true
                         }
                         .accessibilityIdentifier("pairing.scan")
-                        #endif
                         DisclosureGroup(isExpanded: $showingCode) {
                             if showingCode && model.pendingPairing == nil { deviceCode }
                         } label: {
@@ -121,6 +129,7 @@ struct PairingView: View {
                     } header: {
                         Text("Pair with your host")
                     }
+                    #endif
                     Section {
                         TextField(String(localized: "Invite link"), text: $model.pairingEntry.text, axis: .vertical)
                             .textStyle(.footnote, monospaced: true)
@@ -149,7 +158,11 @@ struct PairingView: View {
                     }
                     Section {
                         DisclosureGroup("Need an invite?") {
+                            #if os(macOS)
+                            Text("On your host, run `openclaw yorozu pair` and paste the invite link it prints above.")
+                            #else
                             Text("On your host, run `openclaw yorozu pair` to create a QR code and invite link.")
+                            #endif
                         }
                     }
                 }
