@@ -17,3 +17,6 @@ run_id=run_fixture_01
 15-session-messages GET /api/sessions/yorozu-fixture-session/messages?include_compacted=true -> 200
 16-run-status-unknown GET /v1/runs/run_does_not_exist -> 404
 17-session-unknown GET /api/sessions/yorozu-fixture-missing -> 404
+307-status-pending.body GET /v1/runs/run_6a1f4c2ee8664c2cacb6fd94c92a1131 -> waiting_for_approval
+307-deny.request, 307-deny.body POST /v1/runs/run_6a1f4c2ee8664c2cacb6fd94c92a1131/approval -> resolved
+307-events.sse GET /v1/runs/run_6a1f4c2ee8664c2cacb6fd94c92a1131/events -> run.completed after denial

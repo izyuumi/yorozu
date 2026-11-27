@@ -1,8 +1,8 @@
 # Hermes 0.23.1 recordings
 
-Source for every recording and the index is `probe.sh` against the Hermes v0.23.1 test install at `127.0.0.1:8652` on 2026-11-19. The probe ran before Codex sign-in.
+Source is the Hermes v0.23.1 test install at `127.0.0.1:8652`. Fixtures 01–17 came from `probe.sh` on 2026-11-19 before Codex sign-in. Fixture 307 records an approval denial after sign-in.
 
-The recordings keep the original JSON field names, value types, and SSE event shapes. Absolute home paths use `/Users/owner`. Host values and probe-generated identifiers use placeholders. Header files use LF, and response lengths match the scrubbed bodies. These recordings contain no file listings, command output, or model-generated text. The failure text comes from Hermes.
+The recordings keep the original JSON field names, value types, and SSE event shapes. Absolute home paths use `/Users/owner`. In fixtures 01–17, host values and probe-generated identifiers use placeholders, header files use LF, and response lengths match the scrubbed bodies. Fixture 307 includes the model's reply after denial.
 
 | Files | Values replaced |
 |---|---|
@@ -23,6 +23,6 @@ The recordings keep the original JSON field names, value types, and SSE event sh
 | `15-session-messages.headers`, `15-session-messages.body` | Session ID |
 | `16-run-status-unknown.headers`, `16-run-status-unknown.body` | Unchanged |
 | `17-session-unknown.headers`, `17-session-unknown.body` | Session ID |
+| `307-status-pending.body`, `307-deny.request`, `307-deny.body` | Unchanged |
+| `307-events.sse` | Capture timestamps removed from line prefixes |
 | `index.txt` | Run, session, and message IDs |
-
-Operator steps 8, 9.3, and 11 are pending the owner's Codex sign-in on the test install. Their recordings will cover completed run usage and tool call IDs, approval pending controls, clean interruption, and unknown run resolution.

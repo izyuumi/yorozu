@@ -5,7 +5,7 @@ import type { HermesBackend, HermesState, KeyRecord } from "./backends.js";
 import { errorTag, type Keyed } from "./cards.js";
 import { externalTurn, handleMessage, resolveOwnerRoute, type ConversationContext, type ExternalTurn } from "./conversation.js";
 import type { Message } from "./envelope.js";
-import { createHermesClient, HermesError, type HermesClient, type RunEvent, type RunStatus } from "./hermes-client.js";
+import { createHermesClient, HermesError, mapRunUsage, type HermesClient, type RunEvent, type RunStatus } from "./hermes-client.js";
 import { liveSessionId } from "./history.js";
 import { isTemporary } from "./retry.js";
 import { currentLedger } from "./runs.js";
@@ -76,10 +76,10 @@ function redacted(deps: HermesDeps): HermesDeps {
   return { ...deps, log: { ...log, info: safe("info"), warn: safe("warn"), error: safe("error"), ...(log.debug && { debug: safe("debug") }) } };
 }
 
-type Tally = { runId?: string; status?: RunStatus };
+type Tally = { runId?: string; usage?: RunStatus["usage"] };
 
 function turnEndLine(log: Log | undefined, messageId: string, tally: Tally, outcome: TurnOutcome): void {
-  const usage = tally.status?.usage;
+  const { usage } = tally;
   const line = `yorozu: hermes turn end ${messageId} run=${tally.runId ?? "-"} outcome=${outcome}`
     + ` tokens_in=${usage?.inputTokens ?? null} tokens_out=${usage?.outputTokens ?? null} tokens_total=${usage?.totalTokens ?? null}`;
   if (outcome === "completed") log?.info(line);
@@ -308,7 +308,7 @@ function failureText(key: string, data: Record<string, unknown> | undefined, run
   return redact(raw(), key);
 }
 
-async function deliver(r: Run, output: string | undefined, fromEvent: boolean): Promise<void> {
+async function deliver(r: Run, output: string | undefined, readUsage: boolean): Promise<void> {
   const { deps, message, t, tally } = r;
   if (!output?.trim()) {
     r.end("empty", EMPTY);
@@ -321,13 +321,7 @@ async function deliver(r: Run, output: string | undefined, fromEvent: boolean): 
     return;
   }
   if (r.cap?.fired || !t.done()) return;
-  if (fromEvent) {
-    try {
-      tally.status = await deps.client.status(r.runId);
-    } catch {
-      tally.status = undefined;
-    }
-  }
+  if (readUsage) tally.usage = (await deps.client.status(r.runId).catch(() => undefined))?.usage;
   turnEndLine(deps.log, message.messageId, tally, "completed");
 }
 
@@ -348,11 +342,16 @@ async function byStatus(
   switch (status) {
     case "completed": {
       let output = string(data?.output) ?? run?.output;
+      const usage = mapRunUsage(data?.usage);
+      let readUsage = source === "event" && usage === undefined;
+      if (usage !== undefined) r.tally.usage = usage;
       if (output === undefined && source === "event") {
-        r.tally.status = await live(r, () => client.status(runId)).catch(() => undefined);
-        output = r.tally.status?.output;
+        const final = await live(r, () => client.status(runId)).catch(() => undefined);
+        output = final?.output;
+        r.tally.usage = usage ?? final?.usage;
+        readUsage = false;
       }
-      await deliver(r, output, source === "event");
+      await deliver(r, output, readUsage);
       return "ended";
     }
     case "failed": {
@@ -390,7 +389,7 @@ async function byStatus(
         const { admissionId, generation } = current;
         await live(r, () => client.resolveUnknown(runId, admissionId, generation));
         const next = await live(r, () => client.status(runId));
-        r.tally.status = next;
+        r.tally.usage = next.usage;
         return await byStatus(r, next.status, source, next, undefined, true);
       } catch (error) {
         log?.warn(`yorozu: hermes run not resolved ${runId}: ${tagOf(error)}`);
@@ -403,6 +402,11 @@ async function byStatus(
   }
 }
 
+function deniedLabel(label: string | undefined, apiKey: string): string {
+  const text = redact(label ?? "", apiKey).replace(/\s+/g, " ").trim();
+  return text.length > 120 ? `${text.slice(0, 119)}…` : text || "a tool";
+}
+
 async function approve(r: Run, run?: RunStatus): Promise<"ended" | "open"> {
   const { client, log } = r.deps;
   const failed = async () => {
@@ -413,7 +417,7 @@ async function approve(r: Run, run?: RunStatus): Promise<"ended" | "open"> {
   let current = run;
   try {
     current ??= await live(r, () => client.status(r.runId));
-    r.tally.status = current;
+    r.tally.usage = current.usage ?? r.tally.usage;
   } catch (error) {
     log?.warn(`yorozu: hermes approval not read ${r.runId}: ${tagOf(error)}`);
     return failed();
@@ -430,7 +434,7 @@ async function approve(r: Run, run?: RunStatus): Promise<"ended" | "open"> {
       return failed();
     }
     r.deniedIds.add(control.id);
-    r.denied.push(`Denied: ${redact(control.tool ?? "a tool", r.deps.apiKey)} needed an approval Yorozu can't show yet.`);
+    r.denied.push(`Denied: ${deniedLabel(control.tool, r.deps.apiKey)} needed an approval Yorozu can't show yet.`);
   }
   return "open";
 }
@@ -456,7 +460,7 @@ function toolEvent(r: Run, event: RunEvent): void {
   if (index < 0 && id === undefined) index = 0;
   const [open] = index >= 0 ? r.openTools.splice(index, 1) : [];
   const callId = open?.callId ?? callIdOf(id ?? event.seq);
-  r.t.tool(callId, name ?? open?.name ?? "tool", data.success === false ? "failed" : "done");
+  r.t.tool(callId, name ?? open?.name ?? "tool", data.error === true || data.success === false ? "failed" : "done");
 }
 
 async function onEvent(r: Run, event: RunEvent): Promise<"ended" | "open"> {
@@ -532,7 +536,7 @@ async function attach(r: Run): Promise<void> {
         return;
       }
       if (run === CAP) return await capped();
-      r.tally.status = run;
+      r.tally.usage = run.usage ?? r.tally.usage;
       const approvals = run.pendingControls.some((control) => control.kind === APPROVAL_KIND && !r.deniedIds.has(control.id));
       const approved = approvals ? await within(approve(r, run)) : "open";
       if (approved === CAP) return await capped();
@@ -639,7 +643,7 @@ async function delegate(deps: HermesDeps, message: Message, retryAttempt: number
       refused(error);
       return;
     }
-    tally.status = run;
+    tally.usage = run.usage;
     if ((await byStatus(r, run.status, "replay", run)) === "ended") return;
   }
   await attach(r);

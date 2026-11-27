@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
@@ -13,7 +13,7 @@ import type { HermesClient, RunEvent, RunStatus } from "../src/hermes-client.ts"
 import type { Ledger, RunRecord, Store } from "../src/ledger.ts";
 import "./genui-hooks.ts";
 import { host, yorozuRuntime } from "./genui-host.js";
-import { fakeHermes } from "./hermes-server.ts";
+import { fakeHermes, fixtureDir } from "./hermes-server.ts";
 
 globalThis.fetch = (input, init = {}) => new Promise((resolve, reject) => {
   const { signal } = init;
@@ -1096,16 +1096,43 @@ test("12. the next message ends earlier runs, across a restart, within its bound
   });
 });
 
+test("13. recorded approval denial fails the tool and the run completes with stream usage", async (t) => {
+  const runId = "run_6a1f4c2ee8664c2cacb6fd94c92a1131";
+  const path = `/v1/runs/${runId}`;
+  const recording = (name: string) => readFileSync(new URL("307-" + name, fixtureDir), "utf8");
+  const { convId } = conversation();
+  const m = message(convId);
+  const h = await setup(t, [
+    post(`${m.messageId}:0`, created(runId)),
+    get(path + "/events", { headers: { "Content-Type": "text/event-stream" }, body: recording("events.sse") }),
+    get(path, { body: recording("status-pending.body") }),
+    postTo(path + "/approval", { body: recording("deny.body") }),
+  ]);
+  await h.optIn(convId);
+  await h.route(m);
+
+  assert.deepEqual(await bodyOf(h.server, 4), JSON.parse(recording("deny.request")));
+  const callId = `hermes:${runId}:call_I3TlRQ6sE8rhcONVBi9Jsabb`;
+  assert.deepEqual((host.sent as Sent[]).filter((e) => e.kind === "tool").map((e) => [e.data.callId, e.data.name, e.data.status]), [
+    [callId, "terminal", "running"], [callId, "terminal", "failed"],
+  ]);
+  assert.deepEqual(errors(), []);
+  assert.deepEqual(host.batches.map((batch: { payloads: { text: string }[] }) => batch.payloads), [[{
+    text: "The command did not run because approval was denied.\n\nDenied: world/other-writable permissions needed an approval Yorozu can't show yet.",
+  }]]);
+  assert.deepEqual(endLines(h.lines), [endLine(m, runId, "completed", [29777, 43, 29820])]);
+});
+
 test("13. an approval request is denied with a plain line and the run completes", async (t) => {
   const approval = { event: "approval.request", run_id: "run-a" };
   const pending = (controls: unknown[]) => get("/v1/runs/run-a", runStatus("running", { execution_generation: 2, pending_controls: controls }));
-  const control = { request_id: "req-1", kind: "approval", tool: "terminal" };
-  await t.test("deny, then the Denied line ends the reply", async (t) => {
+  const control = { prompt_id: "req-1", kind: "approval", description: "terminal" };
+  await t.test("denial ends the reply and empty stream usage falls back to status", async (t) => {
     const { convId } = conversation();
     const m = message(convId);
     const h = await setup(t, [
       post(`${m.messageId}:0`, created("run-a")),
-      get("/v1/runs/run-a/events", sse(approval, { event: "run.completed", run_id: "run-a", output: "Here is the summary." })),
+      get("/v1/runs/run-a/events", sse(approval, { event: "run.completed", run_id: "run-a", output: "Here is the summary.", usage: {} })),
       pending([control]),
       postTo("/v1/runs/run-a/approval", json({ ok: true })),
       get("/v1/runs/run-a", runStatus("completed", { output: "Here is the summary.", usage })),
@@ -1118,6 +1145,27 @@ test("13. an approval request is denied with a plain line and the run completes"
     ]);
     assert.deepEqual(endLines(h.lines), [endLine(m, "run-a", "completed", [120, 45, 165])]);
   });
+  for (const [label, command, shown] of [
+    ["flattens and caps a multiline command", "  echo one\n  two\tthree" + "x".repeat(300), "echo one two three" + "x".repeat(101) + "…"],
+    ["redacts a key across the cutoff", `echo ${"x".repeat(101)}${KEY}${"y".repeat(300)}`, `echo ${"x".repeat(101)}[redacted]yyy…`],
+    ["uses a fallback for a blank command", " \n\t ", "a tool"],
+  ]) {
+    await t.test(`Denied line ${label}`, async (t) => {
+      const { convId } = conversation();
+      const m = message(convId);
+      const h = await setup(t, [
+        post(`${m.messageId}:0`, created("run-a")),
+        get("/v1/runs/run-a/events", sse(approval, { event: "run.completed", output: "Done.", usage })),
+        pending([{ prompt_id: control.prompt_id, kind: control.kind, command }]),
+        postTo("/v1/runs/run-a/approval", json({ ok: true })),
+      ]);
+      await h.optIn(convId);
+      await h.route(m);
+      const reply = host.batches[0].payloads[0].text;
+      assert.equal(reply.includes(KEY), false);
+      assert.equal(reply, `Done.\n\nDenied: ${shown} needed an approval Yorozu can't show yet.`);
+    });
+  }
   for (const [label, steps] of [
     ["no pending control", [pending([]), postTo("/v1/runs/run-a/stop", json({ ok: true }))]],
     ["a failing deny", [pending([control]), postTo("/v1/runs/run-a/approval", { status: 500 }), postTo("/v1/runs/run-a/stop", json({ ok: true }))]],
